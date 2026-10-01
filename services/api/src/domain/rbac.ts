@@ -7,6 +7,7 @@ export const Permission = {
   IncidentAcknowledge: "incident:acknowledge",
   IncidentResolve: "incident:resolve",
   DeviceRegisterOwn: "device:register:own",
+  ProtectionManageOwn: "protection:manage:own",
   AuditRead: "audit:read",
   UserReadSelf: "user:read:self",
 } as const;
@@ -20,6 +21,7 @@ export const ROLE_PERMISSIONS: Record<Role, readonly PermissionName[]> = {
     Permission.IncidentCreateOwn,
     Permission.IncidentReadOwn,
     Permission.DeviceRegisterOwn,
+    Permission.ProtectionManageOwn,
     Permission.UserReadSelf,
   ],
   GUARDIAN: [],

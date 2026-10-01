@@ -23,6 +23,7 @@ import { ContactSweep } from "./contact-sweep";
 import { AuthService } from "./domain/auth-service";
 import { DeviceService } from "./domain/device-service";
 import { IncidentService } from "./domain/incident-service";
+import { ProtectionService } from "./domain/protection-service";
 import type { AuditStore, Clock, IdGenerator } from "./domain/ports";
 import { JwtAccessTokens, ScryptPasswordHasher } from "./domain/security";
 import {
@@ -36,6 +37,13 @@ import {
   PrismaTimelineStore,
   PrismaUserStore,
 } from "./infra/prisma-stores";
+import {
+  PrismaEvidenceStore,
+  PrismaGuardianStore,
+  PrismaJourneyStore,
+  PrismaPinStore,
+  PrismaRiskStore,
+} from "./infra/prisma-protection";
 import { PrismaService } from "./infra/prisma.service";
 import { RedisService } from "./infra/redis.service";
 import { AuditController } from "./modules/audit/audit.controller";
@@ -43,6 +51,7 @@ import { AuthController } from "./modules/auth/auth.controller";
 import { DevicesController } from "./modules/devices/devices.controller";
 import { HealthController } from "./modules/health/health.controller";
 import { IncidentsController } from "./modules/incidents/incidents.controller";
+import { ProtectionController } from "./modules/protection/protection.controller";
 import { RealtimeGateway } from "./modules/realtime/realtime.gateway";
 import { UsersController } from "./modules/users/users.controller";
 
@@ -52,6 +61,7 @@ import { UsersController } from "./modules/users/users.controller";
     UsersController,
     DevicesController,
     IncidentsController,
+    ProtectionController,
     AuditController,
     HealthController,
   ],
@@ -177,6 +187,25 @@ import { UsersController } from "./modules/users/users.controller";
       provide: DeviceService,
       useFactory: (devices, audit, ids, clock) => new DeviceService(devices, audit, ids, clock),
       inject: [DEVICE_STORE, AUDIT_STORE, IDS, CLOCK],
+    },
+    {
+      provide: ProtectionService,
+      useFactory: (prisma: PrismaService, incidents, timeline, audit, publisher: RealtimeGateway, passwords, ids, clock) =>
+        new ProtectionService(
+          new PrismaGuardianStore(prisma),
+          new PrismaJourneyStore(prisma),
+          new PrismaRiskStore(prisma),
+          new PrismaPinStore(prisma),
+          new PrismaEvidenceStore(prisma),
+          incidents,
+          timeline,
+          audit,
+          publisher,
+          passwords,
+          ids,
+          clock,
+        ),
+      inject: [PrismaService, INCIDENT_STORE, TIMELINE_STORE, AUDIT_STORE, RealtimeGateway, PASSWORD_HASHER, IDS, CLOCK],
     },
     ContactSweep,
     { provide: APP_GUARD, useClass: AuthGuard },

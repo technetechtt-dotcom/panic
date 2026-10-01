@@ -44,6 +44,7 @@ export const deviceRegistrationSchema = z
     model: z.string().trim().max(80).optional(),
     osVersion: z.string().trim().min(1).max(40),
     appVersion: z.string().trim().min(1).max(40),
+    publicKey: z.string().regex(/^[A-Za-z0-9+/]+={0,2}$/).min(32).max(512).optional(),
   })
   .strict();
 
@@ -87,6 +88,14 @@ export const distressCapsuleSchema = z
   .strict()
   .superRefine(requireCoordinatePair);
 
+export const deviceProofSchema = z
+  .object({
+    algorithm: z.literal("SHA256withECDSA"),
+    signature: z.string().regex(/^[A-Za-z0-9+/]+={0,2}$/).min(16).max(200),
+    signedAt: isoTime,
+  })
+  .strict();
+
 export const createIncidentSchema = z
   .object({
     triggerId: z.string().uuid(),
@@ -97,6 +106,7 @@ export const createIncidentSchema = z
     confidence: z.number().min(0).max(1).optional(),
     protectionSessionId: z.string().uuid().optional(),
     metadata: z.record(z.string().max(40), z.union([z.string().max(120), z.number(), z.boolean()])).optional(),
+    deviceProof: deviceProofSchema.optional(),
     distressCapsule: distressCapsuleSchema,
   })
   .strict();
@@ -134,12 +144,54 @@ export const heartbeatSchema = z
     charging: z.boolean(),
     networkType: z.enum(NETWORK_TYPES),
     deviceOnline: z.boolean(),
-    evidenceStatus: z.literal("NONE"),
+    evidenceStatus: z.enum(["NONE", "RECORDING", "UPLOADING", "STORED"]),
     permissionsStatus: z.string().trim().min(1).max(80),
     batteryMode: z.enum(["NORMAL", "REDUCED", "SURVIVAL", "CRITICAL_ONLY"]),
   })
   .strict()
   .superRefine(requireCoordinatePair);
+
+export const guardianSchema = z
+  .object({
+    displayName: z.string().trim().min(1).max(80),
+    phone: z.string().trim().max(20).optional(),
+    email: z.string().trim().email().max(254).optional(),
+    canViewLocation: z.boolean().optional(),
+    canViewEvidence: z.boolean().optional(),
+  })
+  .strict();
+
+export const journeySchema = z
+  .object({
+    destinationLabel: z.string().trim().min(1).max(120),
+    expectedArrivalAt: isoTime,
+    checkInIntervalSeconds: z.number().int().min(60).max(6 * 60 * 60),
+  })
+  .strict();
+
+export const safetyPinSchema = z
+  .object({
+    cancelPin: z.string().regex(/^[0-9]{4,8}$/),
+    duressPin: z.string().regex(/^[0-9]{4,8}$/),
+  })
+  .strict()
+  .refine((value) => value.cancelPin !== value.duressPin, { message: "The duress PIN must be different from the cancel PIN." });
+
+export const cancelIncidentSchema = z
+  .object({
+    pin: z.string().regex(/^[0-9]{4,8}$/),
+  })
+  .strict();
+
+export const evidenceChunkSchema = z
+  .object({
+    clientChunkId: z.string().uuid(),
+    sequence: z.number().int().min(0).max(100000),
+    sha256: z.string().regex(/^[a-f0-9]{64}$/),
+    contentType: z.enum(["audio/pcm", "image/jpeg"]),
+    bytesBase64: z.string().regex(/^[A-Za-z0-9+/]+={0,2}$/).min(4).max(90000),
+  })
+  .strict();
 
 export const operatorActionSchema = z
   .object({
@@ -162,3 +214,8 @@ export type CreateIncidentInput = z.infer<typeof createIncidentSchema>;
 export type LocationBatchInput = z.infer<typeof locationBatchSchema>;
 export type HeartbeatInput = z.infer<typeof heartbeatSchema>;
 export type OperatorActionInput = z.infer<typeof operatorActionSchema>;
+export type GuardianInput = z.infer<typeof guardianSchema>;
+export type JourneyInput = z.infer<typeof journeySchema>;
+export type SafetyPinInput = z.infer<typeof safetyPinSchema>;
+export type CancelIncidentInput = z.infer<typeof cancelIncidentSchema>;
+export type EvidenceChunkInput = z.infer<typeof evidenceChunkSchema>;

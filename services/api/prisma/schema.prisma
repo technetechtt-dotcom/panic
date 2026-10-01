@@ -58,6 +58,9 @@ model User {
   refreshTokens RefreshToken[]
   consents     ConsentRecord[]
   auditEvents  AuditEvent[]    @relation("AuditActor")
+  safetyPin    SafetyPin?
+  guardians    TrustedContact[]
+  journeys     ProtectionSession[]
 }
 
 model RefreshToken {
@@ -98,6 +101,7 @@ model Device {
   model          String?
   osVersion      String
   appVersion     String
+  publicKey      String?
   createdAt      DateTime   @default(now())
   updatedAt      DateTime   @updatedAt
   user           User       @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -141,6 +145,8 @@ model Incident {
   locations          IncidentLocation[]
   heartbeats         DeviceHeartbeat[]
   timeline           TimelineEvent[]
+  escalations        IncidentEscalation[]
+  evidence           EvidenceChunk[]
 
   @@index([state, isTest, createdAt])
   @@index([userId, createdAt])
@@ -222,4 +228,85 @@ model AuditEvent {
   @@index([entityType, entityId])
   @@index([correlationId])
   @@index([createdAt])
+}
+
+model IncidentEscalation {
+  id          String      @id @db.Uuid
+  incidentId  String      @db.Uuid
+  triggerId   String      @unique @db.Uuid
+  triggerType TriggerType
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+  incident    Incident    @relation(fields: [incidentId], references: [id], onDelete: Cascade)
+
+  @@index([incidentId])
+}
+
+model SafetyPin {
+  userId         String   @id @db.Uuid
+  cancelPinHash  String
+  duressPinHash  String
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model TrustedContact {
+  id                 String   @id @db.Uuid
+  userId             String   @db.Uuid
+  displayName        String
+  phone              String?
+  email              String?
+  canViewLocation    Boolean  @default(false)
+  canViewEvidence    Boolean  @default(false)
+  canCancelIncident  Boolean  @default(false)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+  user               User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model ProtectionSession {
+  id                      String   @id @db.Uuid
+  userId                  String   @db.Uuid
+  destinationLabel        String
+  expectedArrivalAt       DateTime
+  checkInIntervalSeconds  Int
+  lastCheckInAt           DateTime
+  status                  String
+  createdAt               DateTime @default(now())
+  updatedAt               DateTime @updatedAt
+  user                    User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, status])
+}
+
+model RiskSignal {
+  id        String   @id @db.Uuid
+  userId    String   @db.Uuid
+  sessionId String   @db.Uuid
+  type      String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([sessionId, type])
+  @@index([userId])
+}
+
+model EvidenceChunk {
+  id            String   @id @db.Uuid
+  incidentId    String   @db.Uuid
+  clientChunkId String   @db.Uuid
+  sequence      Int
+  sha256        String
+  contentType   String
+  byteLength    Int
+  payload       Bytes
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  incident      Incident @relation(fields: [incidentId], references: [id], onDelete: Cascade)
+
+  @@unique([incidentId, clientChunkId])
+  @@index([incidentId, sequence])
 }

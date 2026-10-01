@@ -10,6 +10,9 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
+import android.media.AudioFormat
+import android.media.AudioRecord
+import android.media.MediaRecorder
 import android.location.Location
 import android.location.LocationListener
 import android.location.LocationManager
@@ -32,7 +35,10 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import za.co.guardian.MainActivity
 import za.co.guardian.R
+import za.co.guardian.core.heartbeatCoordinates
+import za.co.guardian.core.shouldCaptureLocation
 import za.co.guardian.core.OfflineIncidentRepository
+import za.co.guardian.data.EvidenceBody
 import za.co.guardian.data.GuardianApi
 import za.co.guardian.data.GuardianDatabase
 import za.co.guardian.data.HeartbeatBody
@@ -57,18 +63,23 @@ class EmergencyMonitoringService : android.app.Service() {
     override fun onBind(intent: Intent?) = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        val notification = monitoringNotification()
+        val captureAudio = intent?.getBooleanExtra("captureAudio", false) == true &&
+            ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
+        val notification = monitoringNotification(signals.hasFineLocation())
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION)
+            var type = if (shouldCaptureLocation(signals.hasFineLocation())) {
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION
+            } else {
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
+            }
+            if (captureAudio) type = type or ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
+            startForeground(NOTIFICATION_ID, notification, type)
         } else {
             startForeground(NOTIFICATION_ID, notification)
         }
-        if (!signals.hasFineLocation()) {
-            stopSelf()
-            return START_NOT_STICKY
-        }
         acquireWakeLock()
-        listenForLocation()
+        if (shouldCaptureLocation(signals.hasFineLocation())) listenForLocation()
+        if (captureAudio) scope.launch { uploader.captureAudio() }
         scope.launch {
             while (true) {
                 val keepGoing = uploader.tick()
@@ -113,7 +124,7 @@ class EmergencyMonitoringService : android.app.Service() {
         }
     }
 
-    private fun monitoringNotification(): Notification {
+    private fun monitoringNotification(sharingLocation: Boolean): Notification {
         val channelId = "guardian.emergency"
         val manager = getSystemService(NotificationManager::class.java)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -130,7 +141,7 @@ class EmergencyMonitoringService : android.app.Service() {
         return NotificationCompat.Builder(this, channelId)
             .setSmallIcon(android.R.drawable.ic_dialog_alert)
             .setContentTitle("Guardian SOS active")
-            .setContentText(getString(R.string.monitoring_text))
+            .setContentText(getString(if (sharingLocation) R.string.monitoring_text else R.string.monitoring_text_no_location))
             .setOngoing(true)
             .setContentIntent(open)
             .build()
@@ -149,15 +160,53 @@ class EmergencyUploader @Inject constructor(
     private val settings: SettingsStore,
 ) {
     @Volatile private var latest: Location? = null
+    @Volatile private var recording = false
+
+    suspend fun captureAudio() {
+        val rate = 16_000
+        val min = AudioRecord.getMinBufferSize(rate, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
+        if (min <= 0) return
+        val recorder = AudioRecord(MediaRecorder.AudioSource.MIC, rate, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, min.coerceAtLeast(32000))
+        if (recorder.state != AudioRecord.STATE_INITIALIZED) {
+            recorder.release()
+            return
+        }
+        val buffer = ByteArray(min.coerceAtLeast(32000))
+        recording = true
+        recorder.startRecording()
+        var sequence = 0
+        try {
+            while (sequence < 120) {
+                val incidentId = activeLocalIncident()?.serverId ?: break
+                val read = recorder.read(buffer, 0, buffer.size)
+                if (read <= 0) break
+                val chunk = buffer.copyOf(read)
+                val hash = java.security.MessageDigest.getInstance("SHA-256").digest(chunk).joinToString("") { "%02x".format(it) }
+                try {
+                    api.evidence(
+                        incidentId,
+                        EvidenceBody(UUID.randomUUID().toString(), sequence, hash, "audio/pcm", android.util.Base64.encodeToString(chunk, android.util.Base64.NO_WRAP)),
+                    )
+                } catch (_: Exception) {
+                    // The next second is a new chunk. A failed chunk is not retried as audio.
+                }
+                sequence += 1
+            }
+        } finally {
+            recording = false
+            recorder.stop()
+            recorder.release()
+        }
+    }
 
     suspend fun remember(location: Location) {
         latest = location
-        val incident = activeServerIncident() ?: return
+        val incident = activeLocalIncident() ?: return
         val point = signals.toPoint(location)
         database.locations().insert(
             LocationEntity(
                 clientPointId = UUID.randomUUID().toString(),
-                incidentServerId = incident,
+                incidentServerId = incident.serverId ?: "",
                 latitude = point.latitude,
                 longitude = point.longitude,
                 accuracy = point.accuracy,
@@ -167,15 +216,21 @@ class EmergencyUploader @Inject constructor(
                 recordedAt = point.recordedAt,
                 source = point.source,
                 uploaded = false,
+                localTriggerId = incident.triggerId,
             ),
         )
     }
 
     suspend fun tick(): Boolean {
         repository.flush()
-        val incidentId = activeServerIncident() ?: return true
-        uploadLocations(incidentId)
-        sendHeartbeat(incidentId)
+        val incident = activeLocalIncident() ?: return true
+        val incidentId = incident.serverId
+        if (incidentId != null) {
+            database.locations().bind(incident.triggerId, incidentId)
+            uploadLocations(incidentId)
+            sendHeartbeat(incidentId)
+        }
+        if (incidentId == null) return true
         return try {
             val state = api.incident(incidentId).data.state
             database.incidents().updateState(incidentId, state)
@@ -223,19 +278,20 @@ class EmergencyUploader @Inject constructor(
         val existing = database.heartbeats().pending()
         val id = existing?.clientHeartbeatId ?: UUID.randomUUID().toString()
         val point = latest?.let(signals::toPoint)
+        val coordinates = heartbeatCoordinates(signals.hasFineLocation(), point?.latitude, point?.longitude)
         val body = HeartbeatBody(
             clientHeartbeatId = id,
             recordedAt = signals.timestamp(),
-            latitude = point?.latitude,
-            longitude = point?.longitude,
-            accuracy = point?.accuracy,
-            speed = point?.speed,
-            heading = point?.heading,
+            latitude = coordinates.first,
+            longitude = coordinates.second,
+            accuracy = if (signals.hasFineLocation()) point?.accuracy else null,
+            speed = if (signals.hasFineLocation()) point?.speed else null,
+            heading = if (signals.hasFineLocation()) point?.heading else null,
             batteryLevel = device.batteryLevel,
             charging = device.charging,
             networkType = device.networkType,
             deviceOnline = device.networkType != "NO_INTERNET",
-            evidenceStatus = "NONE",
+            evidenceStatus = if (recording) "UPLOADING" else "NONE",
             permissionsStatus = if (signals.hasFineLocation()) "LOCATION_GRANTED" else "LOCATION_MISSING",
             batteryMode = device.batteryMode,
         )
@@ -248,10 +304,8 @@ class EmergencyUploader @Inject constructor(
         }
     }
 
-    private suspend fun activeServerIncident(): String? {
-        return database.incidents().list().firstOrNull { entity ->
-            entity.serverId != null && entity.state != "RESOLVED" && entity.state != "ARCHIVED"
-        }?.serverId
+    private suspend fun activeLocalIncident() = database.incidents().list().firstOrNull { entity ->
+        entity.state != "RESOLVED" && entity.state != "ARCHIVED"
     }
 }
 

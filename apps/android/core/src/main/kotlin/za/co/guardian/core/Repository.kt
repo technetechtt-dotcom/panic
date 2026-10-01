@@ -10,6 +10,7 @@ data class LocalIncident(
     val deviceId: String,
     val state: IncidentState,
     val isTest: Boolean,
+    val triggerType: TriggerType = TriggerType.MANUAL_SOS,
     val syncState: SyncState,
     val createdAtEpochMs: Long,
     val capsule: DistressCapsule,
@@ -34,10 +35,11 @@ interface IncidentLocalStore {
     suspend fun pending(): List<LocalIncident>
 }
 
-data class RemoteCreateResult(val serverId: String, val replayed: Boolean)
+data class RemoteCreateResult(val serverId: String, val replayed: Boolean, val escalated: Boolean = false)
 
 interface IncidentRemoteApi {
     suspend fun create(incident: LocalIncident): RemoteCreateResult
+    suspend fun escalate(incident: LocalIncident, triggerId: String, type: TriggerType): RemoteCreateResult
 }
 
 class OfflineIncidentRepository(
@@ -48,13 +50,30 @@ class OfflineIncidentRepository(
     private val newId: () -> String,
     private val now: () -> Long,
     private val timestamp: (Long) -> String,
+    private val escalations: EscalationLocalStore = MemoryEscalationStore(),
 ) {
-    suspend fun triggerManual(context: SosContext): LocalIncident {
+    suspend fun triggerManual(context: SosContext): LocalIncident = trigger(TriggerType.MANUAL_SOS, context)
+
+    suspend fun trigger(type: TriggerType, context: SosContext): LocalIncident {
+        val active = local.list().firstOrNull { it.state != IncidentState.RESOLVED && it.state != IncidentState.ARCHIVED }
+        if (active != null) {
+            escalations.add(
+                LocalEscalation(
+                    triggerId = newId(),
+                    incidentTriggerId = active.triggerId,
+                    triggerType = type.name,
+                    createdAtEpochMs = now(),
+                    sent = false,
+                ),
+            )
+            flushEscalations()
+            return active
+        }
         val event = TriggerEvent(
             triggerId = newId(),
             userId = context.userId,
             deviceId = context.deviceId,
-            triggerType = TriggerType.MANUAL_SOS,
+            triggerType = type,
             timestampEpochMs = now(),
             confidence = null,
             protectionSessionId = null,
@@ -74,6 +93,7 @@ class OfflineIncidentRepository(
             deviceId = context.deviceId,
             state = IncidentState.SOS,
             isTest = context.isTest,
+            triggerType = type,
             syncState = SyncState.PENDING,
             createdAtEpochMs = createdAt,
             capsule = capsules.build(
@@ -98,6 +118,23 @@ class OfflineIncidentRepository(
         for (incident in local.pending()) {
             val updated = send(incident)
             if (updated.syncState == SyncState.SYNCED) sent += 1
+        }
+        sent += flushEscalations()
+        return sent
+    }
+
+    private suspend fun flushEscalations(): Int {
+        var sent = 0
+        for (item in escalations.pending()) {
+            val incident = local.get(item.incidentTriggerId) ?: continue
+            if (incident.serverId == null) continue
+            try {
+                remote.escalate(incident, item.triggerId, TriggerType.valueOf(item.triggerType))
+                escalations.markSent(item.triggerId)
+                sent += 1
+            } catch (_: Exception) {
+                // The same escalation id is retried. The server ignores a repeat.
+            }
         }
         return sent
     }

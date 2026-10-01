@@ -11,6 +11,8 @@ import androidx.room.PrimaryKey
 import androidx.room.Query
 import androidx.room.Room
 import androidx.room.RoomDatabase
+import androidx.room.migration.Migration
+import androidx.sqlite.db.SupportSQLiteDatabase
 import androidx.room.Update
 import dagger.Module
 import dagger.Provides
@@ -35,6 +37,7 @@ data class IncidentEntity(
     val deviceId: String,
     val state: String,
     val isTest: Boolean,
+    val triggerType: String = "MANUAL_SOS",
     val syncState: String,
     val createdAtEpochMs: Long,
     val capsuleJson: String,
@@ -57,13 +60,36 @@ data class LocationEntity(
     val recordedAt: String,
     val source: String,
     val uploaded: Boolean,
+    val localTriggerId: String = "",
 )
+
+@Entity(tableName = "escalation_outbox")
+data class EscalationEntity(
+    @PrimaryKey val triggerId: String,
+    val localIncidentTriggerId: String,
+    val triggerType: String,
+    val createdAtEpochMs: Long,
+    val sent: Boolean,
+)
+
+@Dao
+interface EscalationDao {
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insert(entity: EscalationEntity)
+
+    @Query("SELECT * FROM escalation_outbox WHERE sent = 0")
+    suspend fun pending(): List<EscalationEntity>
+
+    @Query("UPDATE escalation_outbox SET sent = 1 WHERE triggerId = :triggerId")
+    suspend fun markSent(triggerId: String)
+}
 
 @Entity(tableName = "heartbeat_outbox")
 data class HeartbeatEntity(
     @PrimaryKey val clientHeartbeatId: String,
     val incidentServerId: String,
     val payloadJson: String,
+    val localTriggerId: String = "",
 )
 
 @Dao
@@ -98,6 +124,9 @@ interface LocationDao {
     @Query("UPDATE locations SET uploaded = 1 WHERE clientPointId = :id")
     suspend fun markUploaded(id: String)
 
+    @Query("UPDATE locations SET incidentServerId = :serverId WHERE localTriggerId = :triggerId AND incidentServerId = ''")
+    suspend fun bind(triggerId: String, serverId: String)
+
     @Query("SELECT * FROM locations WHERE incidentServerId = :incidentServerId ORDER BY recordedAt ASC")
     suspend fun forIncident(incidentServerId: String): List<LocationEntity>
 }
@@ -115,14 +144,15 @@ interface HeartbeatDao {
 }
 
 @Database(
-    entities = [IncidentEntity::class, LocationEntity::class, HeartbeatEntity::class],
-    version = 1,
+    entities = [IncidentEntity::class, LocationEntity::class, HeartbeatEntity::class, EscalationEntity::class],
+    version = 2,
     exportSchema = true,
 )
 abstract class GuardianDatabase : RoomDatabase() {
     abstract fun incidents(): IncidentDao
     abstract fun locations(): LocationDao
     abstract fun heartbeats(): HeartbeatDao
+    abstract fun escalations(): EscalationDao
 }
 
 class RoomIncidentStore(
@@ -144,6 +174,7 @@ private fun LocalIncident.toEntity(json: Json) = IncidentEntity(
     deviceId = deviceId,
     state = state.name,
     isTest = isTest,
+    triggerType = triggerType.name,
     syncState = syncState.name,
     createdAtEpochMs = createdAtEpochMs,
     capsuleJson = json.encodeToString(capsule),
@@ -158,6 +189,7 @@ private fun IncidentEntity.toModel(json: Json) = LocalIncident(
     deviceId = deviceId,
     state = IncidentState.valueOf(state),
     isTest = isTest,
+    triggerType = runCatching { za.co.guardian.core.TriggerType.valueOf(triggerType) }.getOrDefault(za.co.guardian.core.TriggerType.MANUAL_SOS),
     syncState = SyncState.valueOf(syncState),
     createdAtEpochMs = createdAtEpochMs,
     capsule = json.decodeFromString<DistressCapsule>(capsuleJson),
@@ -170,5 +202,42 @@ object DatabaseModule {
     @Provides
     @Singleton
     fun database(@ApplicationContext context: Context): GuardianDatabase =
-        Room.databaseBuilder(context, GuardianDatabase::class.java, "guardian.db").build()
+        Room.databaseBuilder(context, GuardianDatabase::class.java, "guardian.db")
+            .addMigrations(MIGRATION_1_2)
+            .build()
+}
+
+private val MIGRATION_1_2 = object : Migration(1, 2) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE incidents ADD COLUMN triggerType TEXT NOT NULL DEFAULT 'MANUAL_SOS'")
+        db.execSQL("ALTER TABLE locations ADD COLUMN localTriggerId TEXT NOT NULL DEFAULT ''")
+        db.execSQL("ALTER TABLE heartbeat_outbox ADD COLUMN localTriggerId TEXT NOT NULL DEFAULT ''")
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS escalation_outbox (
+                triggerId TEXT NOT NULL PRIMARY KEY,
+                localIncidentTriggerId TEXT NOT NULL,
+                triggerType TEXT NOT NULL,
+                createdAtEpochMs INTEGER NOT NULL,
+                sent INTEGER NOT NULL
+            )
+            """.trimIndent(),
+        )
+    }
+}
+
+class RoomEscalationStore(private val dao: EscalationDao) : za.co.guardian.core.EscalationLocalStore {
+    override suspend fun add(item: za.co.guardian.core.LocalEscalation) {
+        dao.insert(
+            EscalationEntity(item.triggerId, item.incidentTriggerId, item.triggerType, item.createdAtEpochMs, item.sent),
+        )
+    }
+
+    override suspend fun pending(): List<za.co.guardian.core.LocalEscalation> {
+        return dao.pending().map {
+            za.co.guardian.core.LocalEscalation(it.triggerId, it.localIncidentTriggerId, it.triggerType, it.createdAtEpochMs, it.sent)
+        }
+    }
+
+    override suspend fun markSent(triggerId: String) = dao.markSent(triggerId)
 }

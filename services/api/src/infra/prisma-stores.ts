@@ -146,6 +146,13 @@ export class PrismaDeviceStore implements DeviceStore {
     const rows = await this.prisma.device.findMany({ where: { userId }, orderBy: { createdAt: "desc" } });
     return rows.map(toDeviceRecord);
   }
+
+  async save(device: DeviceRecord): Promise<void> {
+    await this.prisma.device.update({
+      where: { id: device.id },
+      data: { publicKey: device.publicKey ?? null, updatedAt: device.updatedAt },
+    });
+  }
 }
 
 function toDeviceRecord(row: {
@@ -157,6 +164,7 @@ function toDeviceRecord(row: {
   model: string | null;
   osVersion: string;
   appVersion: string;
+  publicKey: string | null;
   createdAt: Date;
   updatedAt: Date;
 }): DeviceRecord {
@@ -236,8 +244,40 @@ export class PrismaIncidentStore implements IncidentStore {
         acknowledgedById: incident.acknowledgedById,
         resolvedAt: incident.resolvedAt,
         resolvedById: incident.resolvedById,
+        isTest: incident.isTest,
+        duress: incident.duress,
       },
     });
+  }
+
+  async findActiveForUser(userId: string): Promise<IncidentRecord | null> {
+    const row = await this.prisma.incident.findFirst({
+      where: { userId, state: { in: [...ACTIVE_STATES] as IncidentState[] } },
+      include: incidentInclude,
+      orderBy: { createdAt: "desc" },
+    });
+    return row ? mapIncident(row) : null;
+  }
+
+  async findEscalation(triggerId: string): Promise<{ incidentId: string } | null> {
+    const row = await this.prisma.incidentEscalation.findUnique({ where: { triggerId } });
+    return row ? { incidentId: row.incidentId } : null;
+  }
+
+  async recordEscalation(event: {
+    id: string;
+    incidentId: string;
+    triggerId: string;
+    triggerType: IncidentRecord["triggerType"];
+    createdAt: Date;
+  }): Promise<"created" | "exists"> {
+    try {
+      await this.prisma.incidentEscalation.create({ data: { ...event, updatedAt: event.createdAt } });
+      return "created";
+    } catch (error) {
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") return "exists";
+      throw error;
+    }
   }
 
   async listActive(): Promise<IncidentRecord[]> {

@@ -63,6 +63,7 @@ data class DeviceBody(
     val model: String,
     val osVersion: String,
     val appVersion: String,
+    val publicKey: String? = null,
 )
 
 @Serializable
@@ -72,6 +73,9 @@ data class DeviceWire(val id: String)
 data class DeviceEnvelope(val data: DeviceWire)
 
 @Serializable
+data class DeviceProofBody(val algorithm: String, val signature: String, val signedAt: String)
+
+@Serializable
 data class CreateIncidentBody(
     val triggerId: String,
     val correlationId: String,
@@ -79,13 +83,14 @@ data class CreateIncidentBody(
     val deviceId: String,
     val isTest: Boolean,
     val distressCapsule: DistressCapsule,
+    val deviceProof: DeviceProofBody? = null,
 )
 
 @Serializable
 data class IncidentWire(val id: String, val state: String, val isTest: Boolean)
 
 @Serializable
-data class IncidentEnvelope(val data: IncidentWire, val replayed: Boolean = false)
+data class IncidentEnvelope(val data: IncidentWire, val replayed: Boolean = false, val escalated: Boolean = false)
 
 @Serializable
 data class LocationPointBody(
@@ -157,23 +162,100 @@ interface GuardianApi {
 
     @GET("health")
     suspend fun health(): HealthEnvelope
+
+    @POST("guardians")
+    suspend fun addGuardian(@Body body: GuardianBody): GuardianEnvelope
+
+    @POST("journeys")
+    suspend fun startJourney(@Body body: JourneyBody): JourneyEnvelope
+
+    @POST("journeys/{id}/check-in")
+    suspend fun checkIn(@Path("id") id: String): JourneyEnvelope
+
+    @POST("safety-pins")
+    suspend fun setPins(@Body body: PinBody)
+
+    @POST("incidents/{id}/cancel")
+    suspend fun cancel(@Path("id") id: String, @Body body: CancelBody): CancelEnvelope
+
+    @POST("incidents/{id}/evidence")
+    suspend fun evidence(@Path("id") id: String, @Body body: EvidenceBody)
 }
+
+@Serializable
+data class GuardianBody(
+    val displayName: String,
+    val canViewLocation: Boolean = false,
+    val canViewEvidence: Boolean = false,
+)
+
+@Serializable
+data class GuardianWire(val id: String, val displayName: String)
+
+@Serializable
+data class GuardianEnvelope(val data: GuardianWire)
+
+@Serializable
+data class JourneyBody(val destinationLabel: String, val expectedArrivalAt: String, val checkInIntervalSeconds: Int)
+
+@Serializable
+data class JourneyWire(val id: String, val status: String)
+
+@Serializable
+data class JourneyEnvelope(val data: JourneyWire)
+
+@Serializable
+data class PinBody(val cancelPin: String, val duressPin: String)
+
+@Serializable
+data class CancelBody(val pin: String)
+
+@Serializable
+data class CancelEnvelope(val data: CancelWire)
+
+@Serializable
+data class CancelWire(val appearance: String)
+
+@Serializable
+data class EvidenceBody(
+    val clientChunkId: String,
+    val sequence: Int,
+    val sha256: String,
+    val contentType: String,
+    val bytesBase64: String,
+)
 
 class RetrofitIncidentApi constructor(
     private val api: GuardianApi,
+    private val signer: DeviceSigner,
+    private val tokens: TokenStore,
 ) : IncidentRemoteApi {
-    override suspend fun create(incident: LocalIncident): RemoteCreateResult {
+    override suspend fun create(incident: LocalIncident): RemoteCreateResult = post(incident, incident.triggerId, incident.triggerType.name)
+
+    override suspend fun escalate(incident: LocalIncident, triggerId: String, type: za.co.guardian.core.TriggerType): RemoteCreateResult {
+        return post(incident, triggerId, type.name)
+    }
+
+    private suspend fun post(incident: LocalIncident, triggerId: String, type: String): RemoteCreateResult {
         val response = api.createIncident(
             CreateIncidentBody(
-                triggerId = incident.triggerId,
+                triggerId = triggerId,
                 correlationId = incident.correlationId,
-                triggerType = "MANUAL_SOS",
+                triggerType = type,
                 deviceId = incident.deviceId,
                 isTest = incident.isTest,
                 distressCapsule = incident.capsule,
+                deviceProof = proof(triggerId),
             ),
         )
-        return RemoteCreateResult(response.data.id, response.replayed)
+        return RemoteCreateResult(response.data.id, response.replayed, response.escalated)
+    }
+
+    private fun proof(triggerId: String): DeviceProofBody? {
+        if (signer.publicKeySpki() == null) return null
+        val signedAt = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'").withZone(java.time.ZoneOffset.UTC).format(java.time.Instant.now())
+        val signature = signer.sign(za.co.guardian.core.deviceProofMessage(triggerId, tokens.publicDeviceId(), signedAt)) ?: return null
+        return DeviceProofBody("SHA256withECDSA", signature, signedAt)
     }
 }
 
@@ -182,7 +264,7 @@ class RetrofitIncidentApi constructor(
 object NetworkModule {
     @Provides
     @Singleton
-    fun json(): Json = Json { ignoreUnknownKeys = true }
+    fun json(): Json = Json { ignoreUnknownKeys = true; explicitNulls = false }
 
     @Provides
     @Singleton
@@ -201,8 +283,8 @@ object NetworkModule {
             }
             .authenticator { _, response ->
                 if (responseCount(response) >= 2) return@authenticator null
-                val refresh = tokens.refreshToken() ?: return@authenticator null
-                val renewed = apiHolder.refresh(refreshClient, refresh) ?: return@authenticator null
+                val failed = response.request.header("Authorization")?.removePrefix("Bearer ")
+                val renewed = apiHolder.refresh(refreshClient, failed) ?: return@authenticator null
                 response.request.newBuilder().header("Authorization", "Bearer $renewed").build()
             }
             .build()
@@ -221,7 +303,7 @@ object NetworkModule {
 
     @Provides
     @Singleton
-    fun remote(api: GuardianApi): IncidentRemoteApi = RetrofitIncidentApi(api)
+    fun remote(api: GuardianApi, signer: DeviceSigner, tokens: TokenStore): IncidentRemoteApi = RetrofitIncidentApi(api, signer, tokens)
 
     @Provides
     @Singleton
@@ -232,6 +314,7 @@ object NetworkModule {
             newId = { UUID.randomUUID().toString() },
             now = { System.currentTimeMillis() },
             timestamp = { epoch -> ISO.format(Instant.ofEpochMilli(epoch)) },
+            escalations = RoomEscalationStore(database.escalations()),
         )
     }
 
@@ -251,19 +334,26 @@ object NetworkModule {
 
 @Singleton
 class RefreshApiHolder @javax.inject.Inject constructor(private val json: Json, private val tokens: TokenStore) {
-    fun refresh(client: OkHttpClient, refreshToken: String): String? {
-        return try {
-            val retrofit = Retrofit.Builder()
-                .baseUrl(BuildConfig.API_BASE_URL)
-                .client(client)
-                .addConverterFactory(json.asConverterFactory("application/json".toMediaType()))
-                .build()
-            val api = retrofit.create(GuardianApi::class.java)
-            val body = kotlinx.coroutines.runBlocking { api.refresh(RefreshBody(refreshToken)).data }
-            tokens.saveSession(body.accessToken, body.refreshToken, body.user.id)
-            body.accessToken
-        } catch (_: Exception) {
-            null
+    private val gate = Any()
+
+    fun refresh(client: OkHttpClient, failedAccess: String?): String? {
+        synchronized(gate) {
+            val current = tokens.accessToken()
+            if (!current.isNullOrBlank() && current != failedAccess) return current
+            val refreshToken = tokens.refreshToken() ?: return null
+            return try {
+                val retrofit = Retrofit.Builder()
+                    .baseUrl(BuildConfig.API_BASE_URL)
+                    .client(client)
+                    .addConverterFactory(json.asConverterFactory("application/json".toMediaType()))
+                    .build()
+                val api = retrofit.create(GuardianApi::class.java)
+                val body = kotlinx.coroutines.runBlocking { api.refresh(RefreshBody(refreshToken)).data }
+                tokens.saveSession(body.accessToken, body.refreshToken, body.user.id)
+                body.accessToken
+            } catch (_: Exception) {
+                null
+            }
         }
     }
 }

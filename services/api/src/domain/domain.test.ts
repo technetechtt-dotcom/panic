@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { randomUUID } from "node:crypto";
+import { generateKeyPairSync, randomUUID, sign } from "node:crypto";
 import type { DistressCapsule } from "@guardian/shared-types";
 import type { CreateIncidentInput } from "@guardian/shared-validation";
 import { AuthService } from "./auth-service";
@@ -9,7 +9,7 @@ import { IncidentService } from "./incident-service";
 import { canTransition } from "./incident-rules";
 import type { Actor, DeviceRecord, RealtimePublisher } from "./ports";
 import { hasPermission, Permission } from "./rbac";
-import { canonicalJson, JwtAccessTokens, redact, ScryptPasswordHasher, sha256 } from "./security";
+import { canonicalJson, deviceProofMessage, JwtAccessTokens, redact, ScryptPasswordHasher, sha256 } from "./security";
 import { SimulatedSmsProvider } from "./sms";
 import { createMemory, type MemoryAudit } from "../testing/memory";
 
@@ -319,6 +319,34 @@ test("the SMS simulator records a message and does not deliver it", async () => 
   assert.equal(result.delivered, false);
   assert.equal(result.simulated, true);
   assert.equal(sms.recorded.length, 1);
+});
+
+test("a second deliberate trigger escalates the open incident", async () => {
+  const { service, actor, input, events } = await setup();
+  const first = await service.create(actor, input(), null);
+  const second = await service.create(actor, input(), null);
+  assert.equal(second.incident.id, first.incident.id);
+  assert.equal(second.escalated, true);
+  assert.equal(events.filter((event) => event.name === "incident.created").length, 1);
+  assert.equal(events.some((event) => event.name === "incident.updated"), true);
+});
+
+test("a device key is required once the phone has registered one", async () => {
+  const { memory, service, actor, device, input } = await setup();
+  const { publicKey, privateKey } = generateKeyPairSync("ec", { namedCurve: "prime256v1" });
+  device.publicKey = publicKey.export({ type: "spki", format: "der" }).toString("base64");
+  await memory.devices.save(device);
+  const body = input();
+  await assert.rejects(
+    () => service.create(actor, body, null),
+    (error: unknown) => error instanceof AppError && error.code === "DEVICE_PROOF_REQUIRED",
+  );
+  const signedAt = memory.clock.now().toISOString();
+  const message = deviceProofMessage(body.triggerId, device.devicePublicId, signedAt);
+  const signature = sign("sha256", Buffer.from(message), privateKey).toString("base64");
+  const created = await service.create(actor, { ...body, deviceProof: { algorithm: "SHA256withECDSA", signature, signedAt } }, null);
+  assert.equal(created.escalated, false);
+  assert.equal(created.incident.state, "SOS");
 });
 
 test("failed login does not reveal whether the email exists beyond the shared message", async () => {

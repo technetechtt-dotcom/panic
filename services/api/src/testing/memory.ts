@@ -96,6 +96,10 @@ export class MemoryDevices implements DeviceStore {
     this.rows.set(device.id, device);
   }
 
+  async save(device: DeviceRecord): Promise<void> {
+    this.rows.set(device.id, device);
+  }
+
   async findByIdForUser(id: string, userId: string): Promise<DeviceRecord | null> {
     const device = this.rows.get(id);
     return device && device.userId === userId ? device : null;
@@ -114,6 +118,7 @@ export class MemoryDevices implements DeviceStore {
 
 export class MemoryIncidents implements IncidentStore {
   readonly rows = new Map<string, IncidentRecord>();
+  readonly escalations = new Map<string, { incidentId: string }>();
 
   async findByTriggerId(triggerId: string): Promise<IncidentRecord | null> {
     return [...this.rows.values()].find((row) => row.triggerId === triggerId) ?? null;
@@ -121,6 +126,30 @@ export class MemoryIncidents implements IncidentStore {
 
   async findById(id: string): Promise<IncidentRecord | null> {
     return this.rows.get(id) ?? null;
+  }
+
+  async findActiveForUser(userId: string): Promise<IncidentRecord | null> {
+    return (
+      [...this.rows.values()]
+        .filter((row) => row.userId === userId && ACTIVE_STATES.has(row.state))
+        .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())[0] ?? null
+    );
+  }
+
+  async findEscalation(triggerId: string): Promise<{ incidentId: string } | null> {
+    return this.escalations.get(triggerId) ?? null;
+  }
+
+  async recordEscalation(event: {
+    id: string;
+    incidentId: string;
+    triggerId: string;
+    triggerType: IncidentRecord["triggerType"];
+    createdAt: Date;
+  }): Promise<"created" | "exists"> {
+    if (this.escalations.has(event.triggerId)) return "exists";
+    this.escalations.set(event.triggerId, { incidentId: event.incidentId });
+    return "created";
   }
 
   async insert(incident: IncidentRecord): Promise<void> {

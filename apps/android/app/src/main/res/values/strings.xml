@@ -5,4 +5,8 @@
     <string name="sos_action">Send emergency SOS now</string>
     <string name="monitoring_channel">Emergency monitoring</string>
     <string name="monitoring_text">Guardian emergency is active. Location is being shared with the monitoring hub.</string>
+    <string name="monitoring_text_no_location">Guardian emergency is active. Location permission is off, so only a heartbeat is being sent.</string>
+    <string name="volume_service_description">Guardian reads the volume buttons so you can start an SOS without opening the screen. Guardian does not block the volume buttons, does not read other apps, and does not hide itself. You can turn this off in Android accessibility settings.</string>
+    <string name="safeword_channel">Safe word</string>
+    <string name="safeword_text">Guardian is listening for your safe word. Android keeps the microphone indicator visible.</string>
 </resources>

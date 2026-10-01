@@ -1,5 +1,5 @@
 import type { DeviceRegistrationInput } from "@guardian/shared-validation";
-import { UniqueConflictError } from "./errors";
+import { AppError, UniqueConflictError } from "./errors";
 import type { Actor, AuditStore, Clock, DeviceRecord, DeviceStore, IdGenerator } from "./ports";
 
 export class DeviceService {
@@ -11,9 +11,19 @@ export class DeviceService {
   ) {}
 
   async register(actor: Actor, input: DeviceRegistrationInput, requestId: string | null): Promise<DeviceRecord> {
-    const existing = await this.devices.findByPublicId(actor.id, input.devicePublicId);
-    if (existing) return existing;
     const now = this.clock.now();
+    const existing = await this.devices.findByPublicId(actor.id, input.devicePublicId);
+    if (existing) {
+      if (input.publicKey && existing.publicKey && input.publicKey !== existing.publicKey) {
+        throw new AppError("DEVICE_KEY_MISMATCH", 409, "This phone's safety key does not match the registered device.");
+      }
+      if (input.publicKey && !existing.publicKey) {
+        existing.publicKey = input.publicKey;
+        existing.updatedAt = now;
+        await this.devices.save(existing);
+      }
+      return existing;
+    }
     const device: DeviceRecord = {
       id: this.ids.uuid(),
       userId: actor.id,
@@ -23,6 +33,7 @@ export class DeviceService {
       model: input.model ?? null,
       osVersion: input.osVersion,
       appVersion: input.appVersion,
+      publicKey: input.publicKey ?? null,
       createdAt: now,
       updatedAt: now,
     };

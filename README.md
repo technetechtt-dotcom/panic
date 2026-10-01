@@ -6,7 +6,7 @@ This is not a replacement for official emergency services.
 
 ## What this version does
 
-- Android account registration and login, device registration, a protection-status home screen, a manual SOS button, practice mode, local incident history, distress-capsule upload, location points, and an emergency heartbeat.
+- Android account registration and login, device registration, a protection-status home screen, manual, volume, and safe-word SOS, a 10 minute test session, local incident history, distress-capsule upload, location breadcrumbs, heartbeat, guardians, journey watch, evidence chunks, and duress PIN.
 - NestJS API with PostgreSQL, Redis health and an optional Socket.IO adapter, JWT access tokens, rotating refresh tokens, role checks, audit events, and WebSocket updates for operators.
 - Monitoring web app: operator login, active incident list, incident detail with a map, heartbeat, timeline, acknowledge, and resolve.
 

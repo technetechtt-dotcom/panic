@@ -64,14 +64,51 @@ class TokenStore @Inject constructor(@ApplicationContext context: Context) {
 class SettingsStore @Inject constructor(@ApplicationContext context: Context) : PracticeModeReader {
     private val prefs = context.getSharedPreferences("guardian_settings", Context.MODE_PRIVATE)
 
-    override fun enabled(): Boolean = practiceMode()
-    fun practiceMode(): Boolean = prefs.getBoolean(PRACTICE, false)
-    fun setPracticeMode(enabled: Boolean) = prefs.edit().putBoolean(PRACTICE, enabled).apply()
+    override fun enabled(): Boolean = testSessionActive(System.currentTimeMillis())
+    override fun remainingMs(): Long {
+        val until = prefs.getLong(TEST_UNTIL, 0L)
+        return (until - System.currentTimeMillis()).coerceAtLeast(0L)
+    }
+
+    fun testSessionActive(now: Long): Boolean {
+        val until = prefs.getLong(TEST_UNTIL, 0L)
+        if (until == 0L) return false
+        if (now >= until) {
+            prefs.edit().remove(TEST_UNTIL).apply()
+            return false
+        }
+        return true
+    }
+
+    fun startTestSession(now: Long = System.currentTimeMillis()) {
+        val session = za.co.guardian.core.startTestSession(now)
+        prefs.edit().putLong(TEST_UNTIL, session.expiresAtEpochMs).remove(PRACTICE).apply()
+    }
+
+    fun safeWord(): String = prefs.getString(SAFE_WORD, "").orEmpty()
+    fun setSafeWord(phrase: String) = prefs.edit().putString(SAFE_WORD, phrase.trim()).apply()
+    fun shareAudio(): Boolean = prefs.getBoolean(SHARE_AUDIO, false)
+    fun setShareAudio(enabled: Boolean) = prefs.edit().putBoolean(SHARE_AUDIO, enabled).apply()
+    fun volumeTestActive(now: Long): Boolean = now < prefs.getLong(VOLUME_TEST_UNTIL, 0L)
+    fun startVolumeTest(now: Long = System.currentTimeMillis()) = prefs.edit().putLong(VOLUME_TEST_UNTIL, now + 30_000).apply()
+    fun noteVolumeTest() = prefs.edit().putLong(VOLUME_TEST_SEEN, System.currentTimeMillis()).apply()
+    fun volumeTestSeen(): Long = prefs.getLong(VOLUME_TEST_SEEN, 0L)
+    fun guardianReady(ready: Boolean) = prefs.edit().putBoolean(GUARDIAN_READY, ready).apply()
+    fun guardianReady(): Boolean = prefs.getBoolean(GUARDIAN_READY, false)
     fun incidentActive(): Boolean = prefs.getBoolean(ACTIVE, false)
     fun setIncidentActive(active: Boolean) = prefs.edit().putBoolean(ACTIVE, active).apply()
+    fun quietIncident(quiet: Boolean) = prefs.edit().putBoolean(QUIET, quiet).apply()
+    fun quietIncident(): Boolean = prefs.getBoolean(QUIET, false)
 
     private companion object {
         const val PRACTICE = "practice"
+        const val TEST_UNTIL = "test_until"
         const val ACTIVE = "incident_active"
+        const val SAFE_WORD = "safe_word"
+        const val SHARE_AUDIO = "share_audio"
+        const val VOLUME_TEST_UNTIL = "volume_test_until"
+        const val VOLUME_TEST_SEEN = "volume_test_seen"
+        const val GUARDIAN_READY = "guardian_ready"
+        const val QUIET = "quiet_incident"
     }
 }

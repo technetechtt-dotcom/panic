@@ -2,17 +2,19 @@
 
 These limits come from current Android platform rules and Play policy. This version does not try to work around them.
 
-## Volume-button SOS is not implemented
+## Volume-button SOS
 
-An app can observe volume keys with an `AccessibilityService` and `flagRequestFilterKeyEvents`. Play requires a prominent disclosure and an accessibility declaration for that service. The service must not be marked `isAccessibilityTool` unless it is an accessibility tool. The service must not consume the volume keys, because the volume should still change.
+Guardian observes volume keys with an `AccessibilityService` and `flagRequestFilterKeyEvents`. Settings shows a disclosure before opening the Android accessibility screen. The service is not marked `isAccessibilityTool`. `onKeyEvent` returns false, so the volume still changes. Three volume-down presses send a deliberate SOS. A 30 second button test records the pattern and does not send. Play may still require an accessibility declaration before publishing the app.
 
-That service is not in this app. The protection checklist shows Volume trigger as unavailable. A double-press of volume up or volume down does nothing in Guardian.
+The service cannot be started by Guardian itself. If Android blocks a foreground service started from the accessibility service while the app is in the background, the SOS is stored and tracking waits until the app is opened.
 
 ## Microphone and camera
 
-Android 14 and later will not start a microphone or camera foreground service from the background. The system shows the microphone and camera indicators. Those indicators cannot be hidden. Continuous listening is therefore visible to anyone who can see the status bar.
+Android 14 and later will not start a microphone or camera foreground service from the background. The system shows the microphone and camera indicators. Those indicators cannot be hidden.
 
-This version does not request `RECORD_AUDIO` or `CAMERA` and does not run a keyword detector. A later on-device safe-word engine has to be a replaceable `SafeWordDetector`, started only after an explicit opt-in, and it has to live with the indicator.
+Safe-word listening starts only from a button in the open app. It uses `SpeechRecognizer` with `EXTRA_PREFER_OFFLINE` and compares the transcript on the phone with `safeWordMatches`. Guardian does not upload that audio. If the phone has no speech recognizer, or no offline model, listening stops and the checklist says so. The recognizer is still a system component and may use the network when an offline model is missing.
+
+Optional SOS audio is separate. It records only after the person turns on sharing and presses SOS on screen, for up to 120 one-second chunks, with the microphone indicator visible. There is no camera capture.
 
 ## Location
 

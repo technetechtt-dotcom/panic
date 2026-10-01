@@ -57,6 +57,10 @@ class CoreSafetyTest {
                 if (calls == 1) error("offline")
                 return RemoteCreateResult("server-1", calls > 2)
             }
+
+            override suspend fun escalate(incident: LocalIncident, triggerId: String, type: TriggerType): RemoteCreateResult {
+                return RemoteCreateResult(incident.serverId ?: "missing", false, true)
+            }
         }
         val repository = repository(store, remote)
         val first = repository.triggerManual(context(isTest = true))
@@ -102,6 +106,73 @@ class CoreSafetyTest {
         assertFailsWith<IllegalArgumentException> {
             machine.transition(IncidentState.RESOLVED, IncidentState.SOS)
         }
+    }
+
+    @Test
+    fun aSecondTriggerEscalatesTheOpenIncidentInsteadOfCreatingAnother() = runBlocking {
+        val store = MemoryIncidentStore()
+        val escalations = MemoryEscalationStore()
+        var created = 0
+        var escalated = 0
+        val remote = object : IncidentRemoteApi {
+            override suspend fun create(incident: LocalIncident): RemoteCreateResult {
+                created += 1
+                return RemoteCreateResult("server-1", false)
+            }
+            override suspend fun escalate(incident: LocalIncident, triggerId: String, type: TriggerType): RemoteCreateResult {
+                escalated += 1
+                return RemoteCreateResult(incident.serverId ?: "missing", false, true)
+            }
+        }
+        var n = 0
+        val repository = OfflineIncidentRepository(
+            store,
+            remote,
+            newId = { "id-${n++}" },
+            now = { 1_000L },
+            timestamp = { "2026-10-01T09:00:01.000Z" },
+            escalations = escalations,
+        )
+        val first = repository.trigger(TriggerType.MANUAL_SOS, context(false))
+        val second = repository.trigger(TriggerType.VOLUME_BUTTON, context(false))
+        assertEquals(first.triggerId, second.triggerId)
+        assertEquals(1, store.rows.size)
+        assertEquals(1, created)
+        assertEquals(1, escalated)
+    }
+
+    @Test
+    fun locationBreadcrumbsAreKeptBeforeAServerIncidentExists() {
+        val log = LocationBreadcrumbLog()
+        assertFalse(log.record(null, "point-0"))
+        assertTrue(log.record("local-1", "point-1"))
+        assertTrue(log.readyToUpload().isEmpty())
+        log.bind("local-1", "server-1")
+        assertEquals("server-1", log.readyToUpload().single().incidentServerId)
+    }
+
+    @Test
+    fun heartbeatOmitsCoordinatesWhenLocationPermissionIsMissing() {
+        assertFalse(shouldCaptureLocation(false))
+        assertEquals(null to null, heartbeatCoordinates(false, -26.2, 28.0))
+        assertEquals(-26.2 to 28.0, heartbeatCoordinates(true, -26.2, 28.0))
+    }
+
+    @Test
+    fun volumeChordAndSafeWordAndTestSessionFollowTheirRules() {
+        val detector = VolumeChordDetector(requiredPresses = 3, windowMs = 1_000, direction = VolumeKey.DOWN)
+        assertFalse(detector.onPress(VolumeKey.DOWN, 0))
+        assertFalse(detector.onPress(VolumeKey.DOWN, 100))
+        assertFalse(detector.onPress(VolumeKey.UP, 150))
+        assertFalse(detector.onPress(VolumeKey.DOWN, 200))
+        assertFalse(detector.onPress(VolumeKey.DOWN, 300))
+        assertTrue(detector.onPress(VolumeKey.DOWN, 400))
+        assertTrue(safeWordMatches("please call the safe harbour now", "safe harbour"))
+        assertFalse(safeWordMatches("safe", "safe harbour"))
+        val session = startTestSession(1_000, 60_000)
+        assertTrue(session.active(30_000))
+        assertFalse(session.active(61_000))
+        assertEquals(0L, session.remainingMs(61_000))
     }
 
     @Test

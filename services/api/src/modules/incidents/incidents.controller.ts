@@ -28,10 +28,13 @@ export class IncidentsController {
     if (result.replayed) {
       response.status(200);
       response.setHeader("Idempotent-Replayed", "true");
+    } else if (result.escalated) {
+      response.status(200);
+      response.setHeader("Incident-Escalated", "true");
     } else {
       response.status(201);
     }
-    return { data: result.incident, replayed: result.replayed };
+    return { data: result.incident, replayed: result.replayed, escalated: result.escalated };
   }
 
   @Get()

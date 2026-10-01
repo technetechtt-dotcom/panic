@@ -1,5 +1,5 @@
-import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from "react";
-import { api, type AuthUser } from "../api/client";
+import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
+import { api, bindSession, type AuthUser } from "../api/client";
 
 interface Session {
   accessToken: string;
@@ -33,6 +33,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     await api("/api/v1/auth/logout", null, { method: "POST", body: JSON.stringify({}) }).catch(() => undefined);
     setSession(null);
   }, []);
+
+  useEffect(() => {
+    bindSession(session?.accessToken ?? null, (token) => {
+      setSession((current) => {
+        if (!current || !token || current.accessToken === token) return token ? current : null;
+        return { ...current, accessToken: token };
+      });
+    });
+  }, [session?.accessToken]);
 
   const value = useMemo(() => ({ session, login, logout }), [session, login, logout]);
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

@@ -18,6 +18,7 @@ import za.co.guardian.core.ProtectionLevel
 import za.co.guardian.core.SyncState
 import za.co.guardian.data.PracticeModeReader
 import za.co.guardian.data.ProtectionStatusSource
+import za.co.guardian.core.TriggerType
 import za.co.guardian.data.SosActions
 import za.co.guardian.data.SosOutcome
 
@@ -53,7 +54,7 @@ private class FakeSos(
     private val outcome: SosOutcome? = null,
 ) : SosActions {
     var called = false
-    override suspend fun send(): SosOutcome {
+    override suspend fun send(type: TriggerType): SosOutcome {
         called = true
         outcome?.let { return it }
         return SosOutcome.Started(

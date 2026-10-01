@@ -162,33 +162,61 @@ class HistoryViewModel @Inject constructor(private val database: GuardianDatabas
 class SettingsViewModel @Inject constructor(
     private val auth: AuthRepository,
     private val settings: SettingsStore,
-    private val healthSource: AndroidProtectionHealth,
+    private val protection: za.co.guardian.data.ProtectionActions,
 ) : ViewModel() {
-    var practice by mutableStateOf(settings.practiceMode())
+    var testRemaining by mutableStateOf(settings.remainingMs())
         private set
     var status by mutableStateOf<String?>(null)
         private set
-    val health: ProtectionHealth get() = healthSource.current()
+    var shareAudio by mutableStateOf(settings.shareAudio())
+        private set
 
-    fun updatePractice(enabled: Boolean) {
-        settings.setPracticeMode(enabled)
-        practice = enabled
+    fun refresh() {
+        testRemaining = settings.remainingMs()
+        shareAudio = settings.shareAudio()
     }
 
-    fun checkConnection() {
-        viewModelScope.launch {
-            status = try {
-                "Backend ${auth.checkConnection()}"
-            } catch (error: Exception) {
-                error.userMessage()
-            }
-        }
+    fun startTest() {
+        settings.startTestSession()
+        testRemaining = settings.remainingMs()
+        status = "Test session ends in 10 minutes. SOS during it is marked as a test."
     }
+
+    fun startVolumeTest() {
+        settings.startVolumeTest()
+        status = "Press volume down three times in the next 30 seconds. Guardian will not send SOS."
+    }
+
+    fun updateShareAudio(enabled: Boolean) {
+        settings.setShareAudio(enabled)
+        shareAudio = enabled
+    }
+
+    fun saveSafeWord(phrase: String) {
+        settings.setSafeWord(phrase)
+        status = if (phrase.trim().length < 4) "Use a phrase of at least 4 letters." else "Safe word saved on this phone. It is not uploaded."
+    }
+
+    fun checkConnection() = run { "Backend ${auth.checkConnection()}" }
+    fun addGuardian(name: String) = run { protection.addGuardian(name) }
+    fun startJourney(label: String, minutes: String) = run { protection.startJourney(label, minutes.toIntOrNull() ?: 30) }
+    fun savePins(cancelPin: String, duressPin: String) = run { protection.setPins(cancelPin, duressPin) }
+    fun cancel(pin: String) = run { protection.cancel(pin) }
 
     fun signOut(onDone: () -> Unit) {
         viewModelScope.launch {
             auth.logout()
             onDone()
+        }
+    }
+
+    private fun run(block: suspend () -> String) {
+        viewModelScope.launch {
+            status = try {
+                block()
+            } catch (error: Exception) {
+                error.userMessage()
+            }
         }
     }
 }
@@ -336,19 +364,74 @@ fun SettingsScreen(
     onSignedOut: () -> Unit,
     viewModel: SettingsViewModel = hiltViewModel(),
 ) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    var safeWord by remember { mutableStateOf("") }
+    var guardian by remember { mutableStateOf("") }
+    var destination by remember { mutableStateOf("") }
+    var minutes by remember { mutableStateOf("30") }
+    var cancelPin by remember { mutableStateOf("") }
+    var duressPin by remember { mutableStateOf("") }
+    var showVolumeDisclosure by remember { mutableStateOf(false) }
+    val audioPermission = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.RequestPermission(),
+    ) { granted ->
+        if (granted) {
+            androidx.core.content.ContextCompat.startForegroundService(context, android.content.Intent(context, za.co.guardian.service.SafeWordService::class.java))
+        }
+    }
+    androidx.compose.runtime.LaunchedEffect(Unit) { viewModel.refresh() }
+    if (showVolumeDisclosure) {
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { showVolumeDisclosure = false },
+            title = { Text("Volume button SOS") },
+            text = {
+                Text("Guardian needs an accessibility service to notice three volume-down presses. It does not read the screen, does not block the volume buttons, and is not an accessibility tool. Android will show that Guardian is on. Play policy requires this disclosure before you enable it.")
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    showVolumeDisclosure = false
+                    context.startActivity(android.content.Intent(android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS))
+                }) { Text("Open settings") }
+            },
+            dismissButton = { TextButton(onClick = { showVolumeDisclosure = false }) { Text("Not now") } },
+        )
+    }
     Scaffold(bottomBar = { BottomNav(onHome = onHome, onHistory = onHistory, onSettings = {}, selected = "settings") }) { padding ->
         Column(Modifier.fillMaxSize().padding(padding).padding(20.dp).verticalScroll(rememberScrollState())) {
             Text("Settings", fontSize = 32.sp, fontWeight = FontWeight.SemiBold)
-            Row(Modifier.fillMaxWidth().padding(vertical = 12.dp), horizontalArrangement = Arrangement.SpaceBetween) {
-                Text("Practice mode", fontSize = 18.sp)
-                Switch(checked = viewModel.practice, onCheckedChange = viewModel::updatePractice)
+            Text(
+                if (viewModel.testRemaining > 0) "Test session: ${(viewModel.testRemaining / 60000) + 1} min left"
+                else "No test session. A test expires on its own.",
+                modifier = Modifier.padding(vertical = 8.dp),
+            )
+            Button(onClick = viewModel::startTest, modifier = Modifier.fillMaxWidth()) { Text("Start 10 minute test") }
+            Spacer(Modifier.height(12.dp))
+            Button(onClick = { showVolumeDisclosure = true }, modifier = Modifier.fillMaxWidth()) { Text("Enable volume SOS") }
+            Button(onClick = viewModel::startVolumeTest, modifier = Modifier.fillMaxWidth()) { Text("Test volume button for 30 seconds") }
+            OutlinedTextField(safeWord, { safeWord = it }, label = { Text("Safe word") }, modifier = Modifier.fillMaxWidth().padding(top = 12.dp))
+            Button(onClick = { viewModel.saveSafeWord(safeWord) }, modifier = Modifier.fillMaxWidth()) { Text("Save safe word on this phone") }
+            Button(onClick = { audioPermission.launch(android.Manifest.permission.RECORD_AUDIO) }, modifier = Modifier.fillMaxWidth()) { Text("Listen for safe word") }
+            Text("Listening uses the phone's speech recognizer and prefers an on-device model. Guardian does not upload the audio. The microphone indicator stays on.", modifier = Modifier.padding(vertical = 8.dp))
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Text("Share short audio during an on-screen SOS")
+                Switch(checked = viewModel.shareAudio, onCheckedChange = {
+                    if (it) audioPermission.launch(android.Manifest.permission.RECORD_AUDIO)
+                    viewModel.updateShareAudio(it)
+                })
             }
-            Text("Practice incidents are marked as tests and are kept out of live monitoring counts.")
+            OutlinedTextField(guardian, { guardian = it }, label = { Text("Guardian name") }, modifier = Modifier.fillMaxWidth().padding(top = 12.dp))
+            Button(onClick = { viewModel.addGuardian(guardian) }, modifier = Modifier.fillMaxWidth()) { Text("Add guardian") }
+            OutlinedTextField(destination, { destination = it }, label = { Text("Journey destination") }, modifier = Modifier.fillMaxWidth())
+            OutlinedTextField(minutes, { minutes = it }, label = { Text("Minutes") }, modifier = Modifier.fillMaxWidth())
+            Button(onClick = { viewModel.startJourney(destination, minutes) }, modifier = Modifier.fillMaxWidth()) { Text("Start journey watch") }
+            OutlinedTextField(cancelPin, { cancelPin = it }, label = { Text("Cancel PIN") }, modifier = Modifier.fillMaxWidth())
+            OutlinedTextField(duressPin, { duressPin = it }, label = { Text("Duress PIN") }, modifier = Modifier.fillMaxWidth())
+            Button(onClick = { viewModel.savePins(cancelPin, duressPin); cancelPin = ""; duressPin = "" }, modifier = Modifier.fillMaxWidth()) { Text("Save PINs") }
+            Text("The cancel screen always says the emergency is cancelled. A duress PIN keeps monitoring open. Android still shows location and microphone icons.", modifier = Modifier.padding(vertical = 8.dp))
+            Button(onClick = { viewModel.cancel(cancelPin) }, modifier = Modifier.fillMaxWidth()) { Text("Cancel emergency with PIN") }
             Spacer(Modifier.height(12.dp))
             Button(onClick = viewModel::checkConnection, modifier = Modifier.fillMaxWidth()) { Text("Check connection") }
             viewModel.status?.let { Text(it, modifier = Modifier.padding(top = 8.dp)) }
-            Spacer(Modifier.height(12.dp))
-            Text("Volume-button SOS, safe-word detection and guardian alerts are not in this version.")
             Spacer(Modifier.height(20.dp))
             Button(onClick = { viewModel.signOut(onSignedOut) }, modifier = Modifier.fillMaxWidth()) { Text("Sign out") }
         }

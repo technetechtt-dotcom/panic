@@ -6,7 +6,7 @@ Status words mean what is in the repository and what tests have run. A designed 
 
 Completed for the manual SOS path:
 
-- Android registration, login, device registration, home protection screen, manual SOS, `EmergencyTriggerEngine`, location capture during an incident, local incident history, practice mode, distress capsule, heartbeat, and an offline queue.
+- Android registration, login, device registration, home protection screen, manual, volume, and safe-word SOS, `EmergencyTriggerEngine`, location breadcrumbs, a 10 minute test session, local incident history, distress capsule, heartbeat, guardians, journey watch, evidence chunks, duress PIN, and an offline queue.
 - API authentication, users, devices, incidents, locations, heartbeats, audit log, WebSocket events, PostgreSQL schema and migration, Redis health, Docker Compose for Postgres and Redis.
 - Monitoring login, active list, incident detail, map of the last confirmed location, heartbeat, timeline, acknowledge, and resolve.
 

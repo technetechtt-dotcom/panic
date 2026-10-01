@@ -1,0 +1,153 @@
+import { Prisma, type PrismaClient } from "@prisma/client";
+import type {
+  EvidenceStore,
+  GuardianStore,
+  JourneyRecord,
+  JourneyStore,
+  PinStore,
+  RiskStore,
+  TrustedContactRecord,
+} from "../domain/protection-service";
+
+export class PrismaGuardianStore implements GuardianStore {
+  constructor(private readonly prisma: PrismaClient) {}
+
+  async insert(contact: TrustedContactRecord): Promise<void> {
+    await this.prisma.trustedContact.create({
+      data: { ...contact, updatedAt: contact.createdAt },
+    });
+  }
+
+  async list(userId: string): Promise<TrustedContactRecord[]> {
+    const rows = await this.prisma.trustedContact.findMany({ where: { userId }, orderBy: { createdAt: "asc" } });
+    return rows.map((row) => ({
+      id: row.id,
+      userId: row.userId,
+      displayName: row.displayName,
+      phone: row.phone,
+      email: row.email,
+      canViewLocation: row.canViewLocation,
+      canViewEvidence: row.canViewEvidence,
+      canCancelIncident: row.canCancelIncident,
+      createdAt: row.createdAt,
+    }));
+  }
+
+  async remove(id: string, userId: string): Promise<boolean> {
+    const result = await this.prisma.trustedContact.deleteMany({ where: { id, userId } });
+    return result.count > 0;
+  }
+}
+
+export class PrismaJourneyStore implements JourneyStore {
+  constructor(private readonly prisma: PrismaClient) {}
+
+  async insert(journey: JourneyRecord): Promise<void> {
+    const now = new Date();
+    await this.prisma.protectionSession.create({ data: { ...journey, createdAt: now, updatedAt: now } });
+  }
+
+  async find(id: string, userId: string): Promise<JourneyRecord | null> {
+    const row = await this.prisma.protectionSession.findFirst({ where: { id, userId } });
+    return row ? toJourney(row) : null;
+  }
+
+  async save(journey: JourneyRecord): Promise<void> {
+    await this.prisma.protectionSession.update({
+      where: { id: journey.id },
+      data: { lastCheckInAt: journey.lastCheckInAt, status: journey.status, updatedAt: new Date() },
+    });
+  }
+
+  async listActive(): Promise<JourneyRecord[]> {
+    const rows = await this.prisma.protectionSession.findMany({ where: { status: { in: ["ACTIVE", "CONCERN"] } } });
+    return rows.map(toJourney);
+  }
+}
+
+function toJourney(row: {
+  id: string;
+  userId: string;
+  destinationLabel: string;
+  expectedArrivalAt: Date;
+  checkInIntervalSeconds: number;
+  lastCheckInAt: Date;
+  status: string;
+}): JourneyRecord {
+  return {
+    id: row.id,
+    userId: row.userId,
+    destinationLabel: row.destinationLabel,
+    expectedArrivalAt: row.expectedArrivalAt,
+    checkInIntervalSeconds: row.checkInIntervalSeconds,
+    lastCheckInAt: row.lastCheckInAt,
+    status: row.status === "COMPLETED" || row.status === "CONCERN" ? row.status : "ACTIVE",
+  };
+}
+
+export class PrismaRiskStore implements RiskStore {
+  constructor(private readonly prisma: PrismaClient) {}
+
+  async record(signal: { id: string; userId: string; sessionId: string; type: string; createdAt: Date }): Promise<"created" | "exists"> {
+    try {
+      await this.prisma.riskSignal.create({ data: { ...signal, updatedAt: signal.createdAt } });
+      return "created";
+    } catch (error) {
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") return "exists";
+      throw error;
+    }
+  }
+}
+
+export class PrismaPinStore implements PinStore {
+  constructor(private readonly prisma: PrismaClient) {}
+
+  async get(userId: string) {
+    const row = await this.prisma.safetyPin.findUnique({ where: { userId } });
+    return row ? { userId: row.userId, cancelPinHash: row.cancelPinHash, duressPinHash: row.duressPinHash } : null;
+  }
+
+  async save(record: { userId: string; cancelPinHash: string; duressPinHash: string }): Promise<void> {
+    const now = new Date();
+    await this.prisma.safetyPin.upsert({
+      where: { userId: record.userId },
+      create: { ...record, createdAt: now, updatedAt: now },
+      update: { cancelPinHash: record.cancelPinHash, duressPinHash: record.duressPinHash, updatedAt: now },
+    });
+  }
+}
+
+export class PrismaEvidenceStore implements EvidenceStore {
+  constructor(private readonly prisma: PrismaClient) {}
+
+  async insert(chunk: {
+    id: string;
+    incidentId: string;
+    clientChunkId: string;
+    sequence: number;
+    sha256: string;
+    contentType: string;
+    byteLength: number;
+    payload: Buffer;
+    createdAt: Date;
+  }): Promise<"created" | "exists"> {
+    try {
+      await this.prisma.evidenceChunk.create({
+        data: { ...chunk, payload: new Uint8Array(chunk.payload), updatedAt: chunk.createdAt },
+      });
+      return "created";
+    } catch (error) {
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") return "exists";
+      throw error;
+    }
+  }
+
+  async list(incidentId: string) {
+    const rows = await this.prisma.evidenceChunk.findMany({
+      where: { incidentId },
+      orderBy: { sequence: "asc" },
+      select: { incidentId: true, clientChunkId: true, sequence: true, sha256: true, byteLength: true },
+    });
+    return rows;
+  }
+}

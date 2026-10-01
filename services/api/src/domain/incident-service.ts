@@ -10,7 +10,7 @@ import {
 import { AppError, UniqueConflictError } from "./errors";
 import { canTransition, isStale } from "./incident-rules";
 import { hasPermission, Permission } from "./rbac";
-import { canonicalJson, sha256 } from "./security";
+import { canonicalJson, deviceProofMessage, sha256, verifyDeviceProof } from "./security";
 import {
   ACTIVE_STATES,
   triggerLabel,
@@ -31,6 +31,7 @@ import {
 export interface CreateIncidentResult {
   incident: Incident;
   replayed: boolean;
+  escalated: boolean;
 }
 
 export class IncidentService {
@@ -69,6 +70,18 @@ export class IncidentService {
     if (!device) {
       throw new AppError("DEVICE_NOT_FOUND", 404, "Register this device before sending an SOS.");
     }
+    this.assertDeviceProof(device, input);
+
+    const prior = await this.incidents.findEscalation(input.triggerId);
+    if (prior) {
+      const incident = await this.incidents.findById(prior.incidentId);
+      if (incident && incident.userId === actor.id) {
+        return { incident: toIncidentDto(incident), replayed: true, escalated: true };
+      }
+    }
+
+    const active = await this.incidents.findActiveForUser(actor.id);
+    if (active) return this.escalate(actor, active, input, requestId);
 
     const now = this.clock.now();
     const capsule = input.distressCapsule;
@@ -143,7 +156,73 @@ export class IncidentService {
     });
     const dto = toIncidentDto(incident);
     this.publisher.publish("incident.created", dto);
-    return { incident: dto, replayed: false };
+    return { incident: dto, replayed: false, escalated: false };
+  }
+
+  private assertDeviceProof(device: { publicKey?: string | null; devicePublicId: string }, input: CreateIncidentInput): void {
+    if (!device.publicKey) return;
+    const proof = input.deviceProof;
+    if (!proof) throw new AppError("DEVICE_PROOF_REQUIRED", 401, "This phone must sign the SOS.");
+    const skew = Math.abs(this.clock.now().getTime() - new Date(proof.signedAt).getTime());
+    if (skew > 10 * 60 * 1000) throw new AppError("DEVICE_PROOF_EXPIRED", 401, "The SOS signature is too old.");
+    const message = deviceProofMessage(input.triggerId, device.devicePublicId, proof.signedAt);
+    if (!verifyDeviceProof(device.publicKey, proof.signature, message)) {
+      throw new AppError("DEVICE_PROOF_INVALID", 401, "The SOS signature does not match this phone.");
+    }
+  }
+
+  private async escalate(
+    actor: Actor,
+    active: IncidentRecord,
+    input: CreateIncidentInput,
+    requestId: string | null,
+  ): Promise<CreateIncidentResult> {
+    const now = this.clock.now();
+    const recorded = await this.incidents.recordEscalation({
+      id: this.ids.uuid(),
+      incidentId: active.id,
+      triggerId: input.triggerId,
+      triggerType: input.triggerType,
+      createdAt: now,
+    });
+    if (recorded === "created") {
+      if (active.isTest && !input.isTest) {
+        active.isTest = false;
+        active.updatedAt = now;
+        await this.incidents.save(active);
+        await this.timeline.append({
+          id: this.ids.uuid(),
+          incidentId: active.id,
+          type: "incident.promoted",
+          message: "A real SOS replaced the test session on this incident.",
+          occurredAt: now.toISOString(),
+          actorId: actor.id,
+        });
+      }
+      await this.timeline.append({
+        id: this.ids.uuid(),
+        incidentId: active.id,
+        type: "incident.escalated",
+        message: input.isTest && !active.isTest
+          ? "A test trigger arrived during a live incident."
+          : `${triggerLabel(input.triggerType)} repeated. The open incident was escalated.`,
+        occurredAt: now.toISOString(),
+        actorId: actor.id,
+      });
+      await this.audit.append({
+        id: this.ids.uuid(),
+        actorId: actor.id,
+        action: "incident.escalated",
+        entityType: "Incident",
+        entityId: active.id,
+        correlationId: active.correlationId,
+        requestId,
+        metadata: { triggerType: input.triggerType, triggerId: input.triggerId, isTest: input.isTest },
+        createdAt: now,
+      });
+      this.publisher.publish("incident.updated", toIncidentDto(active));
+    }
+    return { incident: toIncidentDto(active), replayed: recorded === "exists", escalated: true };
   }
 
   async listForActor(actor: Actor): Promise<Incident[]> {
@@ -413,7 +492,7 @@ export class IncidentService {
     if (existing.userId !== actor.id || existing.requestHash !== requestHash) {
       throw new AppError("IDEMPOTENCY_CONFLICT", 409, "This trigger was already used with a different payload.");
     }
-    return { incident: toIncidentDto(existing), replayed: true };
+    return { incident: toIncidentDto(existing), replayed: true, escalated: false };
   }
 
   private async requireReadable(actor: Actor, incidentId: string): Promise<IncidentRecord> {

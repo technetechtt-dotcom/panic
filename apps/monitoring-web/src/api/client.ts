@@ -81,12 +81,44 @@ export interface Heartbeat {
 
 const base = import.meta.env.VITE_API_BASE_URL ?? "";
 
-export async function api<T>(path: string, token: string | null, init: RequestInit = {}): Promise<T> {
+let publishToken: ((token: string | null) => void) | null = null;
+let refreshInFlight: Promise<string | null> | null = null;
+
+export function bindSession(_token: string | null, publish: (token: string | null) => void): void {
+  publishToken = publish;
+}
+
+export function refreshSession(): Promise<string | null> {
+  if (!refreshInFlight) {
+    refreshInFlight = api<{ accessToken: string }>("/api/v1/auth/refresh", null, {
+      method: "POST",
+      body: JSON.stringify({}),
+    }, false)
+      .then((data) => {
+        publishToken?.(data.accessToken);
+        return data.accessToken;
+      })
+      .catch(() => {
+        publishToken?.(null);
+        return null;
+      })
+      .finally(() => {
+        refreshInFlight = null;
+      });
+  }
+  return refreshInFlight;
+}
+
+export async function api<T>(path: string, token: string | null, init: RequestInit = {}, allowRefresh = true): Promise<T> {
   const headers = new Headers(init.headers);
   if (init.body) headers.set("Content-Type", "application/json");
   if (token) headers.set("Authorization", `Bearer ${token}`);
   const response = await fetch(`${base}${path}`, { ...init, headers, credentials: "include" });
   const body = (await response.json().catch(() => ({}))) as { data?: T; error?: { message?: string; code?: string } };
+  if (response.status === 401 && allowRefresh && !path.endsWith("/auth/login") && !path.endsWith("/auth/refresh")) {
+    const renewed = await refreshSession();
+    if (renewed) return api<T>(path, renewed, init, false);
+  }
   if (!response.ok) {
     const unavailable = response.status === 502 || response.status === 503 || (response.status === 500 && !body.error?.message);
     throw new ApiError(

@@ -72,12 +72,14 @@ export interface DeviceRecord {
   model: string | null;
   osVersion: string;
   appVersion: string;
+  publicKey?: string | null;
   createdAt: Date;
   updatedAt: Date;
 }
 
 export interface DeviceStore {
   insert(device: DeviceRecord): Promise<void>;
+  save(device: DeviceRecord): Promise<void>;
   findByIdForUser(id: string, userId: string): Promise<DeviceRecord | null>;
   findByPublicId(userId: string, devicePublicId: string): Promise<DeviceRecord | null>;
   listForUser(userId: string): Promise<DeviceRecord[]>;
@@ -118,6 +120,15 @@ export interface IncidentRecord {
 export interface IncidentStore {
   findByTriggerId(triggerId: string): Promise<IncidentRecord | null>;
   findById(id: string): Promise<IncidentRecord | null>;
+  findActiveForUser(userId: string): Promise<IncidentRecord | null>;
+  findEscalation(triggerId: string): Promise<{ incidentId: string } | null>;
+  recordEscalation(event: {
+    id: string;
+    incidentId: string;
+    triggerId: string;
+    triggerType: IncidentRecord["triggerType"];
+    createdAt: Date;
+  }): Promise<"created" | "exists">;
   insert(incident: IncidentRecord): Promise<void>;
   save(incident: IncidentRecord): Promise<void>;
   listActive(): Promise<IncidentRecord[]>;

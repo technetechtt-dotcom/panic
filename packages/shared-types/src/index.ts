@@ -137,7 +137,7 @@ export interface Heartbeat {
   charging: boolean;
   networkType: NetworkType;
   deviceOnline: boolean;
-  evidenceStatus: "NONE";
+  evidenceStatus: "NONE" | "RECORDING" | "UPLOADING" | "STORED";
   permissionsStatus: string;
   batteryMode: "NORMAL" | "REDUCED" | "SURVIVAL" | "CRITICAL_ONLY";
 }

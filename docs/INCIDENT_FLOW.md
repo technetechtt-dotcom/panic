@@ -37,13 +37,15 @@ This version only moves an incident through the endpoints that exist:
 | Acknowledge | `SOS` | `ACKNOWLEDGED` |
 | Resolve | `SOS` or `ACKNOWLEDGED` | `RESOLVED` |
 
-The transition table also lists `RESPONDING`, `USER_LOCATED`, and `ARCHIVED`, but there is no endpoint that performs those moves yet. A user cannot acknowledge or resolve an incident.
+The transition table also lists `RESPONDING`, `USER_LOCATED`, and `ARCHIVED`, but there is no endpoint that performs those moves yet. A user cannot acknowledge an incident. A cancel PIN can resolve one.
 
-`duress` is stored when the distress capsule says `duress: true`. There is no PIN screen, so the phone does not set that flag. The dashboard shows `POSSIBLE FORCED CANCELLATION` when the flag is true. That label is a signal for an operator, not a finding that someone was forced.
+`duress` is stored when the distress capsule says `duress: true`, and also when the duress PIN is used on cancel. The phone always shows "Emergency cancelled". The incident stays open and the dashboard shows `POSSIBLE FORCED CANCELLATION`. That label is a signal for an operator, not a finding that someone was forced. A cancel PIN resolves the incident.
 
-## Practice mode
+A second deliberate trigger while an incident is still open does not create another incident. It is stored as an escalation on the open one. A real SOS promotes a test incident.
 
-The settings switch sets `isTest: true` on the next SOS. The incident is still created and still appears in the operator list with a `TEST INCIDENT` badge. Summary counts exclude test incidents. `highRiskAlerts` and `respondersActive` are `null` because those features are not running.
+## Test sessions
+
+There is no persistent practice switch. Settings starts a test session that expires after 10 minutes. SOS during that window is `isTest: true`. Summary counts exclude test incidents. `highRiskAlerts` and `respondersActive` are `null` because those counts are not calculated.
 
 ## Offline
 

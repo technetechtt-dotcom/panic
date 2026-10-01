@@ -1,4 +1,4 @@
-import { createHash, randomBytes, scrypt as scryptCallback, timingSafeEqual } from "node:crypto";
+import { createHash, createPublicKey, randomBytes, scrypt as scryptCallback, timingSafeEqual, verify } from "node:crypto";
 import { SignJWT, jwtVerify } from "jose";
 import type { Role } from "@guardian/shared-types";
 
@@ -64,6 +64,23 @@ export function generateRefreshToken(): string {
 
 export function hashToken(token: string): string {
   return createHash("sha256").update(token).digest("hex");
+}
+
+export function deviceProofMessage(triggerId: string, devicePublicId: string, signedAt: string): string {
+  return `${triggerId}|${devicePublicId}|${signedAt}`;
+}
+
+export function verifyDeviceProof(publicKeySpkiBase64: string, signatureBase64: string, message: string): boolean {
+  try {
+    const key = createPublicKey({
+      key: Buffer.from(publicKeySpkiBase64, "base64"),
+      format: "der",
+      type: "spki",
+    });
+    return verify("sha256", Buffer.from(message, "utf8"), key, Buffer.from(signatureBase64, "base64"));
+  } catch {
+    return false;
+  }
 }
 
 export interface AccessClaims {
