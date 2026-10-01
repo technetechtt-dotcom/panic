@@ -1,0 +1,19 @@
+{
+  "name": "@guardian/shared-validation",
+  "version": "0.1.0",
+  "private": true,
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "node --import tsx --test src/validation.test.ts"
+  },
+  "dependencies": {
+    "@guardian/shared-types": "*",
+    "zod": "^3.25.67"
+  },
+  "devDependencies": {
+    "tsx": "^4.20.3",
+    "typescript": "^5.8.3"
+  }
+}

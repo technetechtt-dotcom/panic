@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.Guardian" parent="android:Theme.Material.NoActionBar" />
+    <string name="app_name">Guardian</string>
+    <string name="sos_action">Send emergency SOS now</string>
+    <string name="monitoring_channel">Emergency monitoring</string>
+    <string name="monitoring_text">Guardian emergency is active. Location is being shared with the monitoring hub.</string>
+</resources>

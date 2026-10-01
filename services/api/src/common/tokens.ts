@@ -1,0 +1,15 @@
+export const USER_STORE = Symbol("USER_STORE");
+export const REFRESH_STORE = Symbol("REFRESH_STORE");
+export const CONSENT_STORE = Symbol("CONSENT_STORE");
+export const DEVICE_STORE = Symbol("DEVICE_STORE");
+export const INCIDENT_STORE = Symbol("INCIDENT_STORE");
+export const LOCATION_STORE = Symbol("LOCATION_STORE");
+export const HEARTBEAT_STORE = Symbol("HEARTBEAT_STORE");
+export const TIMELINE_STORE = Symbol("TIMELINE_STORE");
+export const AUDIT_STORE = Symbol("AUDIT_STORE");
+export const APP_CONFIG = Symbol("APP_CONFIG");
+export const CLOCK = Symbol("CLOCK");
+export const IDS = Symbol("IDS");
+export const ACCESS_TOKENS = Symbol("ACCESS_TOKENS");
+export const PASSWORD_HASHER = Symbol("PASSWORD_HASHER");
+export const REALTIME = Symbol("REALTIME");

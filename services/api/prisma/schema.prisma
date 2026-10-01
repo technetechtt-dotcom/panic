@@ -1,0 +1,225 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  USER
+  GUARDIAN
+  MONITOR_OPERATOR
+  SUPERVISOR
+  RESPONDER
+  ADMIN
+}
+
+enum IncidentState {
+  PROTECTED
+  CONCERN
+  HIGH_RISK
+  SOS
+  ACKNOWLEDGED
+  RESPONDING
+  USER_LOCATED
+  RESOLVED
+  ARCHIVED
+}
+
+enum TriggerType {
+  VOLUME_BUTTON
+  VOICE_SAFE_WORD
+  MANUAL_SOS
+  JOURNEY_TIMEOUT
+  WEARABLE
+  FALL_OR_IMPACT
+  SAFETY_CHECK_FAILURE
+  DURESS
+  SYSTEM_RISK_ESCALATION
+}
+
+enum ContactStatus {
+  ONLINE
+  DEVICE_CONTACT_LOST
+}
+
+model User {
+  id           String          @id @db.Uuid
+  email        String          @unique
+  passwordHash String
+  displayName  String
+  role         Role            @default(USER)
+  createdAt    DateTime        @default(now())
+  updatedAt    DateTime        @updatedAt
+  devices      Device[]
+  incidents    Incident[]
+  refreshTokens RefreshToken[]
+  consents     ConsentRecord[]
+  auditEvents  AuditEvent[]    @relation("AuditActor")
+}
+
+model RefreshToken {
+  id           String    @id @db.Uuid
+  userId       String    @db.Uuid
+  familyId     String    @db.Uuid
+  tokenHash    String    @unique
+  expiresAt    DateTime
+  revokedAt    DateTime?
+  replacedById String?   @db.Uuid
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([familyId])
+}
+
+model ConsentRecord {
+  id        String   @id @db.Uuid
+  userId    String   @db.Uuid
+  purpose   String
+  version   String
+  granted   Boolean
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, purpose])
+}
+
+model Device {
+  id             String     @id @db.Uuid
+  userId         String     @db.Uuid
+  devicePublicId String     @db.Uuid
+  platform       String
+  manufacturer   String?
+  model          String?
+  osVersion      String
+  appVersion     String
+  createdAt      DateTime   @default(now())
+  updatedAt      DateTime   @updatedAt
+  user           User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  incidents      Incident[]
+
+  @@unique([userId, devicePublicId])
+  @@index([userId])
+}
+
+model Incident {
+  id                 String            @id @db.Uuid
+  userId             String            @db.Uuid
+  deviceId           String            @db.Uuid
+  triggerId          String            @unique @db.Uuid
+  triggerType        TriggerType
+  requestHash        String
+  state              IncidentState
+  isTest             Boolean           @default(false)
+  duress             Boolean           @default(false)
+  correlationId      String            @db.Uuid
+  protectionMode     String
+  contactStatus      ContactStatus     @default(ONLINE)
+  contactLostAt      DateTime?
+  capsuleJson        Json
+  lastHeartbeatAt    DateTime?
+  lastPositionAt     DateTime?
+  lastLatitude       Float?
+  lastLongitude      Float?
+  lastAccuracy       Float?
+  lastSpeed          Float?
+  lastHeading        Float?
+  lastBattery        Float?
+  acknowledgedAt     DateTime?
+  acknowledgedById   String?           @db.Uuid
+  resolvedAt         DateTime?
+  resolvedById       String?           @db.Uuid
+  createdAt          DateTime          @default(now())
+  updatedAt          DateTime          @updatedAt
+  user               User              @relation(fields: [userId], references: [id])
+  device             Device            @relation(fields: [deviceId], references: [id])
+  locations          IncidentLocation[]
+  heartbeats         DeviceHeartbeat[]
+  timeline           TimelineEvent[]
+
+  @@index([state, isTest, createdAt])
+  @@index([userId, createdAt])
+  @@index([correlationId])
+}
+
+model IncidentLocation {
+  id            String   @id @db.Uuid
+  incidentId    String   @db.Uuid
+  clientPointId String   @db.Uuid
+  latitude      Float
+  longitude     Float
+  accuracy      Float?
+  speed         Float?
+  bearing       Float?
+  altitude      Float?
+  recordedAt    DateTime
+  source        String
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  incident      Incident @relation(fields: [incidentId], references: [id], onDelete: Cascade)
+
+  @@unique([incidentId, clientPointId])
+  @@index([incidentId, recordedAt])
+}
+
+model DeviceHeartbeat {
+  id                 String   @id @db.Uuid
+  incidentId         String   @db.Uuid
+  clientHeartbeatId  String   @db.Uuid
+  recordedAt         DateTime
+  latitude           Float?
+  longitude          Float?
+  accuracy           Float?
+  speed              Float?
+  heading            Float?
+  batteryLevel       Float?
+  charging           Boolean
+  networkType        String
+  deviceOnline       Boolean
+  evidenceStatus     String
+  permissionsStatus  String
+  batteryMode        String
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+  incident           Incident @relation(fields: [incidentId], references: [id], onDelete: Cascade)
+
+  @@unique([incidentId, clientHeartbeatId])
+  @@index([incidentId, recordedAt])
+}
+
+model TimelineEvent {
+  id         String   @id @db.Uuid
+  incidentId String   @db.Uuid
+  type       String
+  message    String
+  occurredAt DateTime
+  actorId    String?  @db.Uuid
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+  incident   Incident @relation(fields: [incidentId], references: [id], onDelete: Cascade)
+
+  @@index([incidentId, occurredAt])
+}
+
+model AuditEvent {
+  id            String   @id @db.Uuid
+  actorId       String?  @db.Uuid
+  action        String
+  entityType    String
+  entityId      String
+  correlationId String?
+  requestId     String?
+  metadata      Json?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  actor         User?    @relation("AuditActor", fields: [actorId], references: [id])
+
+  @@index([entityType, entityId])
+  @@index([correlationId])
+  @@index([createdAt])
+}

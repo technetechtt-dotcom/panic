@@ -1,0 +1,21 @@
+{
+  "name": "guardian",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Guardian personal safety and emergency response platform",
+  "workspaces": [
+    "packages/*",
+    "services/*",
+    "apps/monitoring-web"
+  ],
+  "scripts": {
+    "build": "npm run build -w @guardian/shared-types && npm run build -w @guardian/shared-validation && npm run build -w @guardian/api && npm run build -w @guardian/monitoring-web",
+    "test": "npm run test -w @guardian/shared-validation && npm run test -w @guardian/api && npm run test -w @guardian/monitoring-web",
+    "dev:db": "npm run dev:postgres -w @guardian/api",
+    "dev:api": "npm run dev -w @guardian/api",
+    "dev:web": "npm run dev -w @guardian/monitoring-web"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}
