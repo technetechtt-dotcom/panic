@@ -6,6 +6,8 @@ import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
 import dagger.hilt.components.SingletonComponent
+import kotlinx.serialization.EncodeDefault
+import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import okhttp3.MediaType.Companion.toMediaType
@@ -63,7 +65,7 @@ data class DeviceBody(
     val model: String,
     val osVersion: String,
     val appVersion: String,
-    val publicKey: String? = null,
+    @OptIn(ExperimentalSerializationApi::class) @EncodeDefault(EncodeDefault.Mode.NEVER) val publicKey: String? = null,
 )
 
 @Serializable
@@ -71,6 +73,15 @@ data class DeviceWire(val id: String)
 
 @Serializable
 data class DeviceEnvelope(val data: DeviceWire)
+
+@Serializable
+data class EmergencyCredentialBody(val deviceId: String)
+
+@Serializable
+data class EmergencyCredentialWire(val credential: String)
+
+@Serializable
+data class EmergencyCredentialEnvelope(val data: EmergencyCredentialWire)
 
 @Serializable
 data class DeviceProofBody(val algorithm: String, val signature: String, val signedAt: String)
@@ -83,11 +94,12 @@ data class CreateIncidentBody(
     val deviceId: String,
     val isTest: Boolean,
     val distressCapsule: DistressCapsule,
-    val deviceProof: DeviceProofBody? = null,
+    @OptIn(ExperimentalSerializationApi::class) @EncodeDefault(EncodeDefault.Mode.NEVER) val deviceProof: DeviceProofBody? = null,
+    @OptIn(ExperimentalSerializationApi::class) @EncodeDefault(EncodeDefault.Mode.NEVER) val metadata: Map<String, String>? = null,
 )
 
 @Serializable
-data class IncidentWire(val id: String, val state: String, val isTest: Boolean)
+data class IncidentWire(val id: String, val state: String, val isTest: Boolean, val duress: Boolean = false)
 
 @Serializable
 data class IncidentEnvelope(val data: IncidentWire, val replayed: Boolean = false, val escalated: Boolean = false)
@@ -147,6 +159,9 @@ interface GuardianApi {
 
     @POST("devices")
     suspend fun registerDevice(@Body body: DeviceBody): DeviceEnvelope
+
+    @POST("devices/emergency-credential")
+    suspend fun emergencyCredential(@Body body: EmergencyCredentialBody): EmergencyCredentialEnvelope
 
     @POST("incidents")
     suspend fun createIncident(@Body body: CreateIncidentBody): IncidentEnvelope
@@ -229,6 +244,7 @@ class RetrofitIncidentApi constructor(
     private val api: GuardianApi,
     private val signer: DeviceSigner,
     private val tokens: TokenStore,
+    private val settings: SettingsStore,
 ) : IncidentRemoteApi {
     override suspend fun create(incident: LocalIncident): RemoteCreateResult = post(incident, incident.triggerId, incident.triggerType.name)
 
@@ -246,6 +262,7 @@ class RetrofitIncidentApi constructor(
                 isTest = incident.isTest,
                 distressCapsule = incident.capsule,
                 deviceProof = proof(triggerId),
+                metadata = mapOf("stage" to settings.triggerStage()),
             ),
         )
         return RemoteCreateResult(response.data.id, response.replayed, response.escalated)
@@ -264,7 +281,7 @@ class RetrofitIncidentApi constructor(
 object NetworkModule {
     @Provides
     @Singleton
-    fun json(): Json = Json { ignoreUnknownKeys = true; explicitNulls = false }
+    fun json(): Json = Json { ignoreUnknownKeys = true; encodeDefaults = true; explicitNulls = true }
 
     @Provides
     @Singleton
@@ -274,18 +291,28 @@ object NetworkModule {
             .callTimeout(20, TimeUnit.SECONDS)
             .addInterceptor { chain ->
                 val token = tokens.accessToken()
-                val request = if (token.isNullOrBlank()) {
-                    chain.request()
-                } else {
-                    chain.request().newBuilder().header("Authorization", "Bearer $token").build()
+                val emergency = tokens.emergencyCredential()
+                val request = when {
+                    !token.isNullOrBlank() -> chain.request().newBuilder().header("Authorization", "Bearer $token").build()
+                    !emergency.isNullOrBlank() -> chain.request().newBuilder().header("Authorization", "Emergency $emergency").build()
+                    else -> chain.request()
                 }
                 chain.proceed(request)
             }
             .authenticator { _, response ->
-                if (responseCount(response) >= 2) return@authenticator null
-                val failed = response.request.header("Authorization")?.removePrefix("Bearer ")
-                val renewed = apiHolder.refresh(refreshClient, failed) ?: return@authenticator null
-                response.request.newBuilder().header("Authorization", "Bearer $renewed").build()
+                if (response.request.header("X-Guardian-Auth-Tried") != null) return@authenticator null
+                if (responseCount(response) < 2) {
+                    val failed = response.request.header("Authorization")?.removePrefix("Bearer ")?.trim()
+                    val renewed = if (failed.isNullOrBlank()) null else apiHolder.refresh(refreshClient, failed)
+                    if (!renewed.isNullOrBlank()) {
+                        return@authenticator response.request.newBuilder().header("Authorization", "Bearer $renewed").build()
+                    }
+                }
+                val emergency = tokens.emergencyCredential() ?: return@authenticator null
+                response.request.newBuilder()
+                    .header("Authorization", "Emergency $emergency")
+                    .header("X-Guardian-Auth-Tried", "1")
+                    .build()
             }
             .build()
     }
@@ -303,7 +330,8 @@ object NetworkModule {
 
     @Provides
     @Singleton
-    fun remote(api: GuardianApi, signer: DeviceSigner, tokens: TokenStore): IncidentRemoteApi = RetrofitIncidentApi(api, signer, tokens)
+    fun remote(api: GuardianApi, signer: DeviceSigner, tokens: TokenStore, settings: SettingsStore): IncidentRemoteApi =
+        RetrofitIncidentApi(api, signer, tokens, settings)
 
     @Provides
     @Singleton

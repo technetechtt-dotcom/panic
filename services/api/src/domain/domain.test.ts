@@ -10,6 +10,7 @@ import { canTransition } from "./incident-rules";
 import type { Actor, DeviceRecord, RealtimePublisher } from "./ports";
 import { hasPermission, Permission } from "./rbac";
 import { canonicalJson, deviceProofMessage, JwtAccessTokens, redact, ScryptPasswordHasher, sha256 } from "./security";
+import { emergencyRouteAllowed } from "./emergency-route";
 import { SimulatedSmsProvider } from "./sms";
 import { createMemory, type MemoryAudit } from "../testing/memory";
 
@@ -369,4 +370,12 @@ test("failed login does not reveal whether the email exists beyond the shared me
   );
   const auditRows = (memory.audit as MemoryAudit).rows;
   assert.equal(auditRows.length, 0);
+});
+
+test("an emergency credential can send SOS data and nothing administrative", () => {
+  assert.equal(emergencyRouteAllowed("POST", "/api/v1/incidents"), true);
+  assert.equal(emergencyRouteAllowed("POST", "/api/v1/incidents/abc/evidence"), true);
+  assert.equal(emergencyRouteAllowed("POST", "/api/v1/guardians"), false);
+  assert.equal(emergencyRouteAllowed("POST", "/api/v1/auth/login"), false);
+  assert.equal(emergencyRouteAllowed("GET", "/api/v1/users/me"), false);
 });

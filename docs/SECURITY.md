@@ -26,8 +26,9 @@ Milestone 1 treats the SOS path as the asset that must stay available and the ac
 - No Redis-backed rate limit.
 - No API container image.
 - No organisation-wide secret manager wiring. `.env.example` lists names only.
-- No duress PIN. Do not treat the `duress` boolean as proof of a forced cancellation.
-- No evidence encryption or object storage.
+- Duress PIN exists. The phone always shows the same cancelled result. The server keeps the incident open and emits `duress.detected`. Do not treat a quiet phone as proof the emergency ended.
+- Evidence audio is encrypted with an Android Keystore key before it is queued. The server still stores the decrypted chunk in PostgreSQL. There is no object-storage vault.
+- A device emergency credential can send SOS, location, heartbeat, and evidence after the login refresh token is gone. It cannot change the account, guardians, or operator data.
 - Release minify is off.
 - `npm audit` reported vulnerabilities in the dependency tree. They have not been triaged.
 - WebSocket auth checks the database role at connect time. A demotion does not drop an already joined socket until the access token expires or the client reconnects.

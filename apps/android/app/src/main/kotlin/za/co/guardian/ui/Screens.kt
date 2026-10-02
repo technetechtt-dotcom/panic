@@ -163,6 +163,7 @@ class SettingsViewModel @Inject constructor(
     private val auth: AuthRepository,
     private val settings: SettingsStore,
     private val protection: za.co.guardian.data.ProtectionActions,
+    @dagger.hilt.android.qualifiers.ApplicationContext private val context: android.content.Context,
 ) : ViewModel() {
     var testRemaining by mutableStateOf(settings.remainingMs())
         private set
@@ -184,17 +185,107 @@ class SettingsViewModel @Inject constructor(
 
     fun startVolumeTest() {
         settings.startVolumeTest()
-        status = "Press volume down three times in the next 30 seconds. Guardian will not send SOS."
+        val pattern = settings.volumePattern()
+        status = "Press ${if (pattern.key == za.co.guardian.core.VolumeKey.DOWN) "volume down" else "volume up"} ${pattern.presses} times in the next 30 seconds. Guardian will not send SOS."
+    }
+
+    fun cycleVolumePattern() {
+        val order = za.co.guardian.core.VolumePattern.entries
+        val next = order[(order.indexOf(settings.volumePattern()) + 1) % order.size]
+        settings.setVolumePattern(next)
+        status = "Volume trigger is now ${next.presses}× ${next.key.name.lowercase()}."
+    }
+
+    fun toggleVolumeVibration() {
+        val enabled = !settings.vibrateOnTrigger()
+        settings.setVibrateOnTrigger(enabled)
+        status = if (enabled) "The phone vibrates when the volume pattern matches." else "Volume confirmation is silent."
+    }
+
+    fun cycleVolumeWindow() {
+        val windows = listOf(1_000L, 1_500L, 2_000L, 3_000L)
+        val index = windows.indexOf(settings.volumeWindowMs()).let { if (it < 0) 1 else it }
+        val next = windows[(index + 1) % windows.size]
+        settings.setVolumeWindowMs(next)
+        status = "Volume presses must fit inside ${next / 1000.0} seconds."
     }
 
     fun updateShareAudio(enabled: Boolean) {
+        val granted = androidx.core.content.ContextCompat.checkSelfPermission(
+            context,
+            android.Manifest.permission.RECORD_AUDIO,
+        ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+        if (enabled && !granted) {
+            settings.setShareAudio(false)
+            shareAudio = false
+            status = "Microphone permission was not granted, so audio sharing stays off."
+            return
+        }
         settings.setShareAudio(enabled)
         shareAudio = enabled
     }
 
     fun saveSafeWord(phrase: String) {
         settings.setSafeWord(phrase)
-        status = if (phrase.trim().length < 4) "Use a phrase of at least 4 letters." else "Safe word saved on this phone. It is not uploaded."
+        status = za.co.guardian.core.phraseQualityWarning(phrase) + " The phrase stays on this phone."
+    }
+
+    fun recordSafeWordSample() {
+        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            val granted = androidx.core.content.ContextCompat.checkSelfPermission(
+                context,
+                android.Manifest.permission.RECORD_AUDIO,
+            ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+            if (!granted) {
+                status = "Allow the microphone before recording a sample."
+                return@launch
+            }
+            val samples = recordPhraseSample()
+            if (samples == null) {
+                status = "The microphone did not start."
+                return@launch
+            }
+            settings.addSafeWordTemplate(za.co.guardian.core.pcmFeatures(samples))
+            status = "${settings.safeWordTemplateCount()} samples saved. ${za.co.guardian.core.phraseQualityWarning(settings.safeWord())}"
+        }
+    }
+
+    fun prepareSafeWord(): Boolean {
+        if (settings.safeWord().trim().length < 4 || settings.safeWordTemplateCount() < 3) {
+            status = "Save a phrase and record it 3 times before listening starts."
+            return false
+        }
+        settings.safeWordEnabled(true)
+        status = "Safe word protection is on. Listening is on-device and the microphone indicator stays visible."
+        return true
+    }
+
+    private fun recordPhraseSample(): ShortArray? {
+        val rate = 16_000
+        val min = android.media.AudioRecord.getMinBufferSize(rate, android.media.AudioFormat.CHANNEL_IN_MONO, android.media.AudioFormat.ENCODING_PCM_16BIT)
+        if (min <= 0) return null
+        val recorder = android.media.AudioRecord(
+            android.media.MediaRecorder.AudioSource.MIC,
+            rate,
+            android.media.AudioFormat.CHANNEL_IN_MONO,
+            android.media.AudioFormat.ENCODING_PCM_16BIT,
+            min.coerceAtLeast(rate * 2),
+        )
+        if (recorder.state != android.media.AudioRecord.STATE_INITIALIZED) {
+            recorder.release()
+            return null
+        }
+        val samples = ShortArray(rate * 2)
+        recorder.startRecording()
+        var filled = 0
+        while (filled < samples.size) {
+            val read = recorder.read(samples, filled, samples.size - filled)
+            if (read <= 0) break
+            filled += read
+        }
+        recorder.stop()
+        recorder.release()
+        return if (filled > rate / 2) samples.copyOf(filled) else null
     }
 
     fun checkConnection() = run { "Backend ${auth.checkConnection()}" }
@@ -310,6 +401,7 @@ fun HomeScreen(
     val health by viewModel.health.collectAsStateWithLifecycle()
     val message by viewModel.message.collectAsStateWithLifecycle()
     val practice by viewModel.practice.collectAsStateWithLifecycle()
+    androidx.compose.runtime.LaunchedEffect(Unit) { viewModel.refresh() }
     Scaffold(bottomBar = { BottomNav(onHome = {}, onHistory = onHistory, onSettings = onSettings, selected = "home") }) { padding ->
         Column(Modifier.fillMaxSize().padding(padding).padding(20.dp).verticalScroll(rememberScrollState())) {
             if (practice) Text("TEST MODE", color = Color(0xFF111111), modifier = Modifier.fillMaxWidth().padding(8.dp))
@@ -372,12 +464,21 @@ fun SettingsScreen(
     var cancelPin by remember { mutableStateOf("") }
     var duressPin by remember { mutableStateOf("") }
     var showVolumeDisclosure by remember { mutableStateOf(false) }
+    var pendingMic by remember { mutableStateOf<String?>(null) }
     val audioPermission = androidx.activity.compose.rememberLauncherForActivityResult(
         androidx.activity.result.contract.ActivityResultContracts.RequestPermission(),
     ) { granted ->
-        if (granted) {
-            androidx.core.content.ContextCompat.startForegroundService(context, android.content.Intent(context, za.co.guardian.service.SafeWordService::class.java))
+        when (pendingMic) {
+            "share" -> viewModel.updateShareAudio(granted)
+            "sample" -> if (granted) viewModel.recordSafeWordSample()
+            "listen" -> if (granted && viewModel.prepareSafeWord()) {
+                androidx.core.content.ContextCompat.startForegroundService(
+                    context,
+                    android.content.Intent(context, za.co.guardian.service.SafeWordService::class.java),
+                )
+            }
         }
+        pendingMic = null
     }
     androidx.compose.runtime.LaunchedEffect(Unit) { viewModel.refresh() }
     if (showVolumeDisclosure) {
@@ -385,7 +486,7 @@ fun SettingsScreen(
             onDismissRequest = { showVolumeDisclosure = false },
             title = { Text("Volume button SOS") },
             text = {
-                Text("Guardian needs an accessibility service to notice three volume-down presses. It does not read the screen, does not block the volume buttons, and is not an accessibility tool. Android will show that Guardian is on. Play policy requires this disclosure before you enable it.")
+                Text("Guardian needs an accessibility service to notice the volume pattern you choose. It does not read the screen, does not block the volume buttons, and is not an accessibility tool. Android will show that Guardian is on. Play policy requires this disclosure before you enable it.")
             },
             confirmButton = {
                 TextButton(onClick = {
@@ -407,16 +508,30 @@ fun SettingsScreen(
             Button(onClick = viewModel::startTest, modifier = Modifier.fillMaxWidth()) { Text("Start 10 minute test") }
             Spacer(Modifier.height(12.dp))
             Button(onClick = { showVolumeDisclosure = true }, modifier = Modifier.fillMaxWidth()) { Text("Enable volume SOS") }
+            Button(onClick = viewModel::cycleVolumePattern, modifier = Modifier.fillMaxWidth()) { Text("Change volume pattern") }
+            Button(onClick = viewModel::cycleVolumeWindow, modifier = Modifier.fillMaxWidth()) { Text("Change volume timing window") }
+            Button(onClick = viewModel::toggleVolumeVibration, modifier = Modifier.fillMaxWidth()) { Text("Toggle volume vibration confirmation") }
             Button(onClick = viewModel::startVolumeTest, modifier = Modifier.fillMaxWidth()) { Text("Test volume button for 30 seconds") }
             OutlinedTextField(safeWord, { safeWord = it }, label = { Text("Safe word") }, modifier = Modifier.fillMaxWidth().padding(top = 12.dp))
             Button(onClick = { viewModel.saveSafeWord(safeWord) }, modifier = Modifier.fillMaxWidth()) { Text("Save safe word on this phone") }
-            Button(onClick = { audioPermission.launch(android.Manifest.permission.RECORD_AUDIO) }, modifier = Modifier.fillMaxWidth()) { Text("Listen for safe word") }
-            Text("Listening uses the phone's speech recognizer and prefers an on-device model. Guardian does not upload the audio. The microphone indicator stays on.", modifier = Modifier.padding(vertical = 8.dp))
+            Button(onClick = {
+                pendingMic = "sample"
+                audioPermission.launch(android.Manifest.permission.RECORD_AUDIO)
+            }, modifier = Modifier.fillMaxWidth()) { Text("Record safe-word sample") }
+            Button(onClick = {
+                pendingMic = "listen"
+                audioPermission.launch(android.Manifest.permission.RECORD_AUDIO)
+            }, modifier = Modifier.fillMaxWidth()) { Text("Enable safe-word protection") }
+            Text("Detection runs on this phone from samples you record. Guardian does not upload those samples. The microphone indicator stays on while listening.", modifier = Modifier.padding(vertical = 8.dp))
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 Text("Share short audio during an on-screen SOS")
-                Switch(checked = viewModel.shareAudio, onCheckedChange = {
-                    if (it) audioPermission.launch(android.Manifest.permission.RECORD_AUDIO)
-                    viewModel.updateShareAudio(it)
+                Switch(checked = viewModel.shareAudio, onCheckedChange = { enabled ->
+                    if (enabled) {
+                        pendingMic = "share"
+                        audioPermission.launch(android.Manifest.permission.RECORD_AUDIO)
+                    } else {
+                        viewModel.updateShareAudio(false)
+                    }
                 })
             }
             OutlinedTextField(guardian, { guardian = it }, label = { Text("Guardian name") }, modifier = Modifier.fillMaxWidth().padding(top = 12.dp))

@@ -5,7 +5,14 @@ import { IncidentsPage } from "./pages/IncidentsPage";
 import { LoginPage } from "./pages/LoginPage";
 
 export function App() {
-  const { session } = useAuth();
+  const { session, restoring } = useAuth();
+  if (restoring) {
+    return (
+      <main className="grid min-h-screen place-items-center px-4">
+        <p>Restoring the operator session.</p>
+      </main>
+    );
+  }
   return (
     <Routes>
       <Route path="/login" element={session ? <Navigate to="/" replace /> : <LoginPage />} />

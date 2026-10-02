@@ -45,6 +45,9 @@ class TokenStore @Inject constructor(@ApplicationContext context: Context) {
         prefs.edit().putString(DEVICE, serverId).apply()
     }
 
+    fun emergencyCredential(): String? = prefs.getString(EMERGENCY, null)
+    fun saveEmergencyCredential(credential: String) = prefs.edit().putString(EMERGENCY, credential).apply()
+
     fun clear() {
         val publicId = prefs.getString(PUBLIC_DEVICE, null)
         prefs.edit().clear().apply()
@@ -57,6 +60,7 @@ class TokenStore @Inject constructor(@ApplicationContext context: Context) {
         const val USER = "user"
         const val DEVICE = "device"
         const val PUBLIC_DEVICE = "public_device"
+        const val EMERGENCY = "emergency"
     }
 }
 
@@ -99,6 +103,50 @@ class SettingsStore @Inject constructor(@ApplicationContext context: Context) : 
     fun setIncidentActive(active: Boolean) = prefs.edit().putBoolean(ACTIVE, active).apply()
     fun quietIncident(quiet: Boolean) = prefs.edit().putBoolean(QUIET, quiet).apply()
     fun quietIncident(): Boolean = prefs.getBoolean(QUIET, false)
+    fun volumePattern(): za.co.guardian.core.VolumePattern =
+        za.co.guardian.core.VolumePattern.fromStored(prefs.getString(VOLUME_PATTERN, null))
+    fun setVolumePattern(pattern: za.co.guardian.core.VolumePattern) =
+        prefs.edit().putString(VOLUME_PATTERN, pattern.name).apply()
+    fun volumeWindowMs(): Long = prefs.getLong(VOLUME_WINDOW, 1_500L).coerceIn(800L, 4_000L)
+    fun setVolumeWindowMs(windowMs: Long) = prefs.edit().putLong(VOLUME_WINDOW, windowMs.coerceIn(800L, 4_000L)).apply()
+    fun vibrateOnTrigger(): Boolean = prefs.getBoolean(VOLUME_VIBRATE, true)
+    fun setVibrateOnTrigger(enabled: Boolean) = prefs.edit().putBoolean(VOLUME_VIBRATE, enabled).apply()
+    fun volumeConnected(connected: Boolean) = prefs.edit().putBoolean(VOLUME_CONNECTED, connected).apply()
+    fun volumeConnected(): Boolean = prefs.getBoolean(VOLUME_CONNECTED, false)
+    fun advanceTrigger(): String {
+        val count = prefs.getInt(TRIGGER_COUNT, 0) + 1
+        prefs.edit().putInt(TRIGGER_COUNT, count).apply()
+        val stage = za.co.guardian.core.triggerStage(count)
+        if (stage != "SOS") prefs.edit().putBoolean(EVIDENCE_MODE, true).apply()
+        return stage
+    }
+    fun triggerStage(): String = za.co.guardian.core.triggerStage(prefs.getInt(TRIGGER_COUNT, 0).coerceAtLeast(1))
+    fun clearTrigger() = prefs.edit().putInt(TRIGGER_COUNT, 0).putBoolean(EVIDENCE_MODE, false).putBoolean(QUIET, false).apply()
+    fun evidenceMode(): Boolean = prefs.getBoolean(EVIDENCE_MODE, false)
+    fun setEvidenceMode(enabled: Boolean) = prefs.edit().putBoolean(EVIDENCE_MODE, enabled).apply()
+    fun safeWordTemplates(): List<FloatArray> {
+        return prefs.getString(SAFE_TEMPLATES, "").orEmpty().split(';').mapNotNull { row ->
+            val values = row.split(',').mapNotNull { it.toFloatOrNull() }
+            if (values.size < 8) null else values.take(8).toFloatArray()
+        }
+    }
+    fun addSafeWordTemplate(features: FloatArray) {
+        val encoded = features.joinToString(",")
+        val existing = prefs.getString(SAFE_TEMPLATES, "").orEmpty()
+        val next = if (existing.isBlank()) encoded else "$existing;$encoded"
+        prefs.edit().putString(SAFE_TEMPLATES, next).apply()
+    }
+    fun safeWordTemplateCount(): Int = safeWordTemplates().size
+    fun safeWordSensitivity(): Int = prefs.getInt(SAFE_SENSITIVITY, 50).coerceIn(0, 100)
+    fun setSafeWordSensitivity(value: Int) = prefs.edit().putInt(SAFE_SENSITIVITY, value.coerceIn(0, 100)).apply()
+    fun safeWordEnabled(enabled: Boolean) = prefs.edit().putBoolean(SAFE_ENABLED, enabled).apply()
+    fun safeWordEnabled(): Boolean = prefs.getBoolean(SAFE_ENABLED, false)
+    fun noteSafeWordHeartbeat(now: Long = System.currentTimeMillis()) = prefs.edit().putLong(SAFE_HEARTBEAT, now).apply()
+    fun safeWordHeartbeatAgeMs(now: Long = System.currentTimeMillis()): Long {
+        val at = prefs.getLong(SAFE_HEARTBEAT, 0L)
+        if (at == 0L) return Long.MAX_VALUE
+        return (now - at).coerceAtLeast(0L)
+    }
 
     private companion object {
         const val PRACTICE = "practice"
@@ -110,5 +158,15 @@ class SettingsStore @Inject constructor(@ApplicationContext context: Context) : 
         const val VOLUME_TEST_SEEN = "volume_test_seen"
         const val GUARDIAN_READY = "guardian_ready"
         const val QUIET = "quiet_incident"
+        const val VOLUME_PATTERN = "volume_pattern"
+        const val VOLUME_WINDOW = "volume_window_ms"
+        const val VOLUME_VIBRATE = "volume_vibrate"
+        const val VOLUME_CONNECTED = "volume_connected"
+        const val TRIGGER_COUNT = "trigger_count"
+        const val EVIDENCE_MODE = "evidence_mode"
+        const val SAFE_TEMPLATES = "safe_templates"
+        const val SAFE_SENSITIVITY = "safe_sensitivity"
+        const val SAFE_ENABLED = "safe_enabled"
+        const val SAFE_HEARTBEAT = "safe_heartbeat"
     }
 }

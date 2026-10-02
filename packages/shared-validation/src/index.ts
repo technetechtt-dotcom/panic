@@ -189,7 +189,7 @@ export const evidenceChunkSchema = z
     sequence: z.number().int().min(0).max(100000),
     sha256: z.string().regex(/^[a-f0-9]{64}$/),
     contentType: z.enum(["audio/pcm", "image/jpeg"]),
-    bytesBase64: z.string().regex(/^[A-Za-z0-9+/]+={0,2}$/).min(4).max(90000),
+    bytesBase64: z.string().regex(/^[A-Za-z0-9+/]+={0,2}$/).min(4).max(280000),
   })
   .strict();
 

@@ -2,10 +2,22 @@ package za.co.guardian.core
 
 enum class VolumeKey { UP, DOWN }
 
+enum class VolumePattern(val key: VolumeKey, val presses: Int) {
+    DOWN_2(VolumeKey.DOWN, 2),
+    DOWN_3(VolumeKey.DOWN, 3),
+    UP_2(VolumeKey.UP, 2),
+    UP_3(VolumeKey.UP, 3),
+    ;
+
+    companion object {
+        fun fromStored(value: String?): VolumePattern = entries.firstOrNull { it.name == value } ?: DOWN_3
+    }
+}
+
 class VolumeChordDetector(
-    private val requiredPresses: Int = 3,
-    private val windowMs: Long = 1_500,
-    private val direction: VolumeKey = VolumeKey.DOWN,
+    var requiredPresses: Int = 3,
+    var windowMs: Long = 1_500,
+    var direction: VolumeKey = VolumeKey.DOWN,
 ) {
     private val presses = ArrayDeque<Long>()
 
@@ -34,6 +46,84 @@ fun safeWordMatches(transcript: String, phrase: String): Boolean {
     val heard = normalisePhrase(transcript)
     if (heard.isEmpty()) return false
     return heard == wanted || heard.startsWith("$wanted ") || heard.endsWith(" $wanted") || heard.contains(" $wanted ")
+}
+
+fun triggerStage(triggerCount: Int): String = when {
+    triggerCount <= 1 -> "SOS"
+    triggerCount == 2 -> "EVIDENCE"
+    else -> "PRIORITY"
+}
+
+fun phraseQualityWarning(phrase: String): String {
+    val words = normalisePhrase(phrase).split(" ").filter { it.isNotBlank() }
+    if (words.isEmpty()) return "Choose a phrase before turning listening on."
+    if (words.size == 1 && words[0].length < 6) {
+        return "\"${words[0]}\" — high false-trigger risk. A phrase such as \"red dog\" is better, and a sentence is stronger."
+    }
+    if (words.size == 1) return "A single word is easier to say by accident. Two or more words are safer."
+    if (words.size >= 4) return "This is a strong phrase."
+    return "This phrase is better than a single short word."
+}
+
+fun pcmFeatures(samples: ShortArray, sampleRate: Int = 16_000): FloatArray {
+    if (samples.isEmpty()) return FloatArray(8)
+    val count = samples.size
+    var energy = 0.0
+    var crossings = 0
+    for (index in samples.indices) {
+        val sample = samples[index].toInt()
+        energy += sample.toDouble() * sample
+        if (index > 0 && (samples[index - 1].toInt() >= 0) != (sample >= 0)) crossings += 1
+    }
+    val bands = FloatArray(8)
+    bands[0] = kotlin.math.sqrt(energy / count).toFloat() / 32768f
+    bands[1] = crossings.toFloat() / count
+    val frequencies = doubleArrayOf(200.0, 400.0, 800.0, 1200.0, 2000.0, 3000.0)
+    for (band in frequencies.indices) {
+        val omega = 2.0 * Math.PI * frequencies[band] / sampleRate
+        val coefficient = 2.0 * kotlin.math.cos(omega)
+        var previous = 0.0
+        var prior = 0.0
+        for (sample in samples) {
+            val next = sample / 32768.0 + coefficient * previous - prior
+            prior = previous
+            previous = next
+        }
+        val power = previous * previous + prior * prior - coefficient * previous * prior
+        bands[band + 2] = kotlin.math.sqrt(power.coerceAtLeast(0.0)).toFloat()
+    }
+    return bands
+}
+
+fun featureSimilarity(left: FloatArray, right: FloatArray): Float {
+    val width = minOf(left.size, right.size)
+    if (width == 0) return 0f
+    var dot = 0.0
+    var leftEnergy = 0.0
+    var rightEnergy = 0.0
+    for (index in 0 until width) {
+        dot += left[index] * right[index]
+        leftEnergy += left[index] * left[index]
+        rightEnergy += right[index] * right[index]
+    }
+    if (leftEnergy <= 0.0 || rightEnergy <= 0.0) return 0f
+    return (dot / (kotlin.math.sqrt(leftEnergy) * kotlin.math.sqrt(rightEnergy))).toFloat()
+}
+
+fun keywordMatches(live: FloatArray, enrolled: List<FloatArray>, sensitivity: Int): Boolean {
+    if (enrolled.isEmpty()) return false
+    val threshold = 0.93f - (sensitivity.coerceIn(0, 100) / 100f) * 0.28f
+    return enrolled.any { featureSimilarity(live, it) >= threshold }
+}
+
+fun captureEvidence(kind: String, batteryPercent: Int): Boolean {
+    val mode = batteryMode(batteryPercent)
+    return when (kind) {
+        "audio" -> true
+        "photo" -> mode == BatteryMode.NORMAL || mode == BatteryMode.REDUCED
+        "video" -> mode == BatteryMode.NORMAL
+        else -> false
+    }
 }
 
 data class TestSession(val expiresAtEpochMs: Long) {

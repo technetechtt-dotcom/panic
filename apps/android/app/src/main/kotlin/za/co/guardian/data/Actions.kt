@@ -77,9 +77,14 @@ class DefaultSosActions @Inject constructor(
             ),
         )
         settings.setIncidentActive(true)
-        settings.quietIncident(false)
+        if (!settings.quietIncident()) settings.quietIncident(false)
+        val stage = settings.advanceTrigger()
         val tracking = signals.hasFineLocation()
-        val audio = type == za.co.guardian.core.TriggerType.MANUAL_SOS && settings.shareAudio()
+        val micGranted = androidx.core.content.ContextCompat.checkSelfPermission(
+            context,
+            android.Manifest.permission.RECORD_AUDIO,
+        ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+        val audio = !settings.quietIncident() && micGranted && (settings.evidenceMode() || (stage == "SOS" && type == za.co.guardian.core.TriggerType.MANUAL_SOS && settings.shareAudio()))
         controller.start(audio)
         if (incident.syncState == SyncState.PENDING) {
             val request = OneTimeWorkRequestBuilder<IncidentFlushWorker>()
@@ -133,22 +138,37 @@ class AndroidProtectionHealth @Inject constructor(
             android.provider.Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES,
         ).orEmpty()
         val component = android.content.ComponentName(context, za.co.guardian.service.VolumeSosService::class.java).flattenToString()
-        return if (enabled.contains(component)) {
-            HealthCheck("volume", "Volume trigger", CheckStatus.PASS, "Three volume-down presses send SOS. The buttons still change the volume.")
+        val pattern = settings.volumePattern()
+        val detail = "${pattern.presses}× ${if (pattern.key == za.co.guardian.core.VolumeKey.DOWN) "volume down" else "volume up"} within ${settings.volumeWindowMs() / 1000.0}s. The buttons still change the volume."
+        return if (enabled.contains(component) && settings.volumeConnected()) {
+            HealthCheck("volume", "Volume trigger", CheckStatus.PASS, detail)
         } else {
-            HealthCheck("volume", "Volume trigger", CheckStatus.FAIL, "Turn on Guardian in accessibility settings")
+            HealthCheck("volume", "Volume trigger", CheckStatus.FAIL, "Volume protection is off. Turn Guardian back on in accessibility settings.")
         }
     }
 
     private fun safeWordCheck(): HealthCheck {
         val phrase = settings.safeWord()
-        if (phrase.length < 4) return HealthCheck("safeword", "Safe word", CheckStatus.FAIL, "Choose a phrase of at least 4 letters")
-        val available = android.speech.SpeechRecognizer.isRecognitionAvailable(context)
-        return if (available) {
-            HealthCheck("safeword", "Safe word", CheckStatus.PASS, "Listening uses the phone speech recognizer. The microphone indicator stays visible.")
-        } else {
-            HealthCheck("safeword", "Safe word", CheckStatus.UNAVAILABLE, "This phone has no speech recognizer")
+        val configured = phrase.length >= 4
+        val mic = androidx.core.content.ContextCompat.checkSelfPermission(
+            context,
+            android.Manifest.permission.RECORD_AUDIO,
+        ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+        val detector = settings.safeWordTemplateCount() >= 3
+        val age = settings.safeWordHeartbeatAgeMs()
+        val listening = settings.safeWordEnabled() && age < 8_000
+        val detail = buildString {
+            append(if (configured) "Configured. " else "No phrase. ")
+            append(if (mic) "Mic permission on. " else "Mic permission off. ")
+            append(if (detector) "Detector ready. " else "Record the phrase 3 times. ")
+            append(if (listening) "Listening. Last check ${age / 1000}s ago." else "Not listening.")
         }
+        val status = when {
+            listening && configured && mic && detector -> CheckStatus.PASS
+            !configured && !detector -> CheckStatus.FAIL
+            else -> CheckStatus.FAIL
+        }
+        return HealthCheck("safeword", "Safe word", status, detail.trim())
     }
 
     private fun check(id: String, label: String, ok: Boolean, failure: String): HealthCheck {
@@ -186,6 +206,10 @@ class AuthRepository @Inject constructor(
             ),
         ).data
         tokens.saveDevice(device.id)
+        if (tokens.emergencyCredential() == null) {
+            val issued = api.emergencyCredential(EmergencyCredentialBody(device.id)).data
+            tokens.saveEmergencyCredential(issued.credential)
+        }
     }
 
     suspend fun logout() {
@@ -250,7 +274,14 @@ class ProtectionActions @Inject constructor(
         val incident = database.incidents().list().firstOrNull { it.serverId != null && it.state != "RESOLVED" && it.state != "ARCHIVED" }
             ?: return "There is no connected emergency to cancel."
         api.cancel(incident.serverId!!, CancelBody(pin))
-        settings.quietIncident(true)
+        val after = api.incident(incident.serverId!!).data
+        if (after.state == "RESOLVED" || after.state == "ARCHIVED") {
+            settings.setIncidentActive(false)
+            settings.clearTrigger()
+        } else {
+            settings.quietIncident(true)
+            settings.setEvidenceMode(false)
+        }
         return "Emergency cancelled."
     }
 }

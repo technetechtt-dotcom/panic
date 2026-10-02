@@ -1,5 +1,6 @@
 import { Body, Controller, Get, Inject, Post, Req } from "@nestjs/common";
 import { deviceRegistrationSchema } from "@guardian/shared-validation";
+import { z } from "zod";
 import { RequirePermissions, type RequestWithUser } from "../../common/guards";
 import { requestContext, parseBody } from "../../common/http";
 import { DeviceService } from "../../domain/device-service";
@@ -19,6 +20,14 @@ export class DevicesController {
       requestContext.getStore()?.requestId ?? null,
     );
     return { data: device };
+  }
+
+  @Post("emergency-credential")
+  @RequirePermissions(Permission.DeviceRegisterOwn)
+  async emergency(@Body() body: unknown, @Req() request: RequestWithUser) {
+    const input = parseBody(z.object({ deviceId: z.string().uuid() }).strict(), body);
+    const credential = await this.devices.issueEmergencyCredential(actorFrom(request), input.deviceId);
+    return { data: { credential } };
   }
 
   @Get()

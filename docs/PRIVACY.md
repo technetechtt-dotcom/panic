@@ -27,7 +27,7 @@ Consent records are append-only in intent. This version only inserts the registr
 
 ## Access
 
-Operators with `incident:read:active` can read active incidents, including test incidents, and the distress capsule stored on them. Supervisors can read the audit log. Guardians have no access. There are no public incident URLs and no signed media URLs, because evidence upload does not exist.
+Operators with `incident:read:active` can read active incidents, including test incidents, and the distress capsule stored on them. Supervisors can read the audit log. Guardians have no access. Evidence chunks are stored in PostgreSQL for the incident owner and operators who can read the incident. There are no public incident URLs and no signed media URLs.
 
 ## Items for professional legal review
 

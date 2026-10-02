@@ -23,7 +23,7 @@ export class IncidentsController {
   @Post()
   @RequirePermissions(Permission.IncidentCreateOwn)
   async create(@Body() body: unknown, @Req() request: RequestWithUser, @Res({ passthrough: true }) response: Response) {
-    this.enforce(`sos:${request.user!.id}`, 30, 60 * 60 * 1000);
+    this.enforce(`sos:${request.user!.id}`, 12, 60 * 1000);
     const result = await this.incidents.create(actorFrom(request), parseBody(createIncidentSchema, body), requestId());
     if (result.replayed) {
       response.status(200);

@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
-import { api, bindSession, type AuthUser } from "../api/client";
+import { api, bindSession, refreshSession, type AuthUser } from "../api/client";
 
 interface Session {
   accessToken: string;
@@ -8,6 +8,7 @@ interface Session {
 
 interface AuthState {
   session: Session | null;
+  restoring: boolean;
   login: (email: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
 }
@@ -16,6 +17,7 @@ const AuthContext = createContext<AuthState | null>(null);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
+  const [restoring, setRestoring] = useState(true);
 
   const login = useCallback(async (email: string, password: string) => {
     const data = await api<{ accessToken: string; user: AuthUser }>("/api/v1/auth/login", null, {
@@ -35,6 +37,25 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
+    let cancelled = false;
+    refreshSession()
+      .then(async (token) => {
+        if (cancelled || !token) return;
+        const user = await api<AuthUser>("/api/v1/users/me", token);
+        if (cancelled) return;
+        if (user.role === "USER" || user.role === "GUARDIAN" || user.role === "RESPONDER") return;
+        setSession({ accessToken: token, user });
+      })
+      .catch(() => undefined)
+      .finally(() => {
+        if (!cancelled) setRestoring(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
     bindSession(session?.accessToken ?? null, (token) => {
       setSession((current) => {
         if (!current || !token || current.accessToken === token) return token ? current : null;
@@ -43,7 +64,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     });
   }, [session?.accessToken]);
 
-  const value = useMemo(() => ({ session, login, logout }), [session, login, logout]);
+  const value = useMemo(() => ({ session, restoring, login, logout }), [session, restoring, login, logout]);
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
 

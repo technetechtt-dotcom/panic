@@ -101,14 +101,16 @@ model Device {
   model          String?
   osVersion      String
   appVersion     String
-  publicKey      String?
-  createdAt      DateTime   @default(now())
-  updatedAt      DateTime   @updatedAt
-  user           User       @relation(fields: [userId], references: [id], onDelete: Cascade)
-  incidents      Incident[]
+  publicKey          String?
+  emergencyTokenHash String?
+  createdAt          DateTime   @default(now())
+  updatedAt          DateTime   @updatedAt
+  user               User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  incidents          Incident[]
 
   @@unique([userId, devicePublicId])
   @@index([userId])
+  @@index([emergencyTokenHash])
 }
 
 model Incident {

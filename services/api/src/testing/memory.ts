@@ -87,6 +87,7 @@ export class MemoryConsents implements ConsentStore {
 
 export class MemoryDevices implements DeviceStore {
   readonly rows = new Map<string, DeviceRecord>();
+  readonly emergencyHashes = new Map<string, string>();
 
   async insert(device: DeviceRecord): Promise<void> {
     const clash = [...this.rows.values()].find(
@@ -113,6 +114,17 @@ export class MemoryDevices implements DeviceStore {
 
   async listForUser(userId: string): Promise<DeviceRecord[]> {
     return [...this.rows.values()].filter((row) => row.userId === userId);
+  }
+
+  async setEmergencyHash(deviceId: string, userId: string, hash: string): Promise<boolean> {
+    const device = this.rows.get(deviceId);
+    if (!device || device.userId !== userId) return false;
+    this.emergencyHashes.set(hash, userId);
+    return true;
+  }
+
+  async findUserIdByEmergencyHash(hash: string): Promise<string | null> {
+    return this.emergencyHashes.get(hash) ?? null;
   }
 }
 
@@ -154,6 +166,9 @@ export class MemoryIncidents implements IncidentStore {
 
   async insert(incident: IncidentRecord): Promise<void> {
     if (await this.findByTriggerId(incident.triggerId)) throw new UniqueConflictError();
+    if (ACTIVE_STATES.has(incident.state) && (await this.findActiveForUser(incident.userId))) {
+      throw new UniqueConflictError();
+    }
     this.rows.set(incident.id, structuredClone(incident));
   }
 

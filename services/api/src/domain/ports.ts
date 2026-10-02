@@ -83,6 +83,8 @@ export interface DeviceStore {
   findByIdForUser(id: string, userId: string): Promise<DeviceRecord | null>;
   findByPublicId(userId: string, devicePublicId: string): Promise<DeviceRecord | null>;
   listForUser(userId: string): Promise<DeviceRecord[]>;
+  setEmergencyHash(deviceId: string, userId: string, hash: string): Promise<boolean>;
+  findUserIdByEmergencyHash(hash: string): Promise<string | null>;
 }
 
 export interface IncidentRecord {

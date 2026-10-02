@@ -17,13 +17,13 @@ Still thin inside milestone 1:
 - Dashboard navigation does not include guardians, evidence, responders, reports, or audit browsing. Audit is an API route for supervisors only.
 - Onboarding is welcome, register, and login, then the home checklist. It is not the ten-screen flow.
 
-## Milestone 2 — not implemented
+## Milestone 2 — partial
 
-Volume-button SOS, on-device safe word, trusted contacts, push notifications, and journey protection. The home screen marks volume, safe word, and guardian as unavailable. `EmergencySmsProvider` is a simulator and is not called.
+Implemented: configurable volume-button patterns, an on-device safe-word sample matcher, a guardian name record, and journey watch that raises concern on a missed check-in. Not implemented: push invitations, SMS delivery, and guardian acknowledgement. `EmergencySmsProvider` is a simulator and is not called.
 
-## Milestone 3 — not implemented
+## Milestone 3 — partial
 
-Evidence chunks, encrypted upload, audio, photo, video, an evidence vault, and a duress PIN. The `duress` flag can be stored if a client sends it. There is no PIN entry and no second cancellation PIN.
+Implemented: audio chunks encrypted on the phone before upload, a persistent evidence queue, duress PIN handling that keeps the incident open, and a phone screen that says the emergency is cancelled either way. Not implemented: photo capture, video segments, and object storage. Evidence still lands in PostgreSQL, not an encrypted object vault.
 
 ## Milestone 4 — library only
 

@@ -147,6 +147,19 @@ export class PrismaDeviceStore implements DeviceStore {
     return rows.map(toDeviceRecord);
   }
 
+  async setEmergencyHash(deviceId: string, userId: string, hash: string): Promise<boolean> {
+    const updated = await this.prisma.device.updateMany({
+      where: { id: deviceId, userId },
+      data: { emergencyTokenHash: hash },
+    });
+    return updated.count === 1;
+  }
+
+  async findUserIdByEmergencyHash(hash: string): Promise<string | null> {
+    const row = await this.prisma.device.findFirst({ where: { emergencyTokenHash: hash }, select: { userId: true } });
+    return row?.userId ?? null;
+  }
+
   async save(device: DeviceRecord): Promise<void> {
     await this.prisma.device.update({
       where: { id: device.id },
@@ -246,6 +259,7 @@ export class PrismaIncidentStore implements IncidentStore {
         resolvedById: incident.resolvedById,
         isTest: incident.isTest,
         duress: incident.duress,
+        protectionMode: incident.protectionMode,
       },
     });
   }

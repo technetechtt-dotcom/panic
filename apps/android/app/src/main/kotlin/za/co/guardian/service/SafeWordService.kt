@@ -1,24 +1,29 @@
 package za.co.guardian.service
 
+import android.Manifest
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.content.Intent
+import android.content.pm.PackageManager
+import android.media.AudioFormat
+import android.media.AudioRecord
+import android.media.MediaRecorder
 import android.os.Build
-import android.os.Bundle
-import android.speech.RecognitionListener
-import android.speech.RecognizerIntent
-import android.speech.SpeechRecognizer
 import androidx.core.app.NotificationCompat
+import androidx.core.content.ContextCompat
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import za.co.guardian.R
 import za.co.guardian.core.TriggerType
-import za.co.guardian.core.safeWordMatches
+import za.co.guardian.core.keywordMatches
+import za.co.guardian.core.pcmFeatures
 import za.co.guardian.data.SettingsStore
 import za.co.guardian.data.SosActions
 import javax.inject.Inject
@@ -28,15 +33,16 @@ class SafeWordService : android.app.Service() {
     @Inject lateinit var actions: SosActions
     @Inject lateinit var settings: SettingsStore
 
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
-    private var recognizer: SpeechRecognizer? = null
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var matched = false
 
     override fun onBind(intent: Intent?) = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        val phrase = settings.safeWord()
-        if (phrase.length < 4 || !SpeechRecognizer.isRecognitionAvailable(this)) {
+        val templates = settings.safeWordTemplates()
+        val mic = ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
+        if (!settings.safeWordEnabled() || templates.size < 3 || !mic) {
+            settings.safeWordEnabled(false)
             stopSelf()
             return START_NOT_STICKY
         }
@@ -46,57 +52,62 @@ class SafeWordService : android.app.Service() {
         } else {
             startForeground(NOTIFICATION_ID, notification)
         }
-        listen(phrase)
+        scope.launch { listen(templates) }
         return START_STICKY
     }
 
     override fun onDestroy() {
-        recognizer?.destroy()
         scope.cancel()
         super.onDestroy()
     }
 
-    private fun listen(phrase: String) {
-        if (matched) return
-        val speech = recognizer ?: SpeechRecognizer.createSpeechRecognizer(this).also { recognizer = it }
-        speech.setRecognitionListener(object : RecognitionListener {
-            override fun onReadyForSpeech(params: Bundle?) = Unit
-            override fun onBeginningOfSpeech() = Unit
-            override fun onRmsChanged(rmsdB: Float) = Unit
-            override fun onBufferReceived(buffer: ByteArray?) = Unit
-            override fun onEndOfSpeech() = Unit
-            override fun onPartialResults(partialResults: Bundle?) {
-                consider(partialResults, restart = false, phrase = phrase)
-            }
-            override fun onEvent(eventType: Int, params: Bundle?) = Unit
-            override fun onError(error: Int) {
-                if (!matched && (error == SpeechRecognizer.ERROR_NO_MATCH || error == SpeechRecognizer.ERROR_SPEECH_TIMEOUT)) {
-                    listen(phrase)
-                } else if (!matched) {
-                    stopSelf()
-                }
-            }
-
-            override fun onResults(results: Bundle?) {
-                consider(results, restart = true, phrase = phrase)
-            }
-        })
-        val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH)
-            .putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-            .putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
-            .putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
-        speech.startListening(intent)
-    }
-
-    private fun consider(results: Bundle?, restart: Boolean, phrase: String) {
-        val lines = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION).orEmpty()
-        if (lines.any { safeWordMatches(it, phrase) }) {
-            matched = true
-            scope.launch(Dispatchers.IO) { actions.send(TriggerType.VOICE_SAFE_WORD) }
-            stopSelf()
+    private suspend fun listen(enrolled: List<FloatArray>) {
+        val rate = 16_000
+        val min = AudioRecord.getMinBufferSize(rate, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
+        if (min <= 0) return
+        val recorder = AudioRecord(
+            MediaRecorder.AudioSource.MIC,
+            rate,
+            AudioFormat.CHANNEL_IN_MONO,
+            AudioFormat.ENCODING_PCM_16BIT,
+            min.coerceAtLeast(rate * 2),
+        )
+        if (recorder.state != AudioRecord.STATE_INITIALIZED) {
+            recorder.release()
             return
         }
-        if (restart && !matched) listen(phrase)
+        val window = ShortArray(rate)
+        recorder.startRecording()
+        var hits = 0
+        try {
+            while (scope.isActive && !matched && settings.safeWordEnabled()) {
+                var filled = 0
+                while (filled < window.size) {
+                    val read = recorder.read(window, filled, window.size - filled)
+                    if (read <= 0) break
+                    filled += read
+                }
+                settings.noteSafeWordHeartbeat()
+                if (filled < window.size / 2) {
+                    delay(200)
+                    continue
+                }
+                val live = pcmFeatures(window.copyOf(filled))
+                if (keywordMatches(live, enrolled, settings.safeWordSensitivity())) {
+                    hits += 1
+                    if (hits >= 2) {
+                        matched = true
+                        actions.send(TriggerType.VOICE_SAFE_WORD)
+                        stopSelf()
+                    }
+                } else {
+                    hits = 0
+                }
+            }
+        } finally {
+            recorder.stop()
+            recorder.release()
+        }
     }
 
     private fun listeningNotification(): Notification {

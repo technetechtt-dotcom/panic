@@ -123,6 +123,8 @@ export class IncidentService {
       if (error instanceof UniqueConflictError) {
         const raced = await this.incidents.findByTriggerId(input.triggerId);
         if (raced) return this.replay(actor, raced, requestHash);
+        const activeNow = await this.incidents.findActiveForUser(actor.id);
+        if (activeNow) return this.escalate(actor, activeNow, input, requestId);
       }
       throw error;
     }
@@ -186,6 +188,22 @@ export class IncidentService {
       createdAt: now,
     });
     if (recorded === "created") {
+      const stage = input.metadata?.stage;
+      if (stage === "EVIDENCE" || stage === "PRIORITY") {
+        active.protectionMode = stage === "EVIDENCE" ? "EVIDENCE" : "HIGH_PRIORITY";
+        active.updatedAt = now;
+        await this.incidents.save(active);
+        await this.timeline.append({
+          id: this.ids.uuid(),
+          incidentId: active.id,
+          type: stage === "EVIDENCE" ? "evidence.started" : "incident.priority",
+          message: stage === "EVIDENCE"
+            ? "A second trigger started evidence mode."
+            : "Another trigger raised this incident to high priority.",
+          occurredAt: now.toISOString(),
+          actorId: actor.id,
+        });
+      }
       if (active.isTest && !input.isTest) {
         active.isTest = false;
         active.updatedAt = now;

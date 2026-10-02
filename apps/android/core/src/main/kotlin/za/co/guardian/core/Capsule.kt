@@ -27,17 +27,17 @@ data class LastKnownLocation(
 @Serializable
 data class DistressCapsule(
     val timestamp: String,
-    val latitude: Double?,
-    val longitude: Double?,
-    val locationAccuracy: Double?,
-    val speed: Double?,
-    val heading: Double?,
-    val batteryLevel: Int?,
+    val latitude: Double? = null,
+    val longitude: Double? = null,
+    val locationAccuracy: Double? = null,
+    val speed: Double? = null,
+    val heading: Double? = null,
+    val batteryLevel: Int? = null,
     val chargingStatus: Boolean,
     val networkType: String,
     val protectionMode: String,
     val duress: Boolean,
-    val lastKnownLocation: LastKnownLocation?,
+    val lastKnownLocation: LastKnownLocation? = null,
     val appProtectionStatus: String,
 )
 

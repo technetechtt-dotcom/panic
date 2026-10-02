@@ -143,9 +143,42 @@ interface HeartbeatDao {
     suspend fun delete(id: String)
 }
 
+@Entity(tableName = "evidence_outbox")
+data class EvidenceEntity(
+    @PrimaryKey val evidenceId: String,
+    val incidentLocalId: String,
+    val serverIncidentId: String,
+    val type: String,
+    val sequence: Int,
+    val createdAtEpochMs: Long,
+    val sha256: String,
+    val localPath: String,
+    val uploadState: String,
+    val retryCount: Int,
+    val size: Int,
+)
+
+@Dao
+interface EvidenceDao {
+    @Insert(onConflict = OnConflictStrategy.ABORT)
+    suspend fun insert(entity: EvidenceEntity)
+
+    @Query("SELECT * FROM evidence_outbox WHERE uploadState IN ('CAPTURED', 'QUEUED', 'FAILED', 'UPLOADING') ORDER BY sequence ASC")
+    suspend fun pending(): List<EvidenceEntity>
+
+    @Query("UPDATE evidence_outbox SET serverIncidentId = :serverId WHERE incidentLocalId = :localId AND serverIncidentId = ''")
+    suspend fun bind(localId: String, serverId: String)
+
+    @Query("UPDATE evidence_outbox SET uploadState = :state, retryCount = :retryCount WHERE evidenceId = :id")
+    suspend fun mark(id: String, state: String, retryCount: Int)
+
+    @Query("SELECT COALESCE(MAX(sequence), -1) FROM evidence_outbox WHERE incidentLocalId = :localId AND type = :type")
+    suspend fun lastSequence(localId: String, type: String): Int
+}
+
 @Database(
-    entities = [IncidentEntity::class, LocationEntity::class, HeartbeatEntity::class, EscalationEntity::class],
-    version = 2,
+    entities = [IncidentEntity::class, LocationEntity::class, HeartbeatEntity::class, EscalationEntity::class, EvidenceEntity::class],
+    version = 3,
     exportSchema = true,
 )
 abstract class GuardianDatabase : RoomDatabase() {
@@ -153,6 +186,7 @@ abstract class GuardianDatabase : RoomDatabase() {
     abstract fun locations(): LocationDao
     abstract fun heartbeats(): HeartbeatDao
     abstract fun escalations(): EscalationDao
+    abstract fun evidence(): EvidenceDao
 }
 
 class RoomIncidentStore(
@@ -203,7 +237,7 @@ object DatabaseModule {
     @Singleton
     fun database(@ApplicationContext context: Context): GuardianDatabase =
         Room.databaseBuilder(context, GuardianDatabase::class.java, "guardian.db")
-            .addMigrations(MIGRATION_1_2)
+            .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
             .build()
 }
 
@@ -220,6 +254,28 @@ private val MIGRATION_1_2 = object : Migration(1, 2) {
                 triggerType TEXT NOT NULL,
                 createdAtEpochMs INTEGER NOT NULL,
                 sent INTEGER NOT NULL
+            )
+            """.trimIndent(),
+        )
+    }
+}
+
+private val MIGRATION_2_3 = object : Migration(2, 3) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS evidence_outbox (
+                evidenceId TEXT NOT NULL PRIMARY KEY,
+                incidentLocalId TEXT NOT NULL,
+                serverIncidentId TEXT NOT NULL,
+                type TEXT NOT NULL,
+                sequence INTEGER NOT NULL,
+                createdAtEpochMs INTEGER NOT NULL,
+                sha256 TEXT NOT NULL,
+                localPath TEXT NOT NULL,
+                uploadState TEXT NOT NULL,
+                retryCount INTEGER NOT NULL,
+                size INTEGER NOT NULL
             )
             """.trimIndent(),
         )

@@ -1,6 +1,8 @@
+import { randomBytes } from "node:crypto";
 import type { DeviceRegistrationInput } from "@guardian/shared-validation";
 import { AppError, UniqueConflictError } from "./errors";
 import type { Actor, AuditStore, Clock, DeviceRecord, DeviceStore, IdGenerator } from "./ports";
+import { sha256 } from "./security";
 
 export class DeviceService {
   constructor(
@@ -62,5 +64,14 @@ export class DeviceService {
 
   async list(actor: Actor): Promise<DeviceRecord[]> {
     return this.devices.listForUser(actor.id);
+  }
+
+  async issueEmergencyCredential(actor: Actor, deviceId: string): Promise<string> {
+    const device = await this.devices.findByIdForUser(deviceId, actor.id);
+    if (!device) throw new AppError("DEVICE_NOT_FOUND", 404, "Register this device before issuing an emergency credential.");
+    const credential = randomBytes(32).toString("base64url");
+    const saved = await this.devices.setEmergencyHash(device.id, actor.id, sha256(credential));
+    if (!saved) throw new AppError("DEVICE_NOT_FOUND", 404, "Register this device before issuing an emergency credential.");
+    return credential;
   }
 }

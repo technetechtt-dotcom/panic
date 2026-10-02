@@ -10,7 +10,7 @@ This is not a replacement for official emergency services.
 - NestJS API with PostgreSQL, Redis health and an optional Socket.IO adapter, JWT access tokens, rotating refresh tokens, role checks, audit events, and WebSocket updates for operators.
 - Monitoring web app: operator login, active incident list, incident detail with a map, heartbeat, timeline, acknowledge, and resolve.
 
-Volume-button SOS, voice safe-word detection, guardian contacts, evidence capture, duress PIN entry, journey protection, and AI assistance are later milestones. The home screen says so. See [docs/ROADMAP.md](docs/ROADMAP.md).
+Volume-button SOS, on-device safe-word samples, guardian name records, journey watch, encrypted evidence queueing, and duress PIN behaviour are in the app. They are partial: there is no camera or video pipeline yet, guardians are not invited by SMS or push, and the safe-word detector is a local sample matcher rather than a trained multi-accent model. AI assistance is not implemented. See [docs/ROADMAP.md](docs/ROADMAP.md).
 
 ## Layout
 

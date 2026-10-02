@@ -68,7 +68,7 @@ export interface EvidenceStore {
   list(incidentId: string): Promise<EvidenceRecord[]>;
 }
 
-const MAX_EVIDENCE_BYTES = 64 * 1024;
+const MAX_EVIDENCE_BYTES = 200 * 1024;
 
 export class ProtectionService {
   constructor(
@@ -260,7 +260,7 @@ export class ProtectionService {
     }
     const payload = Buffer.from(input.bytesBase64, "base64");
     if (payload.length === 0 || payload.length > MAX_EVIDENCE_BYTES) {
-      throw new AppError("EVIDENCE_TOO_LARGE", 413, "Each evidence chunk must be between 1 byte and 64 KB.");
+      throw new AppError("EVIDENCE_TOO_LARGE", 413, "Each evidence chunk must be between 1 byte and 200 KB.");
     }
     const actual = createHash("sha256").update(payload).digest("hex");
     if (actual !== input.sha256) throw new AppError("EVIDENCE_HASH_MISMATCH", 422, "The evidence hash does not match the bytes.");

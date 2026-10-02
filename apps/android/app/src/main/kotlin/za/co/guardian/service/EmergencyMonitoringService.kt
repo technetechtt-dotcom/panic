@@ -35,10 +35,12 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import za.co.guardian.MainActivity
 import za.co.guardian.R
+import za.co.guardian.core.captureEvidence
 import za.co.guardian.core.heartbeatCoordinates
 import za.co.guardian.core.shouldCaptureLocation
 import za.co.guardian.core.OfflineIncidentRepository
 import za.co.guardian.data.EvidenceBody
+import za.co.guardian.data.EvidenceVault
 import za.co.guardian.data.GuardianApi
 import za.co.guardian.data.GuardianDatabase
 import za.co.guardian.data.HeartbeatBody
@@ -78,7 +80,7 @@ class EmergencyMonitoringService : android.app.Service() {
             startForeground(NOTIFICATION_ID, notification)
         }
         acquireWakeLock()
-        if (shouldCaptureLocation(signals.hasFineLocation())) listenForLocation()
+        if (shouldCaptureLocation(signals.hasFineLocation()) && !settingsQuiet()) listenForLocation()
         if (captureAudio) scope.launch { uploader.captureAudio() }
         scope.launch {
             while (true) {
@@ -138,14 +140,28 @@ class EmergencyMonitoringService : android.app.Service() {
             Intent(this, MainActivity::class.java),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
+        val quiet = uploaderQuiet()
         return NotificationCompat.Builder(this, channelId)
             .setSmallIcon(android.R.drawable.ic_dialog_alert)
-            .setContentTitle("Guardian SOS active")
-            .setContentText(getString(if (sharingLocation) R.string.monitoring_text else R.string.monitoring_text_no_location))
-            .setOngoing(true)
+            .setContentTitle(if (quiet) "Guardian" else "Guardian SOS active")
+            .setContentText(
+                getString(
+                    when {
+                        quiet -> R.string.monitoring_quiet
+                        sharingLocation -> R.string.monitoring_text
+                        else -> R.string.monitoring_text_no_location
+                    },
+                ),
+            )
+            .setOngoing(!quiet)
             .setContentIntent(open)
             .build()
     }
+
+    @Inject lateinit var settings: SettingsStore
+
+    private fun settingsQuiet(): Boolean = settings.quietIncident()
+    private fun uploaderQuiet(): Boolean = settings.quietIncident()
 
     companion object {
         private const val NOTIFICATION_ID = 1001
@@ -158,6 +174,7 @@ class EmergencyUploader @Inject constructor(
     private val database: GuardianDatabase,
     private val signals: PhoneSignals,
     private val settings: SettingsStore,
+    private val vault: EvidenceVault,
 ) {
     @Volatile private var latest: Location? = null
     @Volatile private var recording = false
@@ -174,23 +191,15 @@ class EmergencyUploader @Inject constructor(
         val buffer = ByteArray(min.coerceAtLeast(32000))
         recording = true
         recorder.startRecording()
-        var sequence = 0
         try {
-            while (sequence < 120) {
-                val incidentId = activeLocalIncident()?.serverId ?: break
-                val read = recorder.read(buffer, 0, buffer.size)
+            while (settings.evidenceMode() && !settings.quietIncident()) {
+                val incident = activeLocalIncident() ?: break
+                val battery = signals.deviceState().batteryLevel ?: 100
+                if (!captureEvidence("audio", battery)) break
+                val read = recorder.read(buffer, 0, minOf(buffer.size, 16_000))
                 if (read <= 0) break
-                val chunk = buffer.copyOf(read)
-                val hash = java.security.MessageDigest.getInstance("SHA-256").digest(chunk).joinToString("") { "%02x".format(it) }
-                try {
-                    api.evidence(
-                        incidentId,
-                        EvidenceBody(UUID.randomUUID().toString(), sequence, hash, "audio/pcm", android.util.Base64.encodeToString(chunk, android.util.Base64.NO_WRAP)),
-                    )
-                } catch (_: Exception) {
-                    // The next second is a new chunk. A failed chunk is not retried as audio.
-                }
-                sequence += 1
+                vault.store(incident.triggerId, "audio", buffer.copyOf(read))
+                flushEvidence(incident.triggerId, incident.serverId)
             }
         } finally {
             recording = false
@@ -224,6 +233,8 @@ class EmergencyUploader @Inject constructor(
     suspend fun tick(): Boolean {
         repository.flush()
         val incident = activeLocalIncident() ?: return true
+        flushEvidence(incident.triggerId, incident.serverId)
+        if (incident.state == "RESOLVED" || incident.state == "ARCHIVED") settings.clearTrigger()
         val incidentId = incident.serverId
         if (incidentId != null) {
             database.locations().bind(incident.triggerId, incidentId)
@@ -304,6 +315,39 @@ class EmergencyUploader @Inject constructor(
         }
     }
 
+    private suspend fun flushEvidence(localId: String, serverId: String?) {
+        if (!serverId.isNullOrBlank()) vault.bind(localId, serverId)
+        for (row in vault.pending()) {
+            if (row.incidentLocalId != localId || row.serverIncidentId.isBlank()) continue
+            val plain = vault.readPlain(row)
+            if (plain == null || plain.size > 200_000) {
+                vault.mark(row.evidenceId, "FAILED", row.retryCount + 1)
+                continue
+            }
+            vault.mark(row.evidenceId, "UPLOADING", row.retryCount)
+            try {
+                api.evidence(
+                    row.serverIncidentId,
+                    EvidenceBody(
+                        row.evidenceId,
+                        row.sequence,
+                        row.sha256,
+                        when (row.type) {
+                            "photo" -> "image/jpeg"
+                            "video" -> "video/mp4"
+                            else -> "audio/pcm"
+                        },
+                        EvidenceVault.base64(plain),
+                    ),
+                )
+                vault.mark(row.evidenceId, "VERIFIED", row.retryCount)
+                vault.deleteVerified(row)
+            } catch (_: Exception) {
+                vault.mark(row.evidenceId, "QUEUED", row.retryCount + 1)
+            }
+        }
+    }
+
     private suspend fun activeLocalIncident() = database.incidents().list().firstOrNull { entity ->
         entity.state != "RESOLVED" && entity.state != "ARCHIVED"
     }
@@ -324,8 +368,23 @@ class IncidentFlushWorker @AssistedInject constructor(
 class ResumeProtectionReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         if (intent.action != Intent.ACTION_BOOT_COMPLETED) return
-        val active = context.getSharedPreferences("guardian_settings", Context.MODE_PRIVATE)
-            .getBoolean("incident_active", false)
+        val prefs = context.getSharedPreferences("guardian_settings", Context.MODE_PRIVATE)
+        val active = prefs.getBoolean("incident_active", false)
+        val quiet = prefs.getBoolean("quiet_incident", false)
+        if (active && !quiet) {
+            try {
+                ContextCompat.startForegroundService(context, Intent(context, EmergencyMonitoringService::class.java))
+            } catch (_: Exception) {
+                // Android can refuse a foreground service from boot. The notification below remains.
+            }
+        }
+        if (prefs.getBoolean("safe_enabled", false)) {
+            try {
+                ContextCompat.startForegroundService(context, Intent(context, SafeWordService::class.java))
+            } catch (_: Exception) {
+                // Safe-word listening needs a foreground microphone service. The user can open Guardian if Android blocks it.
+            }
+        }
         if (!active) return
         val channelId = "guardian.resume"
         val manager = context.getSystemService(NotificationManager::class.java)
