@@ -9,7 +9,7 @@
     "dev": "node --env-file=../../.env --import tsx --watch src/main.ts",
     "dev:postgres": "node scripts/dev-postgres.mjs",
     "start": "node dist/main.js",
-    "test": "cross-env NODE_ENV=test JWT_ACCESS_SECRET=test-secret-that-is-long-enough-for-hs256 DATABASE_URL=postgresql://guardian:change-me@127.0.0.1:5432/guardian?schema=public REDIS_URL= tsx --test src/domain/domain.test.ts src/domain/protection.test.ts src/common/rate-limit.test.ts src/http/api.http.test.ts",
+    "test": "cross-env NODE_ENV=test JWT_ACCESS_SECRET=test-secret-that-is-long-enough-for-hs256 DATABASE_URL=postgresql://guardian:change-me@127.0.0.1:5432/guardian?schema=public REDIS_URL= tsx --test src/domain/domain.test.ts src/domain/protection.test.ts src/domain/operations.test.ts src/common/rate-limit.test.ts src/http/api.http.test.ts src/infra/postgres.integration.test.ts",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "node --env-file=../../.env ../../node_modules/prisma/build/index.js migrate deploy",
     "seed:operator": "node --env-file=../../.env --import tsx scripts/seed-operator.ts"

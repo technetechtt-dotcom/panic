@@ -133,7 +133,7 @@ test("authentication, SOS idempotency, and operator actions", async () => {
     const fusion = await request(server)
       .post("/api/v1/incidents")
       .set("Authorization", `Bearer ${token}`)
-      .send({ ...incidentBody, triggerId: randomUUID(), correlationId: randomUUID(), triggerType: "FALL_OR_IMPACT" });
+      .send({ ...incidentBody, triggerId: randomUUID(), correlationId: randomUUID(), triggerType: "JOURNEY_TIMEOUT" });
     assert.equal(fusion.status, 422);
     assert.equal(fusion.body.error.code, "FUSION_NOT_ENABLED");
 
@@ -150,7 +150,8 @@ test("authentication, SOS idempotency, and operator actions", async () => {
     const summary = await request(server).get("/api/v1/incidents/summary").set("Authorization", `Bearer ${token}`);
     assert.equal(summary.status, 200);
     assert.equal(summary.body.data.activeIncidents, 0);
-    assert.equal(summary.body.data.highRiskAlerts, null);
+    assert.equal(summary.body.data.highRiskAlerts, 0);
+    assert.equal(summary.body.data.respondersActive, 0);
 
     const acknowledged = await request(server)
       .post(`/api/v1/incidents/${created.body.data.id}/acknowledge`)

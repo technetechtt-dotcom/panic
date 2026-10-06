@@ -1,6 +1,6 @@
 import { Body, Controller, HttpCode, Inject, Post, Req, Res } from "@nestjs/common";
 import type { Response } from "express";
-import { loginSchema, refreshSchema, registerSchema } from "@guardian/shared-validation";
+import { loginSchema, mfaCodeSchema, refreshSchema, registerSchema } from "@guardian/shared-validation";
 import type { AppConfig } from "../../config";
 import { Public, type RequestWithUser } from "../../common/guards";
 import { parseBody } from "../../common/http";
@@ -47,6 +47,18 @@ export class AuthController {
     this.enforceLimit(`login:${request.ip}`);
     const input = parseBody(loginSchema, body);
     const session = await this.auth.login(input);
+    if ("mfaRequired" in session) return { data: session };
+    response.cookie(REFRESH_COOKIE, session.refreshToken, cookieOptions(this.config));
+    return { data: session };
+  }
+
+  @Public()
+  @Post("mfa")
+  @HttpCode(200)
+  async mfa(@Body() body: unknown, @Res({ passthrough: true }) response: Response) {
+    const input = parseBody(mfaCodeSchema, body);
+    if (!input.mfaToken) throw new AppError("INVALID_MFA", 401, "Sign in again.");
+    const session = await this.auth.completeMfa(input.mfaToken, input.code);
     response.cookie(REFRESH_COOKIE, session.refreshToken, cookieOptions(this.config));
     return { data: session };
   }

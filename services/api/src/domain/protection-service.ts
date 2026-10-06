@@ -3,6 +3,9 @@ import type { CancelIncidentInput, EvidenceChunkInput, GuardianInput, JourneyInp
 import { AppError } from "./errors";
 import { hasPermission, Permission } from "./rbac";
 import type { PasswordHasher } from "./security";
+import type { FileEvidenceVault } from "./evidence-vault";
+import type { FusionBridge } from "./fusion-bridge";
+import { fusionEvaluate, routeDeviates } from "./operations";
 import { ACTIVE_STATES, type Actor, type AuditStore, type Clock, type IdGenerator, type IncidentStore, type RealtimePublisher, type TimelineStore } from "./ports";
 
 export interface TrustedContactRecord {
@@ -31,6 +34,12 @@ export interface JourneyRecord {
   checkInIntervalSeconds: number;
   lastCheckInAt: Date;
   status: "ACTIVE" | "COMPLETED" | "CONCERN";
+  mode: "WALK" | "RIDE" | "DRIVE" | "MEETING" | "HIGH_RISK";
+  originLatitude: number | null;
+  originLongitude: number | null;
+  destinationLatitude: number | null;
+  destinationLongitude: number | null;
+  corridorMeters: number;
 }
 
 export interface JourneyStore {
@@ -56,19 +65,25 @@ export interface PinStore {
 }
 
 export interface EvidenceRecord {
+  id?: string;
   incidentId: string;
   clientChunkId: string;
   sequence: number;
   sha256: string;
   byteLength: number;
+  contentType?: string;
+  storageKey?: string | null;
 }
 
 export interface EvidenceStore {
   insert(chunk: EvidenceRecord & { id: string; contentType: string; payload: Buffer; createdAt: Date }): Promise<"created" | "exists">;
   list(incidentId: string): Promise<EvidenceRecord[]>;
+  read?(incidentId: string, clientChunkId: string): Promise<(EvidenceRecord & { payload: Buffer }) | null>;
 }
 
-const MAX_EVIDENCE_BYTES = 200 * 1024;
+function maxEvidenceBytes(contentType: string): number {
+  return contentType === "audio/pcm" ? 200 * 1024 : 1_500_000;
+}
 
 export class ProtectionService {
   constructor(
@@ -84,6 +99,8 @@ export class ProtectionService {
     private readonly passwords: PasswordHasher,
     private readonly ids: IdGenerator,
     private readonly clock: Clock,
+    private readonly fusion: FusionBridge | null = null,
+    private readonly vault: FileEvidenceVault | null = null,
   ) {}
 
   async addGuardian(actor: Actor, input: GuardianInput, requestId: string | null): Promise<TrustedContactRecord> {
@@ -128,6 +145,7 @@ export class ProtectionService {
   async startJourney(actor: Actor, input: JourneyInput): Promise<JourneyRecord> {
     this.own(actor);
     const now = this.clock.now();
+    const mode = input.mode ?? "WALK";
     const journey: JourneyRecord = {
       id: this.ids.uuid(),
       userId: actor.id,
@@ -136,6 +154,12 @@ export class ProtectionService {
       checkInIntervalSeconds: input.checkInIntervalSeconds,
       lastCheckInAt: now,
       status: "ACTIVE",
+      mode,
+      originLatitude: input.originLatitude ?? null,
+      originLongitude: input.originLongitude ?? null,
+      destinationLatitude: input.destinationLatitude ?? null,
+      destinationLongitude: input.destinationLongitude ?? null,
+      corridorMeters: input.corridorMeters ?? (mode === "MEETING" ? 200 : mode === "RIDE" || mode === "DRIVE" ? 800 : mode === "HIGH_RISK" ? 250 : 400),
     };
     await this.journeys.insert(journey);
     return journey;
@@ -163,6 +187,10 @@ export class ProtectionService {
       const checkInDue = now.getTime() - journey.lastCheckInAt.getTime() > journey.checkInIntervalSeconds * 1000;
       const arrivalMissed = now.getTime() > journey.expectedArrivalAt.getTime();
       if (!checkInDue && !arrivalMissed) continue;
+      const signals = [
+        ...(checkInDue ? ["MISSED_CHECK_IN"] : []),
+        ...(arrivalMissed ? ["NO_RESPONSE"] : []),
+      ];
       const outcome = await this.risks.record({
         id: this.ids.uuid(),
         userId: journey.userId,
@@ -173,15 +201,61 @@ export class ProtectionService {
       if (outcome === "exists") continue;
       journey.status = "CONCERN";
       await this.journeys.save(journey);
+      const scored = fusionEvaluate(signals);
+      let incidentCreated = false;
+      if (this.fusion && scored.level === "HIGH_RISK") {
+        await this.fusion.raise(journey.userId, "SYSTEM_RISK_ESCALATION");
+        incidentCreated = true;
+      } else if (this.fusion) {
+        await this.fusion.raise(journey.userId, "JOURNEY_TIMEOUT");
+        incidentCreated = true;
+      }
       this.publisher.publish("risk.updated", {
         sessionId: journey.id,
         userId: journey.userId,
-        status: "CONCERN",
-        incidentCreated: false,
+        status: scored.level === "NORMAL" ? "CONCERN" : scored.level,
+        incidentCreated,
       });
       raised += 1;
     }
     return raised;
+  }
+
+  async notePosition(actor: Actor, id: string, latitude: number, longitude: number): Promise<{ deviated: boolean; level: string }> {
+    const journey = await this.requireJourney(actor, id);
+    if (
+      journey.originLatitude === null ||
+      journey.originLongitude === null ||
+      journey.destinationLatitude === null ||
+      journey.destinationLongitude === null
+    ) {
+      return { deviated: false, level: "NORMAL" };
+    }
+    const deviated = routeDeviates(
+      latitude,
+      longitude,
+      journey.originLatitude,
+      journey.originLongitude,
+      journey.destinationLatitude,
+      journey.destinationLongitude,
+      journey.corridorMeters,
+    );
+    if (!deviated) return { deviated: false, level: "NORMAL" };
+    const scored = fusionEvaluate(["ROUTE_DEVIATION"]);
+    await this.risks.record({
+      id: this.ids.uuid(),
+      userId: actor.id,
+      sessionId: journey.id,
+      type: "ROUTE_DEVIATION",
+      createdAt: this.clock.now(),
+    });
+    this.publisher.publish("risk.updated", {
+      sessionId: journey.id,
+      userId: journey.userId,
+      status: scored.level,
+      incidentCreated: false,
+    });
+    return { deviated: true, level: scored.level };
   }
 
   async setPins(actor: Actor, input: SafetyPinInput): Promise<void> {
@@ -259,11 +333,19 @@ export class ProtectionService {
       throw new AppError("NOT_FOUND", 404, "There is no active incident for this evidence.");
     }
     const payload = Buffer.from(input.bytesBase64, "base64");
-    if (payload.length === 0 || payload.length > MAX_EVIDENCE_BYTES) {
-      throw new AppError("EVIDENCE_TOO_LARGE", 413, "Each evidence chunk must be between 1 byte and 200 KB.");
+    const limit = maxEvidenceBytes(input.contentType);
+    if (payload.length === 0 || payload.length > limit) {
+      throw new AppError("EVIDENCE_TOO_LARGE", 413, `Each ${input.contentType} chunk must be between 1 byte and ${Math.floor(limit / 1024)} KB.`);
     }
     const actual = createHash("sha256").update(payload).digest("hex");
     if (actual !== input.sha256) throw new AppError("EVIDENCE_HASH_MISMATCH", 422, "The evidence hash does not match the bytes.");
+    let storageKey: string | null = null;
+    let storedPayload = payload;
+    if (this.vault) {
+      storageKey = this.ids.uuid();
+      await this.vault.put(storageKey, payload);
+      storedPayload = Buffer.alloc(0);
+    }
     const outcome = await this.evidence.insert({
       id: this.ids.uuid(),
       incidentId,
@@ -272,7 +354,8 @@ export class ProtectionService {
       sha256: input.sha256,
       contentType: input.contentType,
       byteLength: payload.length,
-      payload,
+      storageKey,
+      payload: storedPayload,
       createdAt: this.clock.now(),
     });
     if (outcome === "created") this.publisher.publish("evidence.received", { incidentId, sequence: input.sequence });

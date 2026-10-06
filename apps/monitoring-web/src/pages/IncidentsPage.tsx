@@ -3,9 +3,10 @@ import { Link } from "react-router-dom";
 import { api, type Incident, type IncidentSummary } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
 import { useMonitorSocket } from "../api/socket";
+import { Shell } from "../components/Shell";
 
 export function IncidentsPage() {
-  const { session, logout } = useAuth();
+  const { session } = useAuth();
   const token = session?.accessToken ?? null;
   const incidents = useQuery({
     queryKey: ["incidents"],
@@ -23,24 +24,22 @@ export function IncidentsPage() {
   });
 
   return (
+    <Shell>
     <main className="mx-auto max-w-6xl px-4 py-6">
-      <header className="flex items-center justify-between gap-4">
-        <div>
-          <p className="text-sm uppercase tracking-[0.2em] text-warn">Guardian</p>
-          <h1 className="text-3xl font-semibold">Active incidents</h1>
-        </div>
-        <button type="button" onClick={() => void logout()} className="rounded-lg border border-line px-4 py-2">
-          Sign out
-        </button>
+      <header>
+        <h1 className="text-3xl font-semibold">Active incidents</h1>
       </header>
       <section className="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <Metric label="Active incidents" value={summary.data ? String(summary.data.activeIncidents) : "—"} />
         <Metric label="Unacknowledged" value={summary.data ? String(summary.data.unacknowledgedIncidents) : "—"} />
         <Metric label="Duress flags" value={summary.data ? String(summary.data.duressAlerts) : "—"} />
         <Metric label="Contact lost" value={summary.data ? String(summary.data.devicesContactLost) : "—"} />
+        <Metric label="High risk" value={summary.data ? String(summary.data.highRiskAlerts) : "—"} />
+        <Metric label="Responding" value={summary.data ? String(summary.data.respondersActive) : "—"} />
       </section>
       <p className="mt-3 text-sm text-slate-400">
-        Counts exclude test incidents. High-risk fusion alerts and responder assignment are not in this version.
+        Counts exclude test incidents. High risk counts incidents in HIGH_RISK. Responding counts incidents a responder has been dispatched to.
+        {session?.user.role === "RESPONDER" ? " This account sees assigned incidents only." : ""}
       </p>
       {incidents.isError ? <p className="mt-6 text-sos">The incident list could not be loaded.</p> : null}
       <ul className="mt-4 divide-y divide-line overflow-hidden rounded-2xl border border-line">
@@ -63,6 +62,7 @@ export function IncidentsPage() {
         {incidents.data?.length === 0 ? <li className="px-4 py-8 text-slate-300">No incidents yet.</li> : null}
       </ul>
     </main>
+    </Shell>
   );
 }
 

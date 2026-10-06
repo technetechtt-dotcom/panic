@@ -47,6 +47,12 @@ class TokenStore @Inject constructor(@ApplicationContext context: Context) {
 
     fun emergencyCredential(): String? = prefs.getString(EMERGENCY, null)
     fun saveEmergencyCredential(credential: String) = prefs.edit().putString(EMERGENCY, credential).apply()
+    fun userRole(): String = prefs.getString(ROLE, "USER").orEmpty()
+    fun setUserRole(role: String) = prefs.edit().putString(ROLE, role).apply()
+    fun freezeDecoyPin(): String = prefs.getString(FREEZE_DECOY, "").orEmpty()
+    fun setFreezeDecoyPin(pin: String) = prefs.edit().putString(FREEZE_DECOY, pin).apply()
+    fun freezeReleasePin(): String = prefs.getString(FREEZE_RELEASE, "").orEmpty()
+    fun setFreezeReleasePin(pin: String) = prefs.edit().putString(FREEZE_RELEASE, pin).apply()
 
     fun clear() {
         val publicId = prefs.getString(PUBLIC_DEVICE, null)
@@ -61,6 +67,9 @@ class TokenStore @Inject constructor(@ApplicationContext context: Context) {
         const val DEVICE = "device"
         const val PUBLIC_DEVICE = "public_device"
         const val EMERGENCY = "emergency"
+        const val ROLE = "role"
+        const val FREEZE_DECOY = "freeze_decoy"
+        const val FREEZE_RELEASE = "freeze_release"
     }
 }
 
@@ -142,6 +151,17 @@ class SettingsStore @Inject constructor(@ApplicationContext context: Context) : 
     fun safeWordEnabled(enabled: Boolean) = prefs.edit().putBoolean(SAFE_ENABLED, enabled).apply()
     fun safeWordEnabled(): Boolean = prefs.getBoolean(SAFE_ENABLED, false)
     fun noteSafeWordHeartbeat(now: Long = System.currentTimeMillis()) = prefs.edit().putLong(SAFE_HEARTBEAT, now).apply()
+    fun onboarded(): Boolean = prefs.getBoolean(ONBOARDED, false)
+    fun setOnboarded(done: Boolean) = prefs.edit().putBoolean(ONBOARDED, done).apply()
+    fun fallWatch(): Boolean = prefs.getBoolean(FALL_WATCH, false)
+    fun setFallWatch(enabled: Boolean) = prefs.edit().putBoolean(FALL_WATCH, enabled).apply()
+    fun protectionMode(): String = prefs.getString(PROTECTION_MODE, "WALK").orEmpty()
+    fun setProtectionMode(mode: String) = prefs.edit().putString(PROTECTION_MODE, mode).apply()
+    fun freezePattern(): za.co.guardian.core.VolumePattern =
+        za.co.guardian.core.VolumePattern.fromStored(prefs.getString(FREEZE_PATTERN, za.co.guardian.core.VolumePattern.UP_2.name))
+    fun setFreezePattern(pattern: za.co.guardian.core.VolumePattern) = prefs.edit().putString(FREEZE_PATTERN, pattern.name).apply()
+    fun guardianPhone(): String = prefs.getString(GUARDIAN_PHONE, "").orEmpty()
+    fun setGuardianPhone(phone: String) = prefs.edit().putString(GUARDIAN_PHONE, phone.trim()).apply()
     fun safeWordHeartbeatAgeMs(now: Long = System.currentTimeMillis()): Long {
         val at = prefs.getLong(SAFE_HEARTBEAT, 0L)
         if (at == 0L) return Long.MAX_VALUE
@@ -168,5 +188,10 @@ class SettingsStore @Inject constructor(@ApplicationContext context: Context) : 
         const val SAFE_SENSITIVITY = "safe_sensitivity"
         const val SAFE_ENABLED = "safe_enabled"
         const val SAFE_HEARTBEAT = "safe_heartbeat"
+        const val ONBOARDED = "onboarded"
+        const val FALL_WATCH = "fall_watch"
+        const val PROTECTION_MODE = "protection_mode"
+        const val FREEZE_PATTERN = "freeze_pattern"
+        const val GUARDIAN_PHONE = "guardian_phone"
     }
 }

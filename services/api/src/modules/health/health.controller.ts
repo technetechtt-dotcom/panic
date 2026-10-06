@@ -2,6 +2,7 @@ import { Controller, Get, Inject, Res } from "@nestjs/common";
 import type { Response } from "express";
 import type { AppConfig } from "../../config";
 import { Public } from "../../common/guards";
+import { requestMetrics } from "../../common/http";
 import { APP_CONFIG } from "../../common/tokens";
 import { PrismaService } from "../../infra/prisma.service";
 import { RedisService } from "../../infra/redis.service";
@@ -36,5 +37,21 @@ export class HealthController {
         environment: this.config.nodeEnv,
       },
     };
+  }
+
+  @Public()
+  @Get("metrics")
+  metrics(@Res() response: Response) {
+    response.type("text/plain").send(
+      [
+        "# HELP guardian_http_requests_total HTTP requests observed by this process.",
+        "# TYPE guardian_http_requests_total counter",
+        `guardian_http_requests_total ${requestMetrics.total}`,
+        "# HELP guardian_http_server_errors_total Unhandled server errors.",
+        "# TYPE guardian_http_server_errors_total counter",
+        `guardian_http_server_errors_total ${requestMetrics.serverErrors}`,
+        "",
+      ].join("\n"),
+    );
   }
 }

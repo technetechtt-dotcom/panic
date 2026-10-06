@@ -6,9 +6,11 @@ import type { ZodType } from "zod";
 import { AppError } from "../domain/errors";
 
 export const requestContext = new AsyncLocalStorage<{ requestId: string }>();
+export const requestMetrics = { total: 0, serverErrors: 0 };
 
 export function requestIdMiddleware(req: Request, res: Response, next: NextFunction): void {
   const incoming = req.header("x-request-id");
+  requestMetrics.total += 1;
   const requestId = incoming && /^[A-Za-z0-9_-]{8,80}$/.test(incoming) ? incoming : randomUUID();
   res.setHeader("x-request-id", requestId);
   (req as Request & { requestId: string }).requestId = requestId;
@@ -43,6 +45,7 @@ export class AllExceptionsFilter implements ExceptionFilter {
       });
       return;
     }
+    requestMetrics.serverErrors += 1;
     const detail = exception instanceof Error ? exception.message : "unknown";
     console.error(JSON.stringify({ level: "error", requestId, message: detail }));
     response.status(500).json({

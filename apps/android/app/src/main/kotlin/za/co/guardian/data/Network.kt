@@ -99,7 +99,19 @@ data class CreateIncidentBody(
 )
 
 @Serializable
-data class IncidentWire(val id: String, val state: String, val isTest: Boolean, val duress: Boolean = false)
+data class IncidentWire(
+    val id: String,
+    val state: String,
+    val isTest: Boolean,
+    val duress: Boolean = false,
+    val userDisplayName: String = "",
+)
+
+@Serializable
+data class IncidentListEnvelope(val data: List<IncidentWire>)
+
+@Serializable
+data class ResponderStatusBody(val status: String)
 
 @Serializable
 data class IncidentEnvelope(val data: IncidentWire, val replayed: Boolean = false, val escalated: Boolean = false)
@@ -169,6 +181,12 @@ interface GuardianApi {
     @GET("incidents/{id}")
     suspend fun incident(@Path("id") id: String): IncidentEnvelope
 
+    @GET("incidents")
+    suspend fun incidents(): IncidentListEnvelope
+
+    @POST("incidents/{id}/responder-status")
+    suspend fun responderStatus(@Path("id") id: String, @Body body: ResponderStatusBody)
+
     @POST("incidents/{id}/locations")
     suspend fun locations(@Path("id") id: String, @Body body: LocationBatchBody)
 
@@ -183,6 +201,12 @@ interface GuardianApi {
 
     @POST("journeys")
     suspend fun startJourney(@Body body: JourneyBody): JourneyEnvelope
+
+    @POST("users/me/profile")
+    suspend fun saveProfile(@Body body: ProfileBody)
+
+    @POST("protection/signals")
+    suspend fun signals(@Body body: SignalBody)
 
     @POST("journeys/{id}/check-in")
     suspend fun checkIn(@Path("id") id: String): JourneyEnvelope
@@ -202,6 +226,8 @@ data class GuardianBody(
     val displayName: String,
     val canViewLocation: Boolean = false,
     val canViewEvidence: Boolean = false,
+    @OptIn(kotlinx.serialization.ExperimentalSerializationApi::class)
+    @EncodeDefault(EncodeDefault.Mode.NEVER) val phone: String? = null,
 )
 
 @Serializable
@@ -211,7 +237,23 @@ data class GuardianWire(val id: String, val displayName: String)
 data class GuardianEnvelope(val data: GuardianWire)
 
 @Serializable
-data class JourneyBody(val destinationLabel: String, val expectedArrivalAt: String, val checkInIntervalSeconds: Int)
+data class JourneyBody(
+    val destinationLabel: String,
+    val expectedArrivalAt: String,
+    val checkInIntervalSeconds: Int,
+    val mode: String = "WALK",
+)
+
+@Serializable
+data class ProfileBody(
+    @OptIn(kotlinx.serialization.ExperimentalSerializationApi::class) @EncodeDefault(EncodeDefault.Mode.NEVER) val bloodType: String? = null,
+    @OptIn(kotlinx.serialization.ExperimentalSerializationApi::class) @EncodeDefault(EncodeDefault.Mode.NEVER) val allergies: String? = null,
+    @OptIn(kotlinx.serialization.ExperimentalSerializationApi::class) @EncodeDefault(EncodeDefault.Mode.NEVER) val medications: String? = null,
+    @OptIn(kotlinx.serialization.ExperimentalSerializationApi::class) @EncodeDefault(EncodeDefault.Mode.NEVER) val notes: String? = null,
+)
+
+@Serializable
+data class SignalBody(val signals: List<String>)
 
 @Serializable
 data class JourneyWire(val id: String, val status: String)
@@ -378,6 +420,7 @@ class RefreshApiHolder @javax.inject.Inject constructor(private val json: Json, 
                 val api = retrofit.create(GuardianApi::class.java)
                 val body = kotlinx.coroutines.runBlocking { api.refresh(RefreshBody(refreshToken)).data }
                 tokens.saveSession(body.accessToken, body.refreshToken, body.user.id)
+                tokens.setUserRole(body.user.role)
                 body.accessToken
             } catch (_: Exception) {
                 null

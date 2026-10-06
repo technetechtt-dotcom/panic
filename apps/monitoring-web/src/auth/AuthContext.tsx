@@ -10,7 +10,15 @@ interface AuthState {
   session: Session | null;
   restoring: boolean;
   login: (email: string, password: string) => Promise<void>;
+  completeMfa: (mfaToken: string, code: string) => Promise<void>;
   logout: () => Promise<void>;
+}
+
+export class MfaRequiredError extends Error {
+  constructor(readonly mfaToken: string) {
+    super("Enter the authenticator code.");
+    this.name = "MfaRequiredError";
+  }
 }
 
 const AuthContext = createContext<AuthState | null>(null);
@@ -20,12 +28,25 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [restoring, setRestoring] = useState(true);
 
   const login = useCallback(async (email: string, password: string) => {
-    const data = await api<{ accessToken: string; user: AuthUser }>("/api/v1/auth/login", null, {
+    const data = await api<{ accessToken?: string; user?: AuthUser; mfaRequired?: boolean; mfaToken?: string }>("/api/v1/auth/login", null, {
       method: "POST",
       body: JSON.stringify({ email, password }),
     });
-    if (data.user.role === "USER" || data.user.role === "GUARDIAN" || data.user.role === "RESPONDER") {
+    if (data.mfaRequired && data.mfaToken) throw new MfaRequiredError(data.mfaToken);
+    if (!data.accessToken || !data.user) throw new Error("Sign-in did not return a session.");
+    if (data.user.role === "USER" || data.user.role === "GUARDIAN") {
       await api("/api/v1/auth/logout", null, { method: "POST", body: JSON.stringify({}) });
+      throw new Error("This account cannot open the monitoring hub.");
+    }
+    setSession({ accessToken: data.accessToken, user: data.user });
+  }, []);
+
+  const completeMfa = useCallback(async (mfaToken: string, code: string) => {
+    const data = await api<{ accessToken: string; user: AuthUser }>("/api/v1/auth/mfa", null, {
+      method: "POST",
+      body: JSON.stringify({ mfaToken, code }),
+    });
+    if (data.user.role === "USER" || data.user.role === "GUARDIAN") {
       throw new Error("This account cannot open the monitoring hub.");
     }
     setSession({ accessToken: data.accessToken, user: data.user });
@@ -43,7 +64,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (cancelled || !token) return;
         const user = await api<AuthUser>("/api/v1/users/me", token);
         if (cancelled) return;
-        if (user.role === "USER" || user.role === "GUARDIAN" || user.role === "RESPONDER") return;
+        if (user.role === "USER" || user.role === "GUARDIAN") return;
         setSession({ accessToken: token, user });
       })
       .catch(() => undefined)
@@ -64,7 +85,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     });
   }, [session?.accessToken]);
 
-  const value = useMemo(() => ({ session, restoring, login, logout }), [session, restoring, login, logout]);
+  const value = useMemo(() => ({ session, restoring, login, completeMfa, logout }), [session, restoring, login, completeMfa, logout]);
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
 

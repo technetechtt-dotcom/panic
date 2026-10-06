@@ -1,6 +1,10 @@
 # Deployment
 
-This version runs the API as a Node process on the host and PostgreSQL and Redis in Docker. There is no API image and no production orchestrator yet.
+Production-shaped containers live in `services/api/Dockerfile`, `apps/monitoring-web/Dockerfile`, and `infrastructure/docker/docker-compose.prod.yml`. From the repository root, scale the API with `docker compose -f infrastructure/docker/docker-compose.prod.yml up --build --scale api=2`. Both processes share Postgres and Redis. WebSocket fan-out uses the Redis adapter when `REDIS_URL` is set. Set `EVIDENCE_VAULT_KEY`, Twilio, FCM, and S3 variables only when those providers are real. A missing provider records that the message or object was not sent.
+
+A database backup is `node --env-file=.env services/api/scripts/backup-restore.mjs`. Restore with `psql` against the dump file. This is a single-database procedure, not a multi-region disaster-recovery exercise.
+
+Local development can still run the API with `npm run dev:api` and Postgres in Docker. The Dockerfiles above are the container path. They have not been load-tested as a multi-region deployment.
 
 ## Local
 

@@ -183,10 +183,8 @@ export interface IncidentSummary {
   unacknowledgedIncidents: number;
   duressAlerts: number;
   devicesContactLost: number;
-  /** Fusion-driven high-risk alerts are not produced in this version. */
-  highRiskAlerts: null;
-  /** Responder assignment is not available in this version. */
-  respondersActive: null;
+  highRiskAlerts: number;
+  respondersActive: number;
 }
 
 export interface AuthUser {

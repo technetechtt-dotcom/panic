@@ -5,6 +5,7 @@ import {
   NETWORK_TYPES,
   PROTECTION_MODES,
   PROTECTION_STATUSES,
+  ROLES,
   TRIGGER_TYPES,
 } from "@guardian/shared-types";
 
@@ -166,6 +167,65 @@ export const journeySchema = z
     destinationLabel: z.string().trim().min(1).max(120),
     expectedArrivalAt: isoTime,
     checkInIntervalSeconds: z.number().int().min(60).max(6 * 60 * 60),
+    mode: z.enum(["WALK", "RIDE", "DRIVE", "MEETING", "HIGH_RISK"]).optional(),
+    originLatitude: z.number().min(-90).max(90).optional(),
+    originLongitude: z.number().min(-180).max(180).optional(),
+    destinationLatitude: z.number().min(-90).max(90).optional(),
+    destinationLongitude: z.number().min(-180).max(180).optional(),
+    corridorMeters: z.number().int().min(50).max(5_000).optional(),
+  })
+  .strict();
+
+export const profileSchema = z
+  .object({
+    bloodType: z.string().trim().max(12).optional(),
+    allergies: z.string().trim().max(500).optional(),
+    medications: z.string().trim().max(500).optional(),
+    notes: z.string().trim().max(1000).optional(),
+  })
+  .strict();
+
+export const fusionSignalSchema = z
+  .object({
+    signals: z.array(z.enum(["ROUTE_DEVIATION", "MISSED_CHECK_IN", "WEARABLE_SEPARATION", "VEHICLE_SPEED_MOVEMENT", "NO_RESPONSE"])).min(1).max(8),
+  })
+  .strict();
+
+export const positionSchema = z
+  .object({
+    latitude: z.number().min(-90).max(90),
+    longitude: z.number().min(-180).max(180),
+  })
+  .strict();
+
+export const responderAssignSchema = z
+  .object({
+    responderId: z.string().uuid(),
+  })
+  .strict();
+
+export const responderStatusSchema = z
+  .object({
+    status: z.enum(["RESPONDING", "USER_LOCATED"]),
+  })
+  .strict();
+
+export const mfaCodeSchema = z
+  .object({
+    code: z.string().regex(/^\d{6}$/),
+    mfaToken: z.string().min(20).max(2000).optional(),
+  })
+  .strict();
+
+export const roleChangeSchema = z
+  .object({
+    role: z.enum(ROLES),
+  })
+  .strict();
+
+export const eraseAccountSchema = z
+  .object({
+    password: z.string().min(12).max(200),
   })
   .strict();
 
@@ -188,8 +248,8 @@ export const evidenceChunkSchema = z
     clientChunkId: z.string().uuid(),
     sequence: z.number().int().min(0).max(100000),
     sha256: z.string().regex(/^[a-f0-9]{64}$/),
-    contentType: z.enum(["audio/pcm", "image/jpeg"]),
-    bytesBase64: z.string().regex(/^[A-Za-z0-9+/]+={0,2}$/).min(4).max(280000),
+    contentType: z.enum(["audio/pcm", "image/jpeg", "video/mp4"]),
+    bytesBase64: z.string().regex(/^[A-Za-z0-9+/]+={0,2}$/).min(4).max(2_100_000),
   })
   .strict();
 

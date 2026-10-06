@@ -10,7 +10,8 @@ Milestone 1 treats the SOS path as the asset that must stay available and the ac
 - Refresh tokens are opaque random values. The database stores SHA-256 only. Refresh rotates the token. Presenting a replaced token revokes the family.
 - Authorisation reads the role from the database on each HTTP request. A demotion applies on the next request even if the JWT still names the old role.
 - Public registration cannot choose a role.
-- `GUARDIAN` and `RESPONDER` have no incident permissions in this version.
+- `GUARDIAN` cannot open the monitoring list. `RESPONDER` can read and update only assigned incidents.
+- Monitoring operators can enroll a TOTP authenticator. Sign-in asks for the code only after enrollment. The secret is stored for that operator account.
 - Users can create and read only their own incidents and can update only their own active incidents.
 - Helmet, CORS with an explicit origin list, and a request id are enabled.
 - Logs redact fields named password, token, authorization, pin, and secret.

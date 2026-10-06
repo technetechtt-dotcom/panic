@@ -11,6 +11,7 @@ vi.mock("../auth/AuthContext", () => ({
     session: { accessToken: "token", user: { id: "1", email: "op@example.com", displayName: "Op", role: "MONITOR_OPERATOR" } },
     restoring: false,
     login: vi.fn(),
+    completeMfa: vi.fn(),
     logout: vi.fn(),
   }),
 }));

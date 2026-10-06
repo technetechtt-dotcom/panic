@@ -61,6 +61,9 @@ model User {
   safetyPin    SafetyPin?
   guardians    TrustedContact[]
   journeys     ProtectionSession[]
+  profile      EmergencyProfile?
+  mfa          OperatorMfa?
+  assignments  ResponderAssignment[]
 }
 
 model RefreshToken {
@@ -103,6 +106,7 @@ model Device {
   appVersion     String
   publicKey          String?
   emergencyTokenHash String?
+  fcmToken           String?
   createdAt          DateTime   @default(now())
   updatedAt          DateTime   @updatedAt
   user               User       @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -149,6 +153,9 @@ model Incident {
   timeline           TimelineEvent[]
   escalations        IncidentEscalation[]
   evidence           EvidenceChunk[]
+  deliveries         NotificationDelivery[]
+  rooms              IncidentRoom[]
+  assignments        ResponderAssignment[]
 
   @@index([state, isTest, createdAt])
   @@index([userId, createdAt])
@@ -277,6 +284,12 @@ model ProtectionSession {
   checkInIntervalSeconds  Int
   lastCheckInAt           DateTime
   status                  String
+  mode                    String   @default("WALK")
+  originLatitude          Float?
+  originLongitude         Float?
+  destinationLatitude     Float?
+  destinationLongitude    Float?
+  corridorMeters          Int      @default(400)
   createdAt               DateTime @default(now())
   updatedAt               DateTime @updatedAt
   user                    User     @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -304,6 +317,7 @@ model EvidenceChunk {
   sha256        String
   contentType   String
   byteLength    Int
+  storageKey    String?
   payload       Bytes
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
@@ -311,4 +325,62 @@ model EvidenceChunk {
 
   @@unique([incidentId, clientChunkId])
   @@index([incidentId, sequence])
+}
+
+model EmergencyProfile {
+  userId      String   @id @db.Uuid
+  bloodType   String?
+  allergies   String?
+  medications String?
+  notes       String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model OperatorMfa {
+  userId    String   @id @db.Uuid
+  secret    String
+  enabled   Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model NotificationDelivery {
+  id          String   @id @db.Uuid
+  incidentId  String   @db.Uuid
+  channel     String
+  destination String
+  status      String
+  detail      String
+  createdAt   DateTime @default(now())
+  incident    Incident @relation(fields: [incidentId], references: [id], onDelete: Cascade)
+
+  @@index([incidentId, createdAt])
+}
+
+model IncidentRoom {
+  id               String   @id @db.Uuid
+  incidentId       String   @db.Uuid
+  tokenHash        String   @unique
+  canViewLocation  Boolean
+  canViewEvidence  Boolean
+  expiresAt        DateTime
+  createdAt        DateTime @default(now())
+  incident         Incident @relation(fields: [incidentId], references: [id], onDelete: Cascade)
+}
+
+model ResponderAssignment {
+  id          String   @id @db.Uuid
+  incidentId  String   @db.Uuid
+  responderId String   @db.Uuid
+  status      String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  incident    Incident @relation(fields: [incidentId], references: [id], onDelete: Cascade)
+  responder   User     @relation(fields: [responderId], references: [id])
+
+  @@unique([incidentId, responderId])
+  @@index([responderId])
 }

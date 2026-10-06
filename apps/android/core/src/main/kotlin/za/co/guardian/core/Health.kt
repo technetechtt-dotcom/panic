@@ -14,8 +14,8 @@ enum class IncidentState {
 
 private val transitions: Map<IncidentState, Set<IncidentState>> = mapOf(
     IncidentState.PROTECTED to emptySet(),
-    IncidentState.CONCERN to setOf(IncidentState.HIGH_RISK, IncidentState.SOS),
-    IncidentState.HIGH_RISK to setOf(IncidentState.SOS, IncidentState.RESOLVED),
+    IncidentState.CONCERN to setOf(IncidentState.HIGH_RISK, IncidentState.SOS, IncidentState.ACKNOWLEDGED, IncidentState.RESOLVED),
+    IncidentState.HIGH_RISK to setOf(IncidentState.SOS, IncidentState.ACKNOWLEDGED, IncidentState.RESOLVED),
     IncidentState.SOS to setOf(IncidentState.ACKNOWLEDGED, IncidentState.RESOLVED),
     IncidentState.ACKNOWLEDGED to setOf(IncidentState.RESPONDING, IncidentState.USER_LOCATED, IncidentState.RESOLVED),
     IncidentState.RESPONDING to setOf(IncidentState.USER_LOCATED, IncidentState.RESOLVED),

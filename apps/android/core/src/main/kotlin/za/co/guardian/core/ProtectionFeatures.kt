@@ -116,6 +116,53 @@ fun keywordMatches(live: FloatArray, enrolled: List<FloatArray>, sensitivity: In
     return enrolled.any { featureSimilarity(live, it) >= threshold }
 }
 
+fun locationIntervalMs(mode: String): Long = when (mode) {
+    "CRITICAL_ONLY" -> 180_000
+    "SURVIVAL" -> 60_000
+    "REDUCED" -> 15_000
+    else -> 5_000
+}
+
+fun monitoringTickMs(mode: String): Long = when (mode) {
+    "CRITICAL_ONLY" -> 120_000
+    "SURVIVAL" -> 60_000
+    "REDUCED" -> 30_000
+    else -> 15_000
+}
+
+/** A low-g sample followed by a hard spike. This is a candidate, not a diagnosis. */
+fun impactPattern(magnitudes: List<Float>): Boolean {
+    var fell = false
+    for (value in magnitudes.takeLast(50)) {
+        if (value < 3.5f) fell = true
+        if (fell && value > 28f) return true
+    }
+    return false
+}
+
+fun fallCountdownDone(cancelled: Boolean, elapsedMs: Long, windowMs: Long = 20_000): Boolean {
+    return !cancelled && elapsedMs >= windowMs
+}
+
+const val WEARABLE_SOS_ACTION = "za.co.guardian.action.WEARABLE_SOS"
+
+fun freezeIsArmed(decoyPin: String, releasePin: String): Boolean {
+    return decoyPin.length in 4..8 && releasePin.length in 4..8 && decoyPin != releasePin
+}
+
+/** A decoy PIN is the password a person can enter while being told to pay. It is not a login password. */
+fun decoyPinFreezes(entered: String, decoyPin: String): Boolean {
+    return decoyPin.length in 4..8 && entered == decoyPin
+}
+
+fun releasePinMatches(entered: String, releasePin: String): Boolean {
+    return releasePin.length in 4..8 && entered == releasePin
+}
+
+fun freezePatternsAreDistinct(sos: VolumePattern, freeze: VolumePattern): Boolean = sos.key != freeze.key
+
+fun emergencyDialNumber(countryCode: String = "ZA"): String = if (countryCode == "ZA") "112" else "112"
+
 fun captureEvidence(kind: String, batteryPercent: Int): Boolean {
     val mode = batteryMode(batteryPercent)
     return when (kind) {

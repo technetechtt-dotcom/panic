@@ -8,6 +8,7 @@ import type {
   UserRecord,
   UserStore,
 } from "./ports";
+import { readMfaChallenge, signMfaChallenge, verifyTotp } from "./operations";
 import {
   generateRefreshToken,
   hashToken,
@@ -15,10 +16,17 @@ import {
   type PasswordHasher,
 } from "./security";
 
+export interface MfaStore {
+  isEnabled(userId: string): Promise<boolean>;
+  secret(userId: string): Promise<string | null>;
+}
+
 export interface AccessTokenIssuer {
   sign(user: { id: string; role: Role }): Promise<string>;
   verify(token: string): Promise<AccessClaims>;
 }
+
+export type LoginResult = AuthResult | { mfaRequired: true; mfaToken: string };
 
 export interface AuthResult {
   accessToken: string;
@@ -49,6 +57,7 @@ export class AuthService {
       entityId: string;
       metadata?: Record<string, unknown>;
     }) => Promise<void>,
+    private readonly mfa: { store: MfaStore; secret: string } | null = null,
   ) {}
 
   async register(input: {
@@ -84,7 +93,7 @@ export class AuthService {
     return this.issue(user, this.ids.uuid());
   }
 
-  async login(input: { email: string; password: string }): Promise<AuthResult> {
+  async login(input: { email: string; password: string }): Promise<LoginResult> {
     const email = input.email.trim().toLowerCase();
     const user = await this.users.findByEmail(email);
     const valid = user ? await this.passwords.verify(input.password, user.passwordHash) : false;
@@ -96,7 +105,24 @@ export class AuthService {
       });
       throw new AppError("INVALID_CREDENTIALS", 401, "Invalid email or password.");
     }
+    if (this.mfa && (await this.mfa.store.isEnabled(user.id))) {
+      const token = signMfaChallenge(this.mfa.secret, user.id, this.clock.now().getTime() + 5 * 60 * 1000);
+      return { mfaRequired: true, mfaToken: token };
+    }
     await this.audit({ actorId: user.id, action: "auth.login", entityId: user.id });
+    return this.issue(user, this.ids.uuid());
+  }
+
+  async completeMfa(mfaToken: string, code: string): Promise<AuthResult> {
+    if (!this.mfa) throw new AppError("MFA_UNAVAILABLE", 409, "Authenticator sign-in is not configured.");
+    const userId = readMfaChallenge(this.mfa.secret, mfaToken, this.clock.now().getTime());
+    const secret = userId ? await this.mfa.store.secret(userId) : null;
+    if (!userId || !secret || !verifyTotp(secret, code, this.clock.now().getTime())) {
+      throw new AppError("INVALID_MFA", 401, "That authenticator code was not accepted.");
+    }
+    const user = await this.users.findById(userId);
+    if (!user) throw new AppError("INVALID_MFA", 401, "That authenticator code was not accepted.");
+    await this.audit({ actorId: user.id, action: "auth.mfa", entityId: user.id });
     return this.issue(user, this.ids.uuid());
   }
 

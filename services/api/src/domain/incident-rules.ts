@@ -2,8 +2,8 @@ import type { IncidentState } from "@guardian/shared-types";
 
 const TRANSITIONS: Record<IncidentState, readonly IncidentState[]> = {
   PROTECTED: [],
-  CONCERN: ["HIGH_RISK", "SOS"],
-  HIGH_RISK: ["SOS", "RESOLVED"],
+  CONCERN: ["HIGH_RISK", "SOS", "ACKNOWLEDGED", "RESOLVED"],
+  HIGH_RISK: ["SOS", "ACKNOWLEDGED", "RESOLVED"],
   SOS: ["ACKNOWLEDGED", "RESOLVED"],
   ACKNOWLEDGED: ["RESPONDING", "USER_LOCATED", "RESOLVED"],
   RESPONDING: ["USER_LOCATED", "RESOLVED"],

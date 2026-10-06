@@ -21,19 +21,26 @@ import za.co.guardian.R
 import za.co.guardian.core.TriggerType
 import za.co.guardian.core.VolumeChordDetector
 import za.co.guardian.core.VolumeKey
+import za.co.guardian.core.freezeIsArmed
+import za.co.guardian.core.freezePatternsAreDistinct
 import za.co.guardian.data.SettingsStore
 import za.co.guardian.data.SosActions
+import za.co.guardian.data.TokenStore
+import za.co.guardian.ui.FreezeActivity
 import javax.inject.Inject
 
 @AndroidEntryPoint
 class VolumeSosService : AccessibilityService() {
     @Inject lateinit var actions: SosActions
     @Inject lateinit var settings: SettingsStore
+    @Inject lateinit var tokens: TokenStore
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val detector = VolumeChordDetector()
+    private val freezeDetector = VolumeChordDetector()
     private var lastPatternAt = 0L
     private var appliedPattern = ""
+    private var appliedFreeze = ""
     private var appliedWindow = 0L
 
     override fun onServiceConnected() {
@@ -49,7 +56,21 @@ class VolumeSosService : AccessibilityService() {
             else -> return false
         }
         val pattern = settings.volumePattern()
+        val freeze = settings.freezePattern()
         val window = settings.volumeWindowMs()
+        if (freezePatternsAreDistinct(pattern, freeze) && freezeIsArmed(tokens.freezeDecoyPin(), tokens.freezeReleasePin())) {
+            if (appliedFreeze != freeze.name || appliedWindow != window) {
+                freezeDetector.direction = freeze.key
+                freezeDetector.requiredPresses = freeze.presses
+                freezeDetector.windowMs = window
+                appliedFreeze = freeze.name
+            }
+            if (freezeDetector.onPress(key, event.eventTime)) {
+                val intent = Intent(this, FreezeActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                startActivity(intent)
+                return false
+            }
+        }
         if (appliedPattern != pattern.name || appliedWindow != window) {
             detector.direction = pattern.key
             detector.requiredPresses = pattern.presses

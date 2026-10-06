@@ -19,19 +19,23 @@ Still thin inside milestone 1:
 
 ## Milestone 2 — partial
 
-Implemented: configurable volume-button patterns, an on-device safe-word sample matcher, a guardian name record, and journey watch that raises concern on a missed check-in. Not implemented: push invitations, SMS delivery, and guardian acknowledgement. `EmergencySmsProvider` is a simulator and is not called.
+Implemented: configurable volume patterns, an on-device safe-word sample matcher, guardian records with an optional phone number, and journey, ride, drive, meeting, and high-risk watches. A live SOS creates a private room link and attempts SMS and FCM. SMS is sent only when `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, and `TWILIO_FROM` are set. Push is sent only when `FCM_SERVER_KEY` and a device `fcmToken` are set. Otherwise the delivery row says the message was not transmitted.
 
 ## Milestone 3 — partial
 
-Implemented: audio chunks encrypted on the phone before upload, a persistent evidence queue, duress PIN handling that keeps the incident open, and a phone screen that says the emergency is cancelled either way. Not implemented: photo capture, video segments, and object storage. Evidence still lands in PostgreSQL, not an encrypted object vault.
+Implemented: encrypted audio, a photo taken in the camera UI, and a short video the person starts. Chunks are encrypted on the API host. A copy is sent to S3 only when `S3_BUCKET`, `S3_ENDPOINT`, `S3_ACCESS_KEY_ID`, and `S3_SECRET_ACCESS_KEY` are set. The monitoring hub lists evidence. It does not play a video timeline.
 
-## Milestone 4 — library only
+## Milestone 4 — partial
 
-`SafetyFusionEngine` scores explainable rules and is unit tested. It is not wired to incident creation. Battery mode is calculated and sent on the heartbeat. The phone does not yet drop work by battery level, because the only uploads are the capsule, location, and heartbeat. Wearable separation is a fusion input name, not a device integration.
+Fusion scores the same explainable rules as the phone. A missed check-in or a high score can open a concern or high-risk incident from the server. A deliberate SOS still does not wait for that score. Battery survival slows location updates and blocks photo and video before audio. Impact detection is an opt-in foreground notification with a 20 second cancel. A same-signed companion can send `za.co.guardian.action.WEARABLE_SOS`. There is no watch app binary in this repository.
 
-## Milestone 5 — not implemented
+## Milestone 5 — partial
 
-No `AIIncidentAssistant` type is callable. No model can cancel an SOS, mark someone safe, accuse a person, or dispatch a responder. No search corridor is calculated. The map says last confirmed location.
+The hub shows a rules brief and a search corridor around the last confirmed point. The brief cannot cancel an incident, accuse a person, or dispatch by itself. An operator can assign a responder account. The responder uses the same hub and only sees assigned incidents. There is no separate responder store binary.
+
+## Still not a production claim
+
+iOS source in `apps/ios` has not been compiled. Operator MFA is enforced only after that operator enrolls. Redis rate limits are used when Redis is up, and the process falls back to memory when it is not. PostgreSQL integration coverage runs when `GUARDIAN_PG_TEST=1`. The production compose file can run two API processes behind one database and Redis; that is not a tested multi-region deployment. Backup is `pg_dump` via `services/api/scripts/backup-restore.mjs`. Observability is a request counter at `/api/v1/health/metrics`. Account export and erasure remove profile and guardian contact data and keep incident rows. No penetration test engagement has been run. No model is connected.
 
 ## Product rules that stay in force
 

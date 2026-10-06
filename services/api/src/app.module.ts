@@ -23,6 +23,9 @@ import { ContactSweep } from "./contact-sweep";
 import { AuthService } from "./domain/auth-service";
 import { DeviceService } from "./domain/device-service";
 import { IncidentService } from "./domain/incident-service";
+import { FileEvidenceVault } from "./domain/evidence-vault";
+import { FusionBridge } from "./domain/fusion-bridge";
+import { PlatformService, PrismaMfaStore } from "./domain/platform-service";
 import { ProtectionService } from "./domain/protection-service";
 import type { AuditStore, Clock, IdGenerator } from "./domain/ports";
 import { JwtAccessTokens, ScryptPasswordHasher } from "./domain/security";
@@ -51,6 +54,7 @@ import { AuthController } from "./modules/auth/auth.controller";
 import { DevicesController } from "./modules/devices/devices.controller";
 import { HealthController } from "./modules/health/health.controller";
 import { IncidentsController } from "./modules/incidents/incidents.controller";
+import { PlatformController } from "./modules/platform/platform.controller";
 import { ProtectionController } from "./modules/protection/protection.controller";
 import { RealtimeGateway } from "./modules/realtime/realtime.gateway";
 import { UsersController } from "./modules/users/users.controller";
@@ -62,6 +66,7 @@ import { UsersController } from "./modules/users/users.controller";
     DevicesController,
     IncidentsController,
     ProtectionController,
+    PlatformController,
     AuditController,
     HealthController,
   ],
@@ -116,7 +121,7 @@ import { UsersController } from "./modules/users/users.controller";
     { provide: AUDIT_STORE, useFactory: (prisma: PrismaService) => new PrismaAuditStore(prisma), inject: [PrismaService] },
     {
       provide: AuthService,
-      useFactory: (users, refreshTokens, consents, passwords, tokens, ids: IdGenerator, clock: Clock, config: AppConfig, audit: AuditStore) =>
+      useFactory: (users, refreshTokens, consents, passwords, tokens, ids: IdGenerator, clock: Clock, config: AppConfig, audit: AuditStore, prisma: PrismaService) =>
         new AuthService(
           users,
           refreshTokens,
@@ -140,8 +145,16 @@ import { UsersController } from "./modules/users/users.controller";
               createdAt: clock.now(),
             });
           },
+          { store: new PrismaMfaStore(prisma), secret: config.jwtSecret },
         ),
-      inject: [USER_STORE, REFRESH_STORE, CONSENT_STORE, PASSWORD_HASHER, ACCESS_TOKENS, IDS, CLOCK, APP_CONFIG, AUDIT_STORE],
+      inject: [USER_STORE, REFRESH_STORE, CONSENT_STORE, PASSWORD_HASHER, ACCESS_TOKENS, IDS, CLOCK, APP_CONFIG, AUDIT_STORE, PrismaService],
+    },
+    FusionBridge,
+    {
+      provide: FileEvidenceVault,
+      useFactory: (config: AppConfig) =>
+        new FileEvidenceVault(process.env.EVIDENCE_VAULT_DIR || "data/evidence-vault", process.env.EVIDENCE_VAULT_KEY || config.jwtSecret),
+      inject: [APP_CONFIG],
     },
     RealtimeGateway,
     {
@@ -157,8 +170,10 @@ import { UsersController } from "./modules/users/users.controller";
         ids,
         clock,
         config: AppConfig,
-      ) =>
-        new IncidentService(
+        users,
+        bridge: FusionBridge,
+      ) => {
+        const service = new IncidentService(
           incidents,
           devices,
           locations,
@@ -169,7 +184,11 @@ import { UsersController } from "./modules/users/users.controller";
           ids,
           clock,
           config.staleAfterSeconds,
-        ),
+          users,
+        );
+        bridge.handler = (userId, triggerType) => service.raiseFromFusion(userId, triggerType);
+        return service;
+      },
       inject: [
         INCIDENT_STORE,
         DEVICE_STORE,
@@ -181,6 +200,8 @@ import { UsersController } from "./modules/users/users.controller";
         IDS,
         CLOCK,
         APP_CONFIG,
+        USER_STORE,
+        FusionBridge,
       ],
     },
     {
@@ -190,7 +211,18 @@ import { UsersController } from "./modules/users/users.controller";
     },
     {
       provide: ProtectionService,
-      useFactory: (prisma: PrismaService, incidents, timeline, audit, publisher: RealtimeGateway, passwords, ids, clock) =>
+      useFactory: (
+        prisma: PrismaService,
+        incidents,
+        timeline,
+        audit,
+        publisher: RealtimeGateway,
+        passwords,
+        ids,
+        clock,
+        bridge: FusionBridge,
+        vault: FileEvidenceVault,
+      ) =>
         new ProtectionService(
           new PrismaGuardianStore(prisma),
           new PrismaJourneyStore(prisma),
@@ -204,8 +236,16 @@ import { UsersController } from "./modules/users/users.controller";
           passwords,
           ids,
           clock,
+          bridge,
+          vault,
         ),
-      inject: [PrismaService, INCIDENT_STORE, TIMELINE_STORE, AUDIT_STORE, RealtimeGateway, PASSWORD_HASHER, IDS, CLOCK],
+      inject: [PrismaService, INCIDENT_STORE, TIMELINE_STORE, AUDIT_STORE, RealtimeGateway, PASSWORD_HASHER, IDS, CLOCK, FusionBridge, FileEvidenceVault],
+    },
+    {
+      provide: PlatformService,
+      useFactory: (prisma: PrismaService, incidents: IncidentService, protection: ProtectionService, users, devices, passwords, ids, clock, config: AppConfig, vault: FileEvidenceVault) =>
+        new PlatformService(prisma, incidents, protection, users, devices, passwords, ids, clock, config, vault),
+      inject: [PrismaService, IncidentService, ProtectionService, USER_STORE, DEVICE_STORE, PASSWORD_HASHER, IDS, CLOCK, APP_CONFIG, FileEvidenceVault],
     },
     ContactSweep,
     { provide: APP_GUARD, useClass: AuthGuard },

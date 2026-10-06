@@ -77,6 +77,8 @@ class HomeViewModel @Inject constructor(
     private val actions: SosActions,
     private val healthSource: ProtectionStatusSource,
     private val practiceMode: PracticeModeReader,
+    private val tokens: za.co.guardian.data.TokenStore? = null,
+    private val api: za.co.guardian.data.GuardianApi? = null,
 ) : ViewModel() {
     private val healthState = MutableStateFlow(healthSource.current())
     val health: StateFlow<ProtectionHealth> = healthState
@@ -86,10 +88,58 @@ class HomeViewModel @Inject constructor(
     val active: StateFlow<LocalIncident?> = activeState
     private val practiceState = MutableStateFlow(practiceMode.enabled())
     val practice: StateFlow<Boolean> = practiceState
+    var role by mutableStateOf(tokens?.userRole() ?: "USER")
+        private set
+    var assignments by mutableStateOf<List<Pair<String, String>>>(emptyList())
+        private set
 
     fun refresh() {
         healthState.value = healthSource.current()
         practiceState.value = practiceMode.enabled()
+        role = tokens?.userRole() ?: "USER"
+        if (role == "RESPONDER" && api != null) {
+            viewModelScope.launch {
+                assignments = try {
+                    api.incidents().data.map { incident ->
+                        incident.id to "${incident.userDisplayName.ifBlank { "Person" }} · ${incident.state}"
+                    }
+                } catch (_: Exception) {
+                    emptyList()
+                }
+            }
+        }
+    }
+
+    fun confirmPayment(pin: String, context: android.content.Context): String {
+        val decoy = tokens?.freezeDecoyPin().orEmpty()
+        val release = tokens?.freezeReleasePin().orEmpty()
+        val armed = za.co.guardian.core.freezeIsArmed(decoy, release)
+        if (armed && za.co.guardian.core.decoyPinFreezes(pin, decoy)) {
+            context.startActivity(android.content.Intent(context, FreezeActivity::class.java))
+            return "Payment could not be confirmed."
+        }
+        if (za.co.guardian.core.releasePinMatches(pin, release)) return "Nothing was transferred."
+        return "That password was not accepted."
+    }
+
+    fun reportLocated(incidentId: String) {
+        val client = api ?: return
+        viewModelScope.launch {
+            try {
+                client.responderStatus(incidentId, za.co.guardian.data.ResponderStatusBody("USER_LOCATED"))
+                messageState.value = "Location report sent. This does not close the incident."
+            } catch (_: Exception) {
+                messageState.value = "The location report was not sent."
+            }
+        }
+    }
+
+    fun openEmergencyDialer(context: android.content.Context) {
+        val intent = android.content.Intent(
+            android.content.Intent.ACTION_DIAL,
+            android.net.Uri.parse("tel:${za.co.guardian.core.emergencyDialNumber()}"),
+        )
+        context.startActivity(intent)
     }
 
     fun sendSos() {
@@ -162,7 +212,11 @@ class HistoryViewModel @Inject constructor(private val database: GuardianDatabas
 class SettingsViewModel @Inject constructor(
     private val auth: AuthRepository,
     private val settings: SettingsStore,
+    private val tokens: za.co.guardian.data.TokenStore,
     private val protection: za.co.guardian.data.ProtectionActions,
+    private val vault: za.co.guardian.data.EvidenceVault,
+    private val database: za.co.guardian.data.GuardianDatabase,
+    private val signals: za.co.guardian.data.PhoneSignals,
     @dagger.hilt.android.qualifiers.ApplicationContext private val context: android.content.Context,
 ) : ViewModel() {
     var testRemaining by mutableStateOf(settings.remainingMs())
@@ -175,6 +229,10 @@ class SettingsViewModel @Inject constructor(
     fun refresh() {
         testRemaining = settings.remainingMs()
         shareAudio = settings.shareAudio()
+    }
+
+    fun note(message: String) {
+        status = message
     }
 
     fun startTest() {
@@ -194,6 +252,27 @@ class SettingsViewModel @Inject constructor(
         val next = order[(order.indexOf(settings.volumePattern()) + 1) % order.size]
         settings.setVolumePattern(next)
         status = "Volume trigger is now ${next.presses}× ${next.key.name.lowercase()}."
+    }
+
+    fun cycleFreezePattern() {
+        val order = za.co.guardian.core.VolumePattern.entries.filter { it.key != settings.volumePattern().key }
+        if (order.isEmpty()) {
+            status = "Choose an SOS volume pattern first. The freeze pattern has to use the other volume key."
+            return
+        }
+        val next = order[(order.indexOf(settings.freezePattern()) + 1).mod(order.size)]
+        settings.setFreezePattern(next)
+        status = "Freeze pattern is ${next.presses}× ${next.key.name.lowercase()}. It does not send SOS."
+    }
+
+    fun saveFreezePins(decoy: String, release: String) {
+        if (!za.co.guardian.core.freezeIsArmed(decoy, release)) {
+            status = "Use two different 4 to 8 digit PINs. The decoy freezes the screen. The other PIN leaves the freeze."
+            return
+        }
+        tokens.setFreezeDecoyPin(decoy)
+        tokens.setFreezeReleasePin(release)
+        status = "Freeze PINs stay on this phone. A reboot leaves the freeze. Android can still open the power menu. Screen pinning is requested, and the system asks before it pins."
     }
 
     fun toggleVolumeVibration() {
@@ -289,10 +368,47 @@ class SettingsViewModel @Inject constructor(
     }
 
     fun checkConnection() = run { "Backend ${auth.checkConnection()}" }
-    fun addGuardian(name: String) = run { protection.addGuardian(name) }
-    fun startJourney(label: String, minutes: String) = run { protection.startJourney(label, minutes.toIntOrNull() ?: 30) }
+    fun addGuardian(name: String, phone: String) = run { protection.addGuardian(name, phone) }
+    fun startJourney(label: String, minutes: String) = run { protection.startJourney(label, minutes.toIntOrNull() ?: 30, settings.protectionMode()) }
+    fun cycleProtectionMode() {
+        val modes = listOf("WALK", "RIDE", "DRIVE", "MEETING", "HIGH_RISK")
+        val next = modes[(modes.indexOf(settings.protectionMode()).coerceAtLeast(0) + 1) % modes.size]
+        settings.setProtectionMode(next)
+        status = "Mode is $next. Ride and drive use a wider corridor. Meeting and high-risk check in sooner."
+    }
+    fun toggleFallWatch() {
+        val enabled = !settings.fallWatch()
+        settings.setFallWatch(enabled)
+        val intent = android.content.Intent(context, za.co.guardian.service.FallWatchService::class.java)
+        if (enabled) {
+            androidx.core.content.ContextCompat.startForegroundService(context, intent)
+            status = "Impact detection is on. Android shows a Guardian notification. A possible fall waits 20 seconds."
+        } else {
+            context.stopService(intent)
+            status = "Impact detection is off."
+        }
+    }
+    fun saveCapture(type: String, bytes: ByteArray) = run {
+        val incident = database.incidents().list().firstOrNull { it.state != "RESOLVED" && it.state != "ARCHIVED" }
+            ?: return@run "Send SOS before saving a photo or video. The camera is not used in the background."
+        val battery = signals.deviceState().batteryLevel ?: 100
+        if (!za.co.guardian.core.captureEvidence(type, battery)) {
+            return@run "Battery is too low for $type. Short audio can still be kept."
+        }
+        if (bytes.size > 1_500_000) return@run "That file is larger than 1.5 MB. Use a shorter clip."
+        vault.store(incident.triggerId, type, bytes)
+        "Saved on this phone. It uploads with the open emergency."
+    }
+    fun saveProfile(blood: String, allergies: String, medications: String, notes: String) = run {
+        protection.saveProfile(blood, allergies, medications, notes)
+    }
     fun savePins(cancelPin: String, duressPin: String) = run { protection.setPins(cancelPin, duressPin) }
     fun cancel(pin: String) = run { protection.cancel(pin) }
+
+    fun finishOnboarding(onDone: () -> Unit) {
+        settings.setOnboarded(true)
+        onDone()
+    }
 
     fun signOut(onDone: () -> Unit) {
         viewModelScope.launch {
@@ -400,13 +516,25 @@ fun HomeScreen(
 ) {
     val health by viewModel.health.collectAsStateWithLifecycle()
     val message by viewModel.message.collectAsStateWithLifecycle()
+    val activeIncident by viewModel.active.collectAsStateWithLifecycle()
     val practice by viewModel.practice.collectAsStateWithLifecycle()
+    val context = androidx.compose.ui.platform.LocalContext.current
+    var paymentPin by remember { mutableStateOf("") }
+    var paymentNote by remember { mutableStateOf<String?>(null) }
     androidx.compose.runtime.LaunchedEffect(Unit) { viewModel.refresh() }
     Scaffold(bottomBar = { BottomNav(onHome = {}, onHistory = onHistory, onSettings = onSettings, selected = "home") }) { padding ->
         Column(Modifier.fillMaxSize().padding(padding).padding(20.dp).verticalScroll(rememberScrollState())) {
             if (practice) Text("TEST MODE", color = Color(0xFF111111), modifier = Modifier.fillMaxWidth().padding(8.dp))
             Text(health.level.name.replace('_', ' '), fontSize = 34.sp, fontWeight = FontWeight.Bold)
             Text(if (health.level == ProtectionLevel.PROTECTED) "Guardian is ready." else "Manual SOS is available. Some protection is not ready.")
+            if (viewModel.role == "RESPONDER") {
+                Text("Assigned incidents", fontSize = 22.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 12.dp))
+                if (viewModel.assignments.isEmpty()) Text("No assigned incidents are on this phone yet.")
+                viewModel.assignments.forEach { (id, label) ->
+                    Text(label, modifier = Modifier.padding(top = 8.dp))
+                    Button(onClick = { viewModel.reportLocated(id) }, modifier = Modifier.fillMaxWidth()) { Text("Report person located") }
+                }
+            }
             Spacer(Modifier.height(16.dp))
             health.checks.forEach { check ->
                 val mark = when (check.status) {
@@ -426,12 +554,28 @@ fun HomeScreen(
                     }
                 }
             }
+            if (activeIncident != null) {
+                Text(
+                    "Emergency is active on this phone. Settings can add a photo, a short video, or a PIN cancellation. Android still shows its location and microphone icons.",
+                    modifier = Modifier.padding(top = 12.dp),
+                )
+            }
             message?.let { Text(it, modifier = Modifier.padding(top = 12.dp)) }
             Spacer(Modifier.height(20.dp))
             Button(
                 onClick = viewModel::sendSos,
                 modifier = Modifier.fillMaxWidth().height(120.dp).semantics { contentDescription = "Send emergency SOS now" },
             ) { Text("SOS", fontSize = 40.sp, fontWeight = FontWeight.Bold) }
+            Button(onClick = { viewModel.openEmergencyDialer(context) }, modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) {
+                Text("Open the phone dialer for 112")
+            }
+            Text("This opens the dialer. Guardian does not place the call.", modifier = Modifier.padding(vertical = 8.dp))
+            OutlinedTextField(paymentPin, { paymentPin = it }, label = { Text("Payment password") }, modifier = Modifier.fillMaxWidth())
+            Button(onClick = {
+                paymentNote = viewModel.confirmPayment(paymentPin, context)
+                paymentPin = ""
+            }, modifier = Modifier.fillMaxWidth()) { Text("Confirm payment") }
+            paymentNote?.let { Text(it, modifier = Modifier.padding(top = 8.dp)) }
         }
     }
 }
@@ -459,12 +603,43 @@ fun SettingsScreen(
     val context = androidx.compose.ui.platform.LocalContext.current
     var safeWord by remember { mutableStateOf("") }
     var guardian by remember { mutableStateOf("") }
+    var guardianPhone by remember { mutableStateOf("") }
+    var blood by remember { mutableStateOf("") }
+    var allergies by remember { mutableStateOf("") }
+    var medications by remember { mutableStateOf("") }
+    var profileNotes by remember { mutableStateOf("") }
     var destination by remember { mutableStateOf("") }
     var minutes by remember { mutableStateOf("30") }
     var cancelPin by remember { mutableStateOf("") }
     var duressPin by remember { mutableStateOf("") }
+    var decoyPin by remember { mutableStateOf("") }
+    var releasePin by remember { mutableStateOf("") }
     var showVolumeDisclosure by remember { mutableStateOf(false) }
     var pendingMic by remember { mutableStateOf<String?>(null) }
+    val photoCapture = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.TakePicturePreview(),
+    ) { bitmap ->
+        if (bitmap == null) return@rememberLauncherForActivityResult
+        val stream = java.io.ByteArrayOutputStream()
+        bitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 70, stream)
+        viewModel.saveCapture("photo", stream.toByteArray())
+    }
+    val videoCapture = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.StartActivityForResult(),
+    ) { result ->
+        val uri = result.data?.data ?: return@rememberLauncherForActivityResult
+        viewModel.saveCapture("video", context.contentResolver.openInputStream(uri)?.use { it.readBytes() } ?: byteArrayOf())
+    }
+    val cameraPermission = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.RequestPermission(),
+    ) { granted ->
+        if (granted) photoCapture.launch(null)
+    }
+    val smsPermission = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.RequestPermission(),
+    ) { granted ->
+        viewModel.note(if (granted) "This phone can text the saved guardian number during a live SOS." else "SMS permission stays off. The hub can still text when SMS is configured.")
+    }
     val audioPermission = androidx.activity.compose.rememberLauncherForActivityResult(
         androidx.activity.result.contract.ActivityResultContracts.RequestPermission(),
     ) { granted ->
@@ -509,6 +684,12 @@ fun SettingsScreen(
             Spacer(Modifier.height(12.dp))
             Button(onClick = { showVolumeDisclosure = true }, modifier = Modifier.fillMaxWidth()) { Text("Enable volume SOS") }
             Button(onClick = viewModel::cycleVolumePattern, modifier = Modifier.fillMaxWidth()) { Text("Change volume pattern") }
+            Button(onClick = viewModel::cycleFreezePattern, modifier = Modifier.fillMaxWidth()) { Text("Change freeze volume pattern") }
+            OutlinedTextField(decoyPin, { decoyPin = it }, label = { Text("Decoy payment PIN") }, modifier = Modifier.fillMaxWidth())
+            OutlinedTextField(releasePin, { releasePin = it }, label = { Text("Secret PIN to leave the freeze") }, modifier = Modifier.fillMaxWidth())
+            Button(onClick = { viewModel.saveFreezePins(decoyPin, releasePin); decoyPin = ""; releasePin = "" }, modifier = Modifier.fillMaxWidth()) { Text("Save freeze PINs") }
+            Text("A decoy PIN or the freeze volume pattern holds this app on one still screen. Hold the clock, then enter the secret PIN. A reboot clears the freeze. This does not block the power button.", modifier = Modifier.padding(vertical = 8.dp))
+            Button(onClick = { smsPermission.launch(android.Manifest.permission.SEND_SMS) }, modifier = Modifier.fillMaxWidth()) { Text("Allow SMS to the saved guardian") }
             Button(onClick = viewModel::cycleVolumeWindow, modifier = Modifier.fillMaxWidth()) { Text("Change volume timing window") }
             Button(onClick = viewModel::toggleVolumeVibration, modifier = Modifier.fillMaxWidth()) { Text("Toggle volume vibration confirmation") }
             Button(onClick = viewModel::startVolumeTest, modifier = Modifier.fillMaxWidth()) { Text("Test volume button for 30 seconds") }
@@ -535,10 +716,27 @@ fun SettingsScreen(
                 })
             }
             OutlinedTextField(guardian, { guardian = it }, label = { Text("Guardian name") }, modifier = Modifier.fillMaxWidth().padding(top = 12.dp))
-            Button(onClick = { viewModel.addGuardian(guardian) }, modifier = Modifier.fillMaxWidth()) { Text("Add guardian") }
+            OutlinedTextField(guardianPhone, { guardianPhone = it }, label = { Text("Guardian phone for SMS") }, modifier = Modifier.fillMaxWidth())
+            Button(onClick = { viewModel.addGuardian(guardian, guardianPhone) }, modifier = Modifier.fillMaxWidth()) { Text("Add guardian") }
+            Button(onClick = viewModel::cycleProtectionMode, modifier = Modifier.fillMaxWidth()) { Text("Change protection mode") }
+            Button(onClick = viewModel::toggleFallWatch, modifier = Modifier.fillMaxWidth()) { Text("Toggle impact detection") }
+            Button(onClick = {
+                cameraPermission.launch(android.Manifest.permission.CAMERA)
+            }, modifier = Modifier.fillMaxWidth()) { Text("Take a photo for the open emergency") }
+            Button(onClick = {
+                val intent = android.content.Intent(android.provider.MediaStore.ACTION_VIDEO_CAPTURE)
+                intent.putExtra(android.provider.MediaStore.EXTRA_DURATION_LIMIT, 8)
+                intent.putExtra(android.provider.MediaStore.EXTRA_VIDEO_QUALITY, 0)
+                videoCapture.launch(intent)
+            }, modifier = Modifier.fillMaxWidth()) { Text("Record a short video for the open emergency") }
+            OutlinedTextField(blood, { blood = it }, label = { Text("Blood type") }, modifier = Modifier.fillMaxWidth().padding(top = 12.dp))
+            OutlinedTextField(allergies, { allergies = it }, label = { Text("Allergies") }, modifier = Modifier.fillMaxWidth())
+            OutlinedTextField(medications, { medications = it }, label = { Text("Medications") }, modifier = Modifier.fillMaxWidth())
+            OutlinedTextField(profileNotes, { profileNotes = it }, label = { Text("Emergency notes") }, modifier = Modifier.fillMaxWidth())
+            Button(onClick = { viewModel.saveProfile(blood, allergies, medications, profileNotes) }, modifier = Modifier.fillMaxWidth()) { Text("Save emergency profile") }
             OutlinedTextField(destination, { destination = it }, label = { Text("Journey destination") }, modifier = Modifier.fillMaxWidth())
             OutlinedTextField(minutes, { minutes = it }, label = { Text("Minutes") }, modifier = Modifier.fillMaxWidth())
-            Button(onClick = { viewModel.startJourney(destination, minutes) }, modifier = Modifier.fillMaxWidth()) { Text("Start journey watch") }
+            Button(onClick = { viewModel.startJourney(destination, minutes) }, modifier = Modifier.fillMaxWidth()) { Text("Start journey, ride, meeting, or high-risk watch") }
             OutlinedTextField(cancelPin, { cancelPin = it }, label = { Text("Cancel PIN") }, modifier = Modifier.fillMaxWidth())
             OutlinedTextField(duressPin, { duressPin = it }, label = { Text("Duress PIN") }, modifier = Modifier.fillMaxWidth())
             Button(onClick = { viewModel.savePins(cancelPin, duressPin); cancelPin = ""; duressPin = "" }, modifier = Modifier.fillMaxWidth()) { Text("Save PINs") }
@@ -559,6 +757,30 @@ private fun BottomNav(onHome: () -> Unit, onHistory: () -> Unit, onSettings: () 
         NavigationBarItem(selected = selected == "home", onClick = onHome, icon = { Text("Home") }, label = { Text("Home") })
         NavigationBarItem(selected = selected == "history", onClick = onHistory, icon = { Text("History") }, label = { Text("History") })
         NavigationBarItem(selected = selected == "settings", onClick = onSettings, icon = { Text("Settings") }, label = { Text("Settings") })
+    }
+}
+
+@Composable
+fun OnboardingScreen(onDone: () -> Unit, viewModel: SettingsViewModel = hiltViewModel()) {
+    var step by remember { mutableStateOf(0) }
+    val steps = listOf(
+        "Guardian sends a deliberate SOS immediately. Volume, safe word, and the SOS button do not wait for a risk score.",
+        "Guardians are people you name. SMS and push are sent only when those providers are configured. A private room link is created for a live SOS.",
+        "Photos and video are taken by you, with the camera app visible. They are not captured in the background.",
+        "Impact detection shows a notification and waits 20 seconds. A watch signed with the same key can send SOS. This phone is not an iPhone app.",
+    )
+    Scaffold { padding ->
+        Column(Modifier.fillMaxSize().padding(padding).padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text("Setup ${step + 1} of ${steps.size}", fontSize = 28.sp, fontWeight = FontWeight.SemiBold)
+            Text(steps[step])
+            Button(onClick = {
+                if (step == steps.lastIndex) {
+                    viewModel.finishOnboarding(onDone)
+                } else {
+                    step += 1
+                }
+            }, modifier = Modifier.fillMaxWidth()) { Text(if (step == steps.lastIndex) "Finish setup" else "Continue") }
+        }
     }
 }
 

@@ -1,10 +1,12 @@
 import { FormEvent, useState } from "react";
-import { useAuth } from "../auth/AuthContext";
+import { MfaRequiredError, useAuth } from "../auth/AuthContext";
 
 export function LoginPage() {
-  const { login } = useAuth();
+  const { login, completeMfa } = useAuth();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [mfaToken, setMfaToken] = useState<string | null>(null);
+  const [code, setCode] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
 
@@ -17,8 +19,17 @@ export function LoginPage() {
     }
     setPending(true);
     try {
+      if (mfaToken) {
+        await completeMfa(mfaToken, code);
+        return;
+      }
       await login(email, password);
     } catch (caught) {
+      if (caught instanceof MfaRequiredError) {
+        setMfaToken(caught.mfaToken);
+        setError(null);
+        return;
+      }
       setError(caught instanceof Error ? caught.message : "Sign-in failed.");
     } finally {
       setPending(false);
@@ -55,6 +66,22 @@ export function LoginPage() {
             className="mt-1 w-full rounded-lg border border-line bg-ink px-3 py-3"
           />
         </label>
+        {mfaToken ? (
+          <label className="mt-4 block text-sm" htmlFor="code">
+            Authenticator code
+            <input
+              id="code"
+              inputMode="numeric"
+              autoComplete="one-time-code"
+              value={code}
+              onChange={(event) => setCode(event.target.value)}
+              className="mt-1 w-full rounded-lg border border-line bg-ink px-3 py-3"
+            />
+          </label>
+        ) : null}
+        <p className="mt-3 text-xs text-slate-400">
+          Authenticator setup is optional until an operator enrolls. Password sign-in still works before that.
+        </p>
         {error ? (
           <p role="alert" className="mt-4 text-sm text-sos">
             {error}
@@ -65,7 +92,7 @@ export function LoginPage() {
           disabled={pending}
           className="mt-6 w-full rounded-lg bg-slate-100 px-4 py-3 font-semibold text-ink disabled:opacity-60"
         >
-          {pending ? "Signing in" : "Sign in"}
+          {pending ? "Signing in" : mfaToken ? "Confirm code" : "Sign in"}
         </button>
       </form>
     </main>

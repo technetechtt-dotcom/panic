@@ -37,6 +37,8 @@ import za.co.guardian.MainActivity
 import za.co.guardian.R
 import za.co.guardian.core.captureEvidence
 import za.co.guardian.core.heartbeatCoordinates
+import za.co.guardian.core.locationIntervalMs
+import za.co.guardian.core.monitoringTickMs
 import za.co.guardian.core.shouldCaptureLocation
 import za.co.guardian.core.OfflineIncidentRepository
 import za.co.guardian.data.EvidenceBody
@@ -61,6 +63,7 @@ class EmergencyMonitoringService : android.app.Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var wakeLock: PowerManager.WakeLock? = null
     private var listener: LocationListener? = null
+    private var locationInterval = 0L
 
     override fun onBind(intent: Intent?) = null
 
@@ -80,7 +83,7 @@ class EmergencyMonitoringService : android.app.Service() {
             startForeground(NOTIFICATION_ID, notification)
         }
         acquireWakeLock()
-        if (shouldCaptureLocation(signals.hasFineLocation()) && !settingsQuiet()) listenForLocation()
+        if (shouldCaptureLocation(signals.hasFineLocation()) && !settingsQuiet()) listenForLocation(currentInterval())
         if (captureAudio) scope.launch { uploader.captureAudio() }
         scope.launch {
             while (true) {
@@ -89,7 +92,8 @@ class EmergencyMonitoringService : android.app.Service() {
                     stopSelf()
                     break
                 }
-                delay(15_000)
+                if (shouldCaptureLocation(signals.hasFineLocation()) && !settingsQuiet()) listenForLocation(currentInterval())
+                delay(monitoringTickMs(signals.deviceState().batteryMode))
             }
         }
         return START_STICKY
@@ -102,16 +106,21 @@ class EmergencyMonitoringService : android.app.Service() {
         super.onDestroy()
     }
 
-    private fun listenForLocation() {
+    private fun currentInterval(): Long = locationIntervalMs(signals.deviceState().batteryMode)
+
+    private fun listenForLocation(intervalMs: Long) {
+        if (listener != null && locationInterval == intervalMs) return
         val manager = signals.locationManager()
+        listener?.let { manager.removeUpdates(it) }
         val created = LocationListener { location -> scope.launch { uploader.remember(location) } }
         listener = created
+        locationInterval = intervalMs
         try {
             if (manager.isProviderEnabled(LocationManager.GPS_PROVIDER)) {
-                manager.requestLocationUpdates(LocationManager.GPS_PROVIDER, 5_000L, 0f, created, Looper.getMainLooper())
+                manager.requestLocationUpdates(LocationManager.GPS_PROVIDER, intervalMs, 0f, created, Looper.getMainLooper())
             }
             if (manager.isProviderEnabled(LocationManager.NETWORK_PROVIDER)) {
-                manager.requestLocationUpdates(LocationManager.NETWORK_PROVIDER, 5_000L, 0f, created, Looper.getMainLooper())
+                manager.requestLocationUpdates(LocationManager.NETWORK_PROVIDER, intervalMs, 0f, created, Looper.getMainLooper())
             }
         } catch (_: SecurityException) {
             stopSelf()
@@ -320,7 +329,8 @@ class EmergencyUploader @Inject constructor(
         for (row in vault.pending()) {
             if (row.incidentLocalId != localId || row.serverIncidentId.isBlank()) continue
             val plain = vault.readPlain(row)
-            if (plain == null || plain.size > 200_000) {
+            val limit = if (row.type == "audio") 200_000 else 1_500_000
+            if (plain == null || plain.size > limit) {
                 vault.mark(row.evidenceId, "FAILED", row.retryCount + 1)
                 continue
             }

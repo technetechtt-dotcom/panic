@@ -86,6 +86,7 @@ class DefaultSosActions @Inject constructor(
         ) == android.content.pm.PackageManager.PERMISSION_GRANTED
         val audio = !settings.quietIncident() && micGranted && (settings.evidenceMode() || (stage == "SOS" && type == za.co.guardian.core.TriggerType.MANUAL_SOS && settings.shareAudio()))
         controller.start(audio)
+        sendGuardianSms(incident.isTest)
         if (incident.syncState == SyncState.PENDING) {
             val request = OneTimeWorkRequestBuilder<IncidentFlushWorker>()
                 .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
@@ -94,6 +95,34 @@ class DefaultSosActions @Inject constructor(
             WorkManager.getInstance(context).enqueueUniqueWork("guardian-incident-flush", ExistingWorkPolicy.KEEP, request)
         }
         return SosOutcome.Started(incident, tracking)
+    }
+
+    private fun sendGuardianSms(testIncident: Boolean) {
+        if (testIncident) return
+        val phone = settings.guardianPhone()
+        if (phone.isBlank()) return
+        val granted = androidx.core.content.ContextCompat.checkSelfPermission(
+            context,
+            android.Manifest.permission.SEND_SMS,
+        ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+        if (!granted) return
+        try {
+            val sms = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+                context.getSystemService(android.telephony.SmsManager::class.java)
+            } else {
+                @Suppress("DEPRECATION")
+                android.telephony.SmsManager.getDefault()
+            }
+            sms?.sendTextMessage(
+                phone,
+                null,
+                "Guardian: I need help. This text was sent from my phone.",
+                null,
+                null,
+            )
+        } catch (_: Exception) {
+            // A missing SIM or a carrier rejection must not block the SOS that is already saved.
+        }
     }
 }
 
@@ -184,12 +213,14 @@ class AuthRepository @Inject constructor(
     suspend fun register(email: String, password: String, displayName: String) {
         val session = api.register(RegisterBody(email.trim(), password, displayName.trim(), true)).data
         tokens.saveSession(session.accessToken, session.refreshToken, session.user.id)
+        tokens.setUserRole(session.user.role)
         registerDevice()
     }
 
     suspend fun login(email: String, password: String) {
         val session = api.login(LoginBody(email.trim(), password)).data
         tokens.saveSession(session.accessToken, session.refreshToken, session.user.id)
+        tokens.setUserRole(session.user.role)
         registerDevice()
     }
 
@@ -243,22 +274,45 @@ class ProtectionActions @Inject constructor(
     private val database: GuardianDatabase,
     private val settings: SettingsStore,
 ) {
-    suspend fun addGuardian(name: String): String {
+    suspend fun addGuardian(name: String, phone: String = ""): String {
         if (name.isBlank()) return "Enter a guardian's name."
-        val saved = api.addGuardian(GuardianBody(name.trim(), canViewLocation = false, canViewEvidence = false)).data
+        val saved = api.addGuardian(
+            GuardianBody(name.trim(), canViewLocation = true, canViewEvidence = false, phone = phone.trim().ifBlank { null }),
+        ).data
         settings.guardianReady(true)
-        return "Saved ${saved.displayName}. Guardian is not texted automatically."
+        if (phone.isNotBlank()) settings.setGuardianPhone(phone)
+        val delivery = if (phone.isBlank()) "No phone number was saved, so SMS cannot be sent for this guardian." else "The hub texts this number when SMS is configured. This phone can also text it after you allow SMS."
+        return "Saved ${saved.displayName}. $delivery"
     }
 
-    suspend fun startJourney(label: String, minutes: Int): String {
+    suspend fun startJourney(label: String, minutes: Int, mode: String): String {
         if (label.isBlank()) return "Enter where you are going."
         val bounded = minutes.coerceIn(1, 360)
+        val interval = when (mode) {
+            "MEETING" -> 120
+            "HIGH_RISK" -> 60
+            "RIDE", "DRIVE" -> 300
+            else -> minOf(300, bounded * 60).coerceAtLeast(60)
+        }
         val arrival = java.time.Instant.now().plusSeconds(bounded * 60L)
         val stamp = java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'")
             .withZone(java.time.ZoneOffset.UTC)
             .format(arrival)
-        val journey = api.startJourney(JourneyBody(label.trim(), stamp, minOf(300, bounded * 60).coerceAtLeast(60))).data
-        return "Journey ${journey.status.lowercase()}. A missed check-in raises concern. It does not send SOS by itself."
+        val journey = api.startJourney(JourneyBody(label.trim(), stamp, interval, mode)).data
+        settings.setProtectionMode(mode)
+        return "${mode.lowercase().replace('_', ' ')} watch is ${journey.status.lowercase()}. A missed check-in raises concern on the server. It does not replace the SOS button."
+    }
+
+    suspend fun saveProfile(bloodType: String, allergies: String, medications: String, notes: String): String {
+        api.saveProfile(
+            ProfileBody(
+                bloodType = bloodType.trim().ifBlank { null },
+                allergies = allergies.trim().ifBlank { null },
+                medications = medications.trim().ifBlank { null },
+                notes = notes.trim().ifBlank { null },
+            ),
+        )
+        return "Emergency profile saved. It is shared with the monitoring hub during an incident export, not posted publicly."
     }
 
     suspend fun setPins(cancelPin: String, duressPin: String): String {

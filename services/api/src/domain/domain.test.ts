@@ -8,7 +8,7 @@ import { AppError, UniqueConflictError } from "./errors";
 import { IncidentService } from "./incident-service";
 import { canTransition } from "./incident-rules";
 import type { Actor, DeviceRecord, RealtimePublisher } from "./ports";
-import { hasPermission, Permission } from "./rbac";
+import { canAssignRole, hasPermission, Permission } from "./rbac";
 import { canonicalJson, deviceProofMessage, JwtAccessTokens, redact, ScryptPasswordHasher, sha256 } from "./security";
 import { emergencyRouteAllowed } from "./emergency-route";
 import { SimulatedSmsProvider } from "./sms";
@@ -93,10 +93,13 @@ test("a deliberate manual SOS creates one incident immediately", async () => {
   assert.equal(created.incident.duress, false);
 });
 
-test("non-deliberate triggers do not create an incident", async () => {
+test("a confirmed fall opens SOS and a client cannot post a journey timeout", async () => {
   const { service, actor, input } = await setup();
+  const fall = await service.create(actor, { ...input(), triggerType: "FALL_OR_IMPACT" }, null);
+  assert.equal(fall.incident.state, "SOS");
+  assert.equal(fall.incident.triggerType, "FALL_OR_IMPACT");
   await assert.rejects(
-    () => service.create(actor, { ...input(), triggerType: "FALL_OR_IMPACT" }, null),
+    () => service.create(actor, { ...input(), triggerType: "JOURNEY_TIMEOUT" }, null),
     (error: unknown) => error instanceof AppError && error.code === "FUSION_NOT_ENABLED",
   );
 });
@@ -228,7 +231,8 @@ test("a missed heartbeat is contact loss and not a conclusion about the user", a
   const summary = await service.summary(operatorActor());
   assert.equal(summary.activeIncidents, 0);
   assert.equal(summary.devicesContactLost, 0);
-  assert.equal(summary.highRiskAlerts, null);
+  assert.equal(summary.highRiskAlerts, 0);
+  assert.equal(summary.respondersActive, 0);
 });
 
 test("a heartbeat restores contact and a duplicate heartbeat is ignored", async () => {
@@ -262,11 +266,17 @@ test("a heartbeat restores contact and a duplicate heartbeat is ignored", async 
   assert.equal(beats.length, 1);
 });
 
-test("guardians and responders have no incident permissions in this version", () => {
+test("guardians cannot read the monitoring list and responders only get assigned incidents", () => {
   assert.equal(hasPermission("GUARDIAN", Permission.IncidentReadActive), false);
   assert.equal(hasPermission("RESPONDER", Permission.IncidentReadOwn), false);
+  assert.equal(hasPermission("RESPONDER", Permission.IncidentReadAssigned), true);
   assert.equal(hasPermission("USER", Permission.IncidentAcknowledge), false);
   assert.equal(hasPermission("MONITOR_OPERATOR", Permission.IncidentResolve), true);
+  assert.equal(hasPermission("SUPERVISOR", Permission.UserManage), true);
+  assert.equal(hasPermission("MONITOR_OPERATOR", Permission.UserManage), false);
+  assert.equal(canAssignRole("SUPERVISOR", "RESPONDER", false), null);
+  assert.equal(canAssignRole("SUPERVISOR", "ADMIN", false)?.includes("administrator"), true);
+  assert.equal(canAssignRole("ADMIN", "USER", true)?.includes("own role"), true);
   assert.equal(canTransition("SOS", "ACKNOWLEDGED"), true);
   assert.equal(canTransition("RESOLVED", "SOS"), false);
 });

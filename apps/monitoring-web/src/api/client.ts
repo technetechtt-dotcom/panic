@@ -48,8 +48,8 @@ export interface IncidentSummary {
   unacknowledgedIncidents: number;
   duressAlerts: number;
   devicesContactLost: number;
-  highRiskAlerts: null;
-  respondersActive: null;
+  highRiskAlerts: number;
+  respondersActive: number;
 }
 
 export interface TimelineEntry {

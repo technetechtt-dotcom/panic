@@ -8,9 +8,11 @@ import {
 } from "@guardian/shared-validation";
 import { RequirePermissions, type RequestWithUser } from "../../common/guards";
 import { parseBody, requestContext } from "../../common/http";
-import { SlidingWindowRateLimiter } from "../../common/rate-limit";
+import { allowShared, SlidingWindowRateLimiter } from "../../common/rate-limit";
 import { AppError } from "../../domain/errors";
 import { IncidentService } from "../../domain/incident-service";
+import { PlatformService } from "../../domain/platform-service";
+import { RedisService } from "../../infra/redis.service";
 import type { Actor } from "../../domain/ports";
 import { Permission } from "../../domain/rbac";
 
@@ -18,13 +20,18 @@ import { Permission } from "../../domain/rbac";
 export class IncidentsController {
   private readonly limiter = new SlidingWindowRateLimiter();
 
-  constructor(@Inject(IncidentService) private readonly incidents: IncidentService) {}
+  constructor(
+    @Inject(IncidentService) private readonly incidents: IncidentService,
+    @Inject(PlatformService) private readonly platform: PlatformService,
+    @Inject(RedisService) private readonly redis: RedisService,
+  ) {}
 
   @Post()
   @RequirePermissions(Permission.IncidentCreateOwn)
   async create(@Body() body: unknown, @Req() request: RequestWithUser, @Res({ passthrough: true }) response: Response) {
-    this.enforce(`sos:${request.user!.id}`, 12, 60 * 1000);
+    await this.enforce(`sos:${request.user!.id}`, 12, 60 * 1000);
     const result = await this.incidents.create(actorFrom(request), parseBody(createIncidentSchema, body), requestId());
+    if (!result.replayed) await this.platform.notifyIncident(result.incident);
     if (result.replayed) {
       response.status(200);
       response.setHeader("Idempotent-Replayed", "true");
@@ -39,7 +46,9 @@ export class IncidentsController {
 
   @Get()
   list(@Req() request: RequestWithUser) {
-    return this.incidents.listForActor(actorFrom(request)).then((data) => ({ data }));
+    const actor = actorFrom(request);
+    if (actor.role === "RESPONDER") return this.platform.assigned(actor).then((data) => ({ data }));
+    return this.incidents.listForActor(actor).then((data) => ({ data }));
   }
 
   @Get("summary")
@@ -57,7 +66,7 @@ export class IncidentsController {
   @HttpCode(200)
   @RequirePermissions(Permission.IncidentCreateOwn)
   async locations(@Param("id") id: string, @Body() body: unknown, @Req() request: RequestWithUser) {
-    this.enforce(`loc:${request.user!.id}`, 600, 60 * 60 * 1000);
+    await this.enforce(`loc:${request.user!.id}`, 600, 60 * 60 * 1000);
     const data = await this.incidents.addLocations(
       actorFrom(request),
       id,
@@ -71,7 +80,7 @@ export class IncidentsController {
   @HttpCode(200)
   @RequirePermissions(Permission.IncidentCreateOwn)
   async heartbeats(@Param("id") id: string, @Body() body: unknown, @Req() request: RequestWithUser) {
-    this.enforce(`hb:${request.user!.id}`, 600, 60 * 60 * 1000);
+    await this.enforce(`hb:${request.user!.id}`, 600, 60 * 60 * 1000);
     const data = await this.incidents.addHeartbeat(
       actorFrom(request),
       id,
@@ -114,8 +123,9 @@ export class IncidentsController {
     return this.incidents.resolve(actorFrom(request), id, input.note, requestId()).then((data) => ({ data }));
   }
 
-  private enforce(key: string, limit: number, windowMs: number): void {
-    if (!this.limiter.allow(key, limit, windowMs)) {
+  private async enforce(key: string, limit: number, windowMs: number): Promise<void> {
+    const allowed = await allowShared(this.redis.client, this.limiter, key, limit, windowMs);
+    if (!allowed) {
       throw new AppError("RATE_LIMITED", 429, "Too many requests. The saved emergency is still retried by the device.");
     }
   }

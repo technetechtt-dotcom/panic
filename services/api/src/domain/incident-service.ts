@@ -9,6 +9,7 @@ import {
 } from "@guardian/shared-validation";
 import { AppError, UniqueConflictError } from "./errors";
 import { canTransition, isStale } from "./incident-rules";
+import { phoneMaySendSignal, signalIncidentState } from "./operations";
 import { hasPermission, Permission } from "./rbac";
 import { canonicalJson, deviceProofMessage, sha256, verifyDeviceProof } from "./security";
 import {
@@ -26,6 +27,7 @@ import {
   type RealtimePublisher,
   type StoredHeartbeat,
   type TimelineStore,
+  type UserStore,
 } from "./ports";
 
 export interface CreateIncidentResult {
@@ -46,13 +48,15 @@ export class IncidentService {
     private readonly ids: IdGenerator,
     private readonly clock: Clock,
     private readonly staleAfterSeconds: number,
+    private readonly users: UserStore | null = null,
   ) {}
 
-  async create(actor: Actor, input: CreateIncidentInput, requestId: string | null): Promise<CreateIncidentResult> {
+  async create(actor: Actor, input: CreateIncidentInput, requestId: string | null, serverOriginated = false): Promise<CreateIncidentResult> {
     if (!hasPermission(actor.role, Permission.IncidentCreateOwn)) {
       throw new AppError("FORBIDDEN", 403, "You cannot create an incident.");
     }
-    if (!isDeliberateTrigger(input.triggerType)) {
+    const automatic = signalIncidentState(input.triggerType);
+    if (!isDeliberateTrigger(input.triggerType) && (!automatic || (!phoneMaySendSignal(input.triggerType) && !serverOriginated))) {
       throw new AppError(
         "FUSION_NOT_ENABLED",
         422,
@@ -70,7 +74,7 @@ export class IncidentService {
     if (!device) {
       throw new AppError("DEVICE_NOT_FOUND", 404, "Register this device before sending an SOS.");
     }
-    this.assertDeviceProof(device, input);
+    if (!serverOriginated) this.assertDeviceProof(device, input);
 
     const prior = await this.incidents.findEscalation(input.triggerId);
     if (prior) {
@@ -92,7 +96,7 @@ export class IncidentService {
       triggerId: input.triggerId,
       triggerType: input.triggerType,
       requestHash,
-      state: "SOS",
+      state: automatic ?? "SOS",
       isTest: input.isTest,
       duress: input.triggerType === "DURESS" || capsule.duress,
       correlationId: input.correlationId,
@@ -265,9 +269,121 @@ export class IncidentService {
       unacknowledgedIncidents: rows.filter((row) => row.state === "SOS").length,
       duressAlerts: rows.filter((row) => row.duress).length,
       devicesContactLost: rows.filter((row) => row.contactStatus === "DEVICE_CONTACT_LOST").length,
-      highRiskAlerts: null,
-      respondersActive: null,
+      highRiskAlerts: rows.filter((row) => row.state === "HIGH_RISK").length,
+      respondersActive: rows.filter((row) => row.state === "RESPONDING").length,
     };
+  }
+
+  async raiseFromFusion(userId: string, triggerType: "JOURNEY_TIMEOUT" | "SYSTEM_RISK_ESCALATION"): Promise<void> {
+    const active = await this.incidents.findActiveForUser(userId);
+    if (active) return;
+    const device = (await this.devices.listForUser(userId))[0];
+    if (!device) return;
+    const displayName = (await this.users?.findById(userId))?.displayName ?? "Member";
+    const now = this.clock.now().toISOString();
+    await this.create(
+      { id: userId, role: "USER", displayName },
+      {
+        triggerId: this.ids.uuid(),
+        correlationId: this.ids.uuid(),
+        triggerType,
+        deviceId: device.id,
+        isTest: false,
+        distressCapsule: {
+          timestamp: now,
+          latitude: null,
+          longitude: null,
+          locationAccuracy: null,
+          speed: null,
+          heading: null,
+          batteryLevel: null,
+          chargingStatus: false,
+          networkType: "UNKNOWN",
+          protectionMode: "HIGH_RISK",
+          duress: false,
+          lastKnownLocation: null,
+          appProtectionStatus: "LIMITED_PROTECTION",
+        },
+      },
+      null,
+      true,
+    );
+  }
+
+  async dispatch(actor: Actor, incidentId: string, requestId: string | null): Promise<Incident> {
+    if (!hasPermission(actor.role, Permission.IncidentAcknowledge)) {
+      throw new AppError("FORBIDDEN", 403, "You cannot dispatch a responder.");
+    }
+    let incident = await this.requireKnown(incidentId);
+    const now = this.clock.now();
+    if (incident.state === "SOS" || incident.state === "CONCERN" || incident.state === "HIGH_RISK") {
+      this.assertTransition(incident, "ACKNOWLEDGED");
+      incident.state = "ACKNOWLEDGED";
+      incident.acknowledgedAt = now;
+      incident.acknowledgedById = actor.id;
+      incident.updatedAt = now;
+      await this.incidents.save(incident);
+      await this.writeStateAudit(actor, incident, "incident.acknowledged", requestId, now);
+      incident = (await this.incidents.findById(incident.id)) ?? incident;
+    }
+    if (incident.state === "ACKNOWLEDGED") {
+      this.assertTransition(incident, "RESPONDING");
+      incident.state = "RESPONDING";
+      incident.updatedAt = now;
+      await this.incidents.save(incident);
+      await this.timeline.append({
+        id: this.ids.uuid(),
+        incidentId: incident.id,
+        type: "responder.dispatched",
+        message: "A responder was dispatched. This does not mean the person has been found.",
+        occurredAt: now.toISOString(),
+        actorId: actor.id,
+      });
+      this.publisher.publish("incident.updated", toIncidentDto(incident));
+    }
+    return toIncidentDto(incident);
+  }
+
+  async noteEmergencyServices(actor: Actor, incidentId: string, requestId: string | null): Promise<{ recorded: true; dial: string }> {
+    if (!hasPermission(actor.role, Permission.IncidentAcknowledge)) {
+      throw new AppError("FORBIDDEN", 403, "You cannot record an emergency-services handoff.");
+    }
+    const incident = await this.requireKnown(incidentId);
+    const now = this.clock.now();
+    await this.timeline.append({
+      id: this.ids.uuid(),
+      incidentId: incident.id,
+      type: "emergency.services.noted",
+      message: "An operator recorded that emergency services should be contacted. Guardian did not place the call.",
+      occurredAt: now.toISOString(),
+      actorId: actor.id,
+    });
+    void requestId;
+    return { recorded: true, dial: "112" };
+  }
+
+  async responderUpdate(actor: Actor, incidentId: string, status: "RESPONDING" | "USER_LOCATED", requestId: string | null): Promise<Incident> {
+    if (!hasPermission(actor.role, Permission.IncidentRespond)) {
+      throw new AppError("FORBIDDEN", 403, "You cannot update responder status.");
+    }
+    const incident = await this.requireKnown(incidentId);
+    if (incident.state === status) return toIncidentDto(incident);
+    this.assertTransition(incident, status);
+    const now = this.clock.now();
+    incident.state = status;
+    incident.updatedAt = now;
+    await this.incidents.save(incident);
+    await this.timeline.append({
+      id: this.ids.uuid(),
+      incidentId: incident.id,
+      type: "responder.updated",
+      message: status === "USER_LOCATED" ? "The responder reported the person was located." : "The responder is on the way.",
+      occurredAt: now.toISOString(),
+      actorId: actor.id,
+    });
+    await this.writeStateAudit(actor, incident, "responder.updated", requestId, now);
+    this.publisher.publish("incident.updated", toIncidentDto(incident));
+    return toIncidentDto(incident);
   }
 
   async get(actor: Actor, incidentId: string): Promise<Incident> {

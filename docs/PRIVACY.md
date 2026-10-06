@@ -11,9 +11,13 @@ Guardian stores location, device state, account data, and incident history. That
 - Operator notes attached to acknowledge and resolve.
 - Audit rows for incident creation, location append, contact loss and restore, acknowledge, and resolve.
 
-The Android app does not request `RECORD_AUDIO`, `CAMERA`, or `ACCESS_BACKGROUND_LOCATION`. It does not upload microphone audio.
+The Android app requests the microphone only for safe-word samples, safe-word listening, or audio the person chooses to share during SOS. It requests the camera only when the person takes a photo or starts a short video. It does not request `ACCESS_BACKGROUND_LOCATION`. Impact detection runs only after the person turns it on, and it shows a notification.
 
 Location updates start after a foreground SOS and stop when the incident is resolved or archived, or when the service is stopped. The app does not track while the person is idle.
+
+## Account export and erasure
+
+`GET /api/v1/users/me/export` returns the profile, guardian names, device labels, and incident ids. It does not return passwords, PINs, or evidence bytes. `POST /api/v1/users/me/erase` requires the password, removes guardian contacts and the emergency profile, revokes refresh tokens, and replaces the account name. Incident rows are kept so an open emergency is not deleted by the erase call. This is an in-product process, not a completed POPIA filing.
 
 ## Disclosures in the app
 
@@ -21,7 +25,7 @@ Registration explains that the account is used for emergency incidents. The welc
 
 ## Retention and deletion
 
-There is no retention schedule and no self-service deletion API. Incident and location rows are kept. Deleting a user does not cascade to incidents (`ON DELETE RESTRICT` on the incident user and device foreign keys). A deletion process still has to be designed so that an operator record and an incident record are not destroyed in a way that breaks the audit trail, and so that a person can ask for deletion where the law requires it.
+There is no separate retention schedule. Incident and location rows are kept. `POST /api/v1/users/me/erase` anonymizes the account and does not cascade-delete incidents (`ON DELETE RESTRICT` on the incident user and device foreign keys), so an open emergency is not removed by that call. A lawyer still has to set how long incident rows are kept.
 
 Consent records are append-only in intent. This version only inserts the registration consent. It does not record a later withdrawal.
 

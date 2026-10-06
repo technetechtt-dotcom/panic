@@ -18,6 +18,7 @@ import za.co.guardian.data.PhoneSignals
 import za.co.guardian.data.SettingsStore
 import za.co.guardian.data.TokenStore
 import za.co.guardian.ui.GuardianTheme
+import za.co.guardian.ui.OnboardingScreen
 import za.co.guardian.ui.HistoryScreen
 import za.co.guardian.ui.HomeScreen
 import za.co.guardian.ui.LoginScreen
@@ -51,10 +52,13 @@ class MainActivity : ComponentActivity() {
                         WelcomeScreen(onRegister = { nav.navigate("register") }, onLogin = { nav.navigate("login") })
                     }
                     composable("register") {
-                        RegisterScreen(onDone = { signedIn = true; nav.navigate("home") { popUpTo("welcome") { inclusive = true } } }, onBack = { nav.popBackStack() })
+                        RegisterScreen(onDone = { signedIn = true; nav.navigate("onboarding") { popUpTo("welcome") { inclusive = true } } }, onBack = { nav.popBackStack() })
                     }
                     composable("login") {
                         LoginScreen(onDone = { signedIn = true; nav.navigate("home") { popUpTo("welcome") { inclusive = true } } }, onBack = { nav.popBackStack() })
+                    }
+                    composable("onboarding") {
+                        OnboardingScreen(onDone = { nav.navigate("home") { popUpTo("onboarding") { inclusive = true } } })
                     }
                     composable("home") {
                         HomeScreen(

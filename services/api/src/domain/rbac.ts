@@ -10,6 +10,10 @@ export const Permission = {
   ProtectionManageOwn: "protection:manage:own",
   AuditRead: "audit:read",
   UserReadSelf: "user:read:self",
+  IncidentReadAssigned: "incident:read:assigned",
+  IncidentRespond: "incident:respond",
+  UserManage: "user:manage",
+  PlatformRead: "platform:read",
 } as const;
 
 export type PermissionName = (typeof Permission)[keyof typeof Permission];
@@ -30,6 +34,7 @@ export const ROLE_PERMISSIONS: Record<Role, readonly PermissionName[]> = {
     Permission.IncidentAcknowledge,
     Permission.IncidentResolve,
     Permission.UserReadSelf,
+    Permission.PlatformRead,
   ],
   SUPERVISOR: [
     Permission.IncidentReadActive,
@@ -37,11 +42,23 @@ export const ROLE_PERMISSIONS: Record<Role, readonly PermissionName[]> = {
     Permission.IncidentResolve,
     Permission.AuditRead,
     Permission.UserReadSelf,
+    Permission.UserManage,
+    Permission.PlatformRead,
   ],
-  RESPONDER: [],
+  RESPONDER: [Permission.IncidentReadAssigned, Permission.IncidentRespond, Permission.UserReadSelf],
   ADMIN: ALL_PERMISSIONS,
 };
 
 export function hasPermission(role: Role, permission: PermissionName): boolean {
   return ROLE_PERMISSIONS[role].includes(permission);
+}
+
+export function canAssignRole(actor: Role, next: Role, changingSelf: boolean): string | null {
+  if (changingSelf) return "You cannot change your own role.";
+  if (actor !== "ADMIN" && actor !== "SUPERVISOR") return "You cannot manage accounts.";
+  if (next === "ADMIN" && actor !== "ADMIN") return "Only an administrator can assign the administrator role.";
+  if (actor === "SUPERVISOR" && (next === "ADMIN" || next === "SUPERVISOR")) {
+    return "A supervisor cannot assign an administrator or supervisor role.";
+  }
+  return null;
 }

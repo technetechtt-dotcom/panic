@@ -73,7 +73,14 @@ function toJourney(row: {
   checkInIntervalSeconds: number;
   lastCheckInAt: Date;
   status: string;
+  mode: string;
+  originLatitude: number | null;
+  originLongitude: number | null;
+  destinationLatitude: number | null;
+  destinationLongitude: number | null;
+  corridorMeters: number;
 }): JourneyRecord {
+  const mode = row.mode === "RIDE" || row.mode === "DRIVE" || row.mode === "MEETING" || row.mode === "HIGH_RISK" ? row.mode : "WALK";
   return {
     id: row.id,
     userId: row.userId,
@@ -82,6 +89,12 @@ function toJourney(row: {
     checkInIntervalSeconds: row.checkInIntervalSeconds,
     lastCheckInAt: row.lastCheckInAt,
     status: row.status === "COMPLETED" || row.status === "CONCERN" ? row.status : "ACTIVE",
+    mode,
+    originLatitude: row.originLatitude,
+    originLongitude: row.originLongitude,
+    destinationLatitude: row.destinationLatitude,
+    destinationLongitude: row.destinationLongitude,
+    corridorMeters: row.corridorMeters,
   };
 }
 
@@ -128,12 +141,18 @@ export class PrismaEvidenceStore implements EvidenceStore {
     sha256: string;
     contentType: string;
     byteLength: number;
+    storageKey?: string | null;
     payload: Buffer;
     createdAt: Date;
   }): Promise<"created" | "exists"> {
     try {
       await this.prisma.evidenceChunk.create({
-        data: { ...chunk, payload: new Uint8Array(chunk.payload), updatedAt: chunk.createdAt },
+        data: {
+          ...chunk,
+          storageKey: chunk.storageKey ?? null,
+          payload: new Uint8Array(chunk.payload),
+          updatedAt: chunk.createdAt,
+        },
       });
       return "created";
     } catch (error) {
@@ -146,7 +165,16 @@ export class PrismaEvidenceStore implements EvidenceStore {
     const rows = await this.prisma.evidenceChunk.findMany({
       where: { incidentId },
       orderBy: { sequence: "asc" },
-      select: { incidentId: true, clientChunkId: true, sequence: true, sha256: true, byteLength: true },
+      select: {
+        id: true,
+        incidentId: true,
+        clientChunkId: true,
+        sequence: true,
+        sha256: true,
+        byteLength: true,
+        contentType: true,
+        storageKey: true,
+      },
     });
     return rows;
   }
