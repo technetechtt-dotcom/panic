@@ -210,6 +210,56 @@ class LocationBreadcrumbLog {
 
 fun shouldCaptureLocation(locationGranted: Boolean): Boolean = locationGranted
 
+enum class MonitoringOrigin {
+    USER_VISIBLE,
+    ACCESSIBILITY,
+    PROCESS_FOREGROUND,
+    BACKGROUND,
+}
+
+data class MonitoringStart(
+    val startService: Boolean,
+    val locationUpdates: Boolean,
+    val microphone: Boolean,
+    val notifyToOpenApp: Boolean,
+)
+
+/**
+ * Android 14 does not let a background start include the microphone or camera.
+ * A background broadcast or a reboot also cannot be assumed to start a location
+ * foreground service. The SOS itself is already stored before this plan runs.
+ */
+fun monitoringStart(
+    origin: MonitoringOrigin,
+    locationGranted: Boolean,
+    microphoneGranted: Boolean,
+    microphoneRequested: Boolean,
+): MonitoringStart {
+    val microphone = origin == MonitoringOrigin.USER_VISIBLE && microphoneGranted && microphoneRequested
+    return when (origin) {
+        MonitoringOrigin.USER_VISIBLE -> MonitoringStart(
+            startService = true,
+            locationUpdates = locationGranted,
+            microphone = microphone,
+            notifyToOpenApp = false,
+        )
+        MonitoringOrigin.ACCESSIBILITY,
+        MonitoringOrigin.PROCESS_FOREGROUND,
+        -> MonitoringStart(
+            startService = true,
+            locationUpdates = locationGranted,
+            microphone = false,
+            notifyToOpenApp = true,
+        )
+        MonitoringOrigin.BACKGROUND -> MonitoringStart(
+            startService = false,
+            locationUpdates = false,
+            microphone = false,
+            notifyToOpenApp = true,
+        )
+    }
+}
+
 fun heartbeatCoordinates(
     locationGranted: Boolean,
     latitude: Double?,

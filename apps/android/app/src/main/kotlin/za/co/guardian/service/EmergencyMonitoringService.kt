@@ -64,27 +64,23 @@ class EmergencyMonitoringService : android.app.Service() {
     private var wakeLock: PowerManager.WakeLock? = null
     private var listener: LocationListener? = null
     private var locationInterval = 0L
+    private var shareLocation = false
 
     override fun onBind(intent: Intent?) = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        val captureAudio = intent?.getBooleanExtra("captureAudio", false) == true &&
+        val microphone = intent?.getBooleanExtra("microphone", false) == true &&
             ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
-        val notification = monitoringNotification(signals.hasFineLocation())
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            var type = if (shouldCaptureLocation(signals.hasFineLocation())) {
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION
-            } else {
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
-            }
-            if (captureAudio) type = type or ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
-            startForeground(NOTIFICATION_ID, notification, type)
-        } else {
-            startForeground(NOTIFICATION_ID, notification)
+        val location = intent?.getBooleanExtra("location", false) == true && shouldCaptureLocation(signals.hasFineLocation())
+        shareLocation = location
+        val notification = monitoringNotification(location)
+        if (!startInForeground(notification, location, microphone)) {
+            stopSelf()
+            return START_NOT_STICKY
         }
         acquireWakeLock()
-        if (shouldCaptureLocation(signals.hasFineLocation()) && !settingsQuiet()) listenForLocation(currentInterval())
-        if (captureAudio) scope.launch { uploader.captureAudio() }
+        if (location && !settingsQuiet()) listenForLocation(currentInterval())
+        if (microphone) scope.launch { uploader.captureAudio() }
         scope.launch {
             while (true) {
                 val keepGoing = uploader.tick()
@@ -92,7 +88,7 @@ class EmergencyMonitoringService : android.app.Service() {
                     stopSelf()
                     break
                 }
-                if (shouldCaptureLocation(signals.hasFineLocation()) && !settingsQuiet()) listenForLocation(currentInterval())
+                if (shareLocation && !settingsQuiet()) listenForLocation(currentInterval())
                 delay(monitoringTickMs(signals.deviceState().batteryMode))
             }
         }
@@ -104,6 +100,28 @@ class EmergencyMonitoringService : android.app.Service() {
         wakeLock?.let { if (it.isHeld) it.release() }
         scope.cancel()
         super.onDestroy()
+    }
+
+    private fun startInForeground(notification: Notification, location: Boolean, microphone: Boolean): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
+            startForeground(NOTIFICATION_ID, notification)
+            return true
+        }
+        val restricted = ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC or
+            (if (location) ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION else 0) or
+            (if (microphone) ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE else 0)
+        val attempts = listOf(restricted, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC).distinct()
+        for (type in attempts) {
+            try {
+                startForeground(NOTIFICATION_ID, notification, type)
+                return true
+            } catch (_: SecurityException) {
+                // This Android version refused the sensor type. Try data sync alone.
+            } catch (_: IllegalStateException) {
+                // The process is not allowed to enter the foreground.
+            }
+        }
+        return false
     }
 
     private fun currentInterval(): Long = locationIntervalMs(signals.deviceState().batteryMode)
@@ -380,21 +398,6 @@ class ResumeProtectionReceiver : BroadcastReceiver() {
         if (intent.action != Intent.ACTION_BOOT_COMPLETED) return
         val prefs = context.getSharedPreferences("guardian_settings", Context.MODE_PRIVATE)
         val active = prefs.getBoolean("incident_active", false)
-        val quiet = prefs.getBoolean("quiet_incident", false)
-        if (active && !quiet) {
-            try {
-                ContextCompat.startForegroundService(context, Intent(context, EmergencyMonitoringService::class.java))
-            } catch (_: Exception) {
-                // Android can refuse a foreground service from boot. The notification below remains.
-            }
-        }
-        if (prefs.getBoolean("safe_enabled", false)) {
-            try {
-                ContextCompat.startForegroundService(context, Intent(context, SafeWordService::class.java))
-            } catch (_: Exception) {
-                // Safe-word listening needs a foreground microphone service. The user can open Guardian if Android blocks it.
-            }
-        }
         if (!active) return
         val channelId = "guardian.resume"
         val manager = context.getSystemService(NotificationManager::class.java)

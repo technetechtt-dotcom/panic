@@ -97,7 +97,7 @@ class SafeWordService : android.app.Service() {
                     hits += 1
                     if (hits >= 2) {
                         matched = true
-                        actions.send(TriggerType.VOICE_SAFE_WORD)
+                        actions.send(TriggerType.VOICE_SAFE_WORD, za.co.guardian.core.MonitoringOrigin.PROCESS_FOREGROUND)
                         stopSelf()
                     }
                 } else {

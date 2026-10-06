@@ -1,7 +1,7 @@
 import { CanActivate, ExecutionContext, Injectable, SetMetadata } from "@nestjs/common";
 import { Reflector } from "@nestjs/core";
 import type { Request } from "express";
-import { emergencyRouteAllowed } from "../domain/emergency-route";
+import { emergencyRequestPath, emergencyRouteAllowed } from "../domain/emergency-route";
 import { sha256 } from "../domain/security";
 import { AppError } from "../domain/errors";
 import type { UserRecord } from "../domain/ports";
@@ -72,11 +72,11 @@ export class PermissionsGuard implements CanActivate {
       context.getHandler(),
       context.getClass(),
     ]);
-    if (!required || required.length === 0) return true;
     const request = context.switchToHttp().getRequest<RequestWithUser>();
-    if (request.emergencyOnly && !emergencyRouteAllowed(request.method, request.path)) {
+    if (request.emergencyOnly && !emergencyRouteAllowed(request.method, emergencyRequestPath(request.path, request.originalUrl))) {
       throw new AppError("FORBIDDEN", 403, "This phone credential can only send SOS, location, heartbeat, and evidence.");
     }
+    if (!required || required.length === 0) return true;
     const user = request.user;
     if (!user) throw new AppError("UNAUTHENTICATED", 401, "Sign in required.");
     if (!required.every((permission) => hasPermission(user.role, permission))) {

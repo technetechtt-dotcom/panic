@@ -1,6 +1,12 @@
 # Deployment
 
-Production-shaped containers live in `services/api/Dockerfile`, `apps/monitoring-web/Dockerfile`, and `infrastructure/docker/docker-compose.prod.yml`. From the repository root, scale the API with `docker compose -f infrastructure/docker/docker-compose.prod.yml up --build --scale api=2`. Both processes share Postgres and Redis. WebSocket fan-out uses the Redis adapter when `REDIS_URL` is set. Set `EVIDENCE_VAULT_KEY`, Twilio, FCM, and S3 variables only when those providers are real. A missing provider records that the message or object was not sent.
+Production-shaped containers live in `services/api/Dockerfile`, `apps/monitoring-web/Dockerfile`, and `infrastructure/docker/docker-compose.prod.yml`. From the repository root:
+
+```powershell
+docker compose --env-file .env -f infrastructure/docker/docker-compose.prod.yml up --build --scale api=2
+```
+
+The API container runs `prisma migrate deploy` before it listens. Compose sets `DATABASE_URL` to the Postgres service, so a localhost URL in `.env` does not override it. Both API processes share Postgres, Redis, and the `guardian_evidence` volume. WebSocket fan-out uses the Redis adapter. The hub is published on port 8080 and proxies `/api` and `/socket.io` to the API. Set `EVIDENCE_VAULT_KEY`, Twilio, FCM, and S3 variables only when those providers are real. A missing provider records that the message or object was not sent. Without S3, evidence stays on the shared volume as AES-GCM files. With S3, a replica that does not have the local file reads the sealed object back.
 
 A database backup is `node --env-file=.env services/api/scripts/backup-restore.mjs`. Restore with `psql` against the dump file. This is a single-database procedure, not a multi-region disaster-recovery exercise.
 
@@ -46,10 +52,10 @@ The dashboard dev server proxies `/api` and `/socket.io` to port 3000. Set `VITE
 
 - Terminate TLS in front of the API. Set `NODE_ENV=production` so the refresh cookie is `Secure`.
 - Set `TRUST_PROXY` only when a reverse proxy you control sets the client IP. The rate limiter uses `request.ip`.
-- Run one API process until rate limits move to Redis. Several processes each keep their own window.
+- SOS rate limits use Redis when `REDIS_URL` is set, and fall back to the process memory if Redis throws. The production compose file sets `REDIS_URL`.
 - Do not commit `.env`.
 - The Android release build still needs a real API base URL over HTTPS. The debug cleartext host is emulator-only.
 
 ## Backup
 
-The Postgres volume is `guardian_postgres`. There is no backup schedule in this repository.
+The Postgres volume is `guardian_postgres`. Evidence files are on `guardian_evidence`. A dump is `node --env-file=.env services/api/scripts/backup-restore.mjs`. There is no automatic backup schedule.

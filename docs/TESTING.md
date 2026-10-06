@@ -27,13 +27,13 @@ Kotlin incremental compilation is off because the project path contains spaces a
 API domain tests, in memory:
 
 - A manual SOS creates one `SOS` incident immediately.
-- `FALL_OR_IMPACT` does not create an incident.
+- A phone-confirmed fall or wearable SOS can open an incident. A client cannot post a journey timeout.
 - The same trigger body replays. A different body with the same trigger id conflicts.
 - A unique-constraint race returns the original incident.
 - A user cannot acknowledge or read another person's incident.
 - Location points append. An older point does not replace the newer last-position cache. A duplicate client point id does not overwrite.
 - A missed heartbeat sets `DEVICE_CONTACT_LOST` and leaves the incident in `SOS`. A later heartbeat restores `ONLINE`.
-- Guardian and responder roles have no incident permissions.
+- Guardians cannot read the monitoring list. Responders can read assigned incidents only. An emergency phone credential cannot open admin, audit, or account routes.
 - Refresh-token reuse revokes the family.
 - Redaction and the canonical hash are stable.
 - The SMS simulator does not deliver.
@@ -58,6 +58,7 @@ Monitoring tests: a short password is not submitted, and a test incident renders
 
 - A real PostgreSQL migration applied and queried. Apply it with the steps in [DEPLOYMENT.md](DEPLOYMENT.md) before trusting a deployment.
 - WebSocket delivery across two processes.
-- Process death, Doze, and OEM battery killing on a physical phone.
-- GPS unavailable, duplicate evidence, guardian delivery, and safe-word false matches. Evidence, guardians, and safe words are not built, so those simulations are not claimed.
+- Process death, Doze, and OEM battery killing on a physical phone. The checklist is [DEVICE_TESTS.md](DEVICE_TESTS.md). CI locks the sensor-start policy and does not run that checklist.
+- GPS unavailable and safe-word false matches on a physical phone. Evidence upload, guardian notification records, and the on-device safe-word matcher have unit coverage. A delivery row stays `SKIPPED` until SMS or push credentials exist.
+- CI audits production dependencies at critical severity. The Vitest runner's tinypool advisory is development-only and is not in the API image.
 - The monitoring screens against a live API. Use the browser against a seeded operator after `docker compose` is up. Component tests mock `fetch`.

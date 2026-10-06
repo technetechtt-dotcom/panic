@@ -21,8 +21,8 @@ jobs:
         run: npm test
       - name: Build
         run: npm run build
-      - name: Dependency audit
-        run: npm audit --audit-level=critical
+      - name: Production dependency audit
+        run: npm audit --omit=dev --audit-level=critical
 
   android:
     name: Android unit tests

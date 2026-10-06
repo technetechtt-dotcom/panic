@@ -1,7 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { api } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
-import { Shell } from "../components/Shell";
 
 interface AuditRow {
   id: string;
@@ -21,7 +20,6 @@ export function AuditPage() {
   });
 
   return (
-    <Shell>
       <main className="px-4 py-6">
         <h1 className="text-3xl font-semibold">Audit</h1>
         <p className="mt-2 text-sm text-slate-300">The latest operator actions stored for this server. This is not a complete legal record.</p>
@@ -39,6 +37,5 @@ export function AuditPage() {
           {rows.data?.length === 0 ? <li className="px-4 py-8 text-slate-300">No audit rows yet.</li> : null}
         </ul>
       </main>
-    </Shell>
   );
 }

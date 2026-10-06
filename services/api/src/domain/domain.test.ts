@@ -10,7 +10,7 @@ import { canTransition } from "./incident-rules";
 import type { Actor, DeviceRecord, RealtimePublisher } from "./ports";
 import { canAssignRole, hasPermission, Permission } from "./rbac";
 import { canonicalJson, deviceProofMessage, JwtAccessTokens, redact, ScryptPasswordHasher, sha256 } from "./security";
-import { emergencyRouteAllowed } from "./emergency-route";
+import { emergencyRequestPath, emergencyRouteAllowed } from "./emergency-route";
 import { SimulatedSmsProvider } from "./sms";
 import { createMemory, type MemoryAudit } from "../testing/memory";
 
@@ -388,4 +388,12 @@ test("an emergency credential can send SOS data and nothing administrative", () 
   assert.equal(emergencyRouteAllowed("POST", "/api/v1/guardians"), false);
   assert.equal(emergencyRouteAllowed("POST", "/api/v1/auth/login"), false);
   assert.equal(emergencyRouteAllowed("GET", "/api/v1/users/me"), false);
+  assert.equal(emergencyRouteAllowed("GET", "/api/v1/admin/users"), false);
+  assert.equal(emergencyRouteAllowed("POST", "/api/v1/admin/users/abc/role"), false);
+  assert.equal(emergencyRouteAllowed("GET", "/api/v1/admin/platform"), false);
+  assert.equal(emergencyRouteAllowed("POST", "/api/v1/incidents/abc/emergency-services"), false);
+  assert.equal(emergencyRouteAllowed("POST", "/api/v1/users/me/erase"), false);
+  assert.equal(emergencyRouteAllowed("GET", "/api/v1/audit"), false);
+  assert.equal(emergencyRequestPath("/incidents", ""), "/api/v1/incidents");
+  assert.equal(emergencyRequestPath("/api/v1/admin/users", ""), "/api/v1/admin/users");
 });

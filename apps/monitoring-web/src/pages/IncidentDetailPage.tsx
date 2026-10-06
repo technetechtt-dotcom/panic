@@ -6,8 +6,6 @@ import "leaflet/dist/leaflet.css";
 import { api, type Heartbeat, type Incident, type LocationPoint, type TimelineEntry } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
 import { Badge } from "./IncidentsPage";
-import { useMonitorSocket } from "../api/socket";
-import { Shell } from "../components/Shell";
 
 const tileUrl = import.meta.env.VITE_MAP_TILE_URL || "https://tile.openstreetmap.org/{z}/{x}/{y}.png";
 const tileAttribution = import.meta.env.VITE_MAP_TILE_ATTRIBUTION || "© OpenStreetMap contributors";
@@ -55,11 +53,10 @@ export function IncidentDetailPage() {
     queryFn: () => api<Heartbeat[]>(`/api/v1/incidents/${id}/heartbeats`, token),
   });
 
-  useMonitorSocket(token, () => {
-    void queryClient.invalidateQueries({ queryKey: ["incident", id] });
-    void queryClient.invalidateQueries({ queryKey: ["timeline", id] });
-    void queryClient.invalidateQueries({ queryKey: ["locations", id] });
-    void queryClient.invalidateQueries({ queryKey: ["heartbeats", id] });
+  const deliveries = useQuery({
+    queryKey: ["deliveries", id],
+    enabled: operator,
+    queryFn: () => api<Array<{ id: string; channel: string; status: string; detail: string; destination: string }>>(`/api/v1/incidents/${id}/deliveries`, token),
   });
 
   const action = useMutation({
@@ -85,7 +82,6 @@ export function IncidentDetailPage() {
     : null;
 
   return (
-    <Shell>
     <main className="min-h-screen px-4 py-4">
       <Link to="/" className="text-sm text-slate-300">
         Back to incidents
@@ -156,6 +152,13 @@ export function IncidentDetailPage() {
                 <p className="mt-2 text-xs text-slate-400">This restates the incident. It cannot cancel, accuse, or dispatch.</p>
               </div>
             ) : null}
+            <h2 className="mt-4 text-lg font-semibold">Guardian delivery</h2>
+            <ul className="mt-2 text-sm">
+              {(deliveries.data ?? []).map((item) => (
+                <li key={item.id}>{item.channel} · {item.status} · {item.destination} · {item.detail}</li>
+              ))}
+              {deliveries.data?.length === 0 ? <li>No guardian message has been recorded for this incident.</li> : null}
+            </ul>
             <h2 className="mt-4 text-lg font-semibold">Evidence</h2>
             <ul className="mt-2 space-y-2 text-sm">
               {(evidence.data ?? []).map((item) => (
@@ -269,7 +272,6 @@ export function IncidentDetailPage() {
         </div>
       ) : null}
     </main>
-    </Shell>
   );
 }
 

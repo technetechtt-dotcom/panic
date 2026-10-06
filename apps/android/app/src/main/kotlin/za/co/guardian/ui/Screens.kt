@@ -154,6 +154,7 @@ class HomeViewModel @Inject constructor(
                     messageState.value = prefix + when {
                         outcome.incident.syncState == SyncState.PENDING -> "saved on this phone. It will send when connected."
                         outcome.tracking -> "sent. Location sharing is on."
+                        outcome.trackingNote.isNotBlank() -> outcome.trackingNote
                         else -> "sent. Live tracking needs location permission."
                     }
                 }

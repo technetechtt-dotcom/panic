@@ -31,6 +31,12 @@ export class PlatformController {
     return this.platform.corridor(actorFrom(request), id).then((data) => ({ data }));
   }
 
+  @Get("incidents/:id/deliveries")
+  @RequirePermissions(Permission.IncidentReadActive)
+  deliveries(@Param("id") id: string, @Req() request: RequestWithUser) {
+    return this.platform.deliveries(actorFrom(request), id).then((data) => ({ data }));
+  }
+
   @Get("incidents/:id/evidence")
   @RequirePermissions(Permission.IncidentReadActive)
   evidence(@Param("id") id: string, @Req() request: RequestWithUser) {

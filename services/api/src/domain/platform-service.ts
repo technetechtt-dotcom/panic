@@ -17,6 +17,12 @@ import type { MfaStore } from "./auth-service";
 
 const OPERATOR_ROLES: Role[] = ["MONITOR_OPERATOR", "SUPERVISOR", "RESPONDER", "ADMIN"];
 
+function maskDestination(value: string): string {
+  const trimmed = value.trim();
+  if (trimmed.length <= 4) return "saved contact";
+  return `···${trimmed.slice(-4)}`;
+}
+
 export class PlatformService {
   private readonly sms = new TwilioSmsProvider();
 
@@ -99,6 +105,24 @@ export class PlatformService {
       orderBy: { sequence: "asc" },
       select: { id: true, clientChunkId: true, sequence: true, contentType: true, byteLength: true, sha256: true, storageKey: true },
     });
+  }
+
+  async deliveries(actor: Actor, incidentId: string) {
+    this.operator(actor);
+    await this.incidents.get(actor, incidentId);
+    const rows = await this.prisma.notificationDelivery.findMany({
+      where: { incidentId },
+      orderBy: { createdAt: "desc" },
+      take: 40,
+    });
+    return rows.map((row) => ({
+      id: row.id,
+      channel: row.channel,
+      status: row.status,
+      detail: row.detail,
+      destination: maskDestination(row.destination),
+      createdAt: row.createdAt.toISOString(),
+    }));
   }
 
   async evidenceBytes(actor: Actor, incidentId: string, chunkId: string): Promise<{ bytes: Buffer; contentType: string }> {

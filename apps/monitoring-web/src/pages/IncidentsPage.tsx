@@ -2,8 +2,6 @@ import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { api, type Incident, type IncidentSummary } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
-import { useMonitorSocket } from "../api/socket";
-import { Shell } from "../components/Shell";
 
 export function IncidentsPage() {
   const { session } = useAuth();
@@ -18,13 +16,7 @@ export function IncidentsPage() {
     queryFn: () => api<IncidentSummary>("/api/v1/incidents/summary", token),
     refetchInterval: 10_000,
   });
-  useMonitorSocket(token, () => {
-    void incidents.refetch();
-    void summary.refetch();
-  });
-
   return (
-    <Shell>
     <main className="mx-auto max-w-6xl px-4 py-6">
       <header>
         <h1 className="text-3xl font-semibold">Active incidents</h1>
@@ -62,7 +54,6 @@ export function IncidentsPage() {
         {incidents.data?.length === 0 ? <li className="px-4 py-8 text-slate-300">No incidents yet.</li> : null}
       </ul>
     </main>
-    </Shell>
   );
 }
 

@@ -27,8 +27,12 @@ services:
       dockerfile: services/api/Dockerfile
     env_file: ../../.env
     environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-guardian}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-guardian}
       REDIS_URL: redis://redis:6379
+      EVIDENCE_VAULT_DIR: /app/data/evidence-vault
       TRUST_PROXY: "true"
+    volumes:
+      - guardian_evidence:/app/data/evidence-vault
     depends_on:
       postgres:
         condition: service_healthy
@@ -47,7 +51,9 @@ services:
     ports:
       - "8080:80"
     depends_on:
-      - api
+      api:
+        condition: service_healthy
 
 volumes:
   guardian_postgres:
+  guardian_evidence:

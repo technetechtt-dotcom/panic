@@ -41,8 +41,15 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         signedIn = tokens.accessToken() != null
-        if (intent.getBooleanExtra("resume", false) && settings.incidentActive() && signals.hasFineLocation()) {
-            controller.start()
+        if (intent.getBooleanExtra("resume", false) && settings.incidentActive()) {
+            controller.start(
+                za.co.guardian.core.monitoringStart(
+                    za.co.guardian.core.MonitoringOrigin.USER_VISIBLE,
+                    signals.hasFineLocation(),
+                    microphoneGranted = false,
+                    microphoneRequested = false,
+                ),
+            )
         }
         setContent {
             GuardianTheme {

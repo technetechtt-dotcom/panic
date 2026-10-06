@@ -70,7 +70,7 @@ class FallWatchService : android.app.Service(), SensorEventListener {
                     pendingSince = 0L
                     cancelled = false
                     magnitudes.clear()
-                    actions.send(TriggerType.FALL_OR_IMPACT)
+                    actions.send(TriggerType.FALL_OR_IMPACT, za.co.guardian.core.MonitoringOrigin.PROCESS_FOREGROUND)
                     notify("A possible fall was sent as SOS. This is not a medical diagnosis.")
                 }
             }
@@ -136,7 +136,7 @@ class WearableSosReceiver : BroadcastReceiver() {
         val pending = goAsync()
         CoroutineScope(Dispatchers.IO).launch {
             try {
-                actions.send(TriggerType.WEARABLE)
+                actions.send(TriggerType.WEARABLE, za.co.guardian.core.MonitoringOrigin.BACKGROUND)
             } finally {
                 pending.finish()
             }

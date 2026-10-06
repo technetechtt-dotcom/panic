@@ -6,15 +6,15 @@ These limits come from current Android platform rules and Play policy. This vers
 
 Guardian observes volume keys with an `AccessibilityService` and `flagRequestFilterKeyEvents`. Settings shows a disclosure before opening the Android accessibility screen. The service is not marked `isAccessibilityTool`. `onKeyEvent` returns false, so the volume still changes. Three volume-down presses send a deliberate SOS. A 30 second button test records the pattern and does not send. Play may still require an accessibility declaration before publishing the app.
 
-The service cannot be started by Guardian itself. If Android blocks a foreground service started from the accessibility service while the app is in the background, the SOS is stored and tracking waits until the app is opened.
+The service cannot be started by Guardian itself. A volume SOS may start a location foreground service because the accessibility service is already connected. It does not start the microphone. If Android refuses that service, the SOS stays on disk and a notification asks the person to open Guardian.
 
 ## Microphone and camera
 
 Android 14 and later will not start a microphone or camera foreground service from the background. The system shows the microphone and camera indicators. Those indicators cannot be hidden.
 
-Safe-word listening starts only from a button in the open app. It uses `SpeechRecognizer` with `EXTRA_PREFER_OFFLINE` and compares the transcript on the phone with `safeWordMatches`. Guardian does not upload that audio. If the phone has no speech recognizer, or no offline model, listening stops and the checklist says so. The recognizer is still a system component and may use the network when an offline model is missing.
+Safe-word listening starts only from a button in the open app. It uses an on-device sample matcher. The microphone indicator stays visible. A safe-word match can send SOS, and it does not start a second microphone service from the background.
 
-Optional SOS audio is separate. It records only after the person turns on sharing and presses SOS on screen, for up to 120 one-second chunks, with the microphone indicator visible. There is no camera capture.
+Optional SOS audio is separate. It is included only when the person presses SOS on screen, with the microphone permission already granted. A volume press, a watch broadcast, a fall confirmation, or a reboot does not start the microphone. Photos and video are taken only from the camera app the person opens. They are not started by a background service.
 
 ## Location
 
@@ -22,7 +22,7 @@ The SOS path uses `LocationManager`, not Play Services, so a missing Google Play
 
 `ACCESS_FINE_LOCATION` and `ACCESS_COARSE_LOCATION` are requested. `ACCESS_BACKGROUND_LOCATION` is not. After the user presses SOS in the foreground, a location foreground service can keep receiving updates while that process stays alive. The notification stays visible.
 
-If the process is killed or the phone reboots, `ResumeProtectionReceiver` only posts a notification. It does not start the foreground service. Tracking continues when the person opens the app and the activity starts the service again. Some OEM batteries will kill the process sooner than AOSP. Doze can delay the WorkManager flush. The distress capsule is already on disk before those delays.
+If the process is killed or the phone reboots, `ResumeProtectionReceiver` only posts a notification. It does not start a location, microphone, or safe-word service. Tracking continues when the person opens the app from that notification. A watch broadcast stores the SOS and asks the person to open the app before location starts. Some OEM batteries will kill the process sooner than AOSP. Doze can delay the WorkManager flush. The distress capsule is already on disk before those delays.
 
 A last-known fix is treated as current only when it is at most two minutes old. Older fixes are sent as `lastKnownLocation` with current coordinates null. The SOS is still sent.
 

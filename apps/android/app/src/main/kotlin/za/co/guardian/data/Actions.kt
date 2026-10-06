@@ -1,8 +1,13 @@
 package za.co.guardian.data
 
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
+import za.co.guardian.MainActivity
 import androidx.work.BackoffPolicy
 import androidx.work.Constraints
 import androidx.work.ExistingWorkPolicy
@@ -29,13 +34,16 @@ import java.util.concurrent.TimeUnit
 import javax.inject.Inject
 
 sealed interface SosOutcome {
-    data class Started(val incident: LocalIncident, val tracking: Boolean) : SosOutcome
+    data class Started(val incident: LocalIncident, val tracking: Boolean, val trackingNote: String = "") : SosOutcome
     data object NeedSignIn : SosOutcome
     data object NeedDevice : SosOutcome
 }
 
 interface SosActions {
-    suspend fun send(type: za.co.guardian.core.TriggerType = za.co.guardian.core.TriggerType.MANUAL_SOS): SosOutcome
+    suspend fun send(
+        type: za.co.guardian.core.TriggerType = za.co.guardian.core.TriggerType.MANUAL_SOS,
+        origin: za.co.guardian.core.MonitoringOrigin = za.co.guardian.core.MonitoringOrigin.USER_VISIBLE,
+    ): SosOutcome
 }
 
 interface ProtectionStatusSource {
@@ -48,7 +56,7 @@ interface PracticeModeReader {
 }
 
 interface EmergencyServiceController {
-    fun start(captureAudio: Boolean = false)
+    fun start(plan: za.co.guardian.core.MonitoringStart)
 }
 
 class DefaultSosActions @Inject constructor(
@@ -60,7 +68,10 @@ class DefaultSosActions @Inject constructor(
     private val controller: EmergencyServiceController,
     @ApplicationContext private val context: Context,
 ) : SosActions {
-    override suspend fun send(type: za.co.guardian.core.TriggerType): SosOutcome {
+    override suspend fun send(
+        type: za.co.guardian.core.TriggerType,
+        origin: za.co.guardian.core.MonitoringOrigin,
+    ): SosOutcome {
         val userId = tokens.userId() ?: return SosOutcome.NeedSignIn
         val deviceId = tokens.deviceServerId() ?: return SosOutcome.NeedDevice
         val (fresh, lastKnown) = signals.freshAndLastKnown()
@@ -79,13 +90,14 @@ class DefaultSosActions @Inject constructor(
         settings.setIncidentActive(true)
         if (!settings.quietIncident()) settings.quietIncident(false)
         val stage = settings.advanceTrigger()
-        val tracking = signals.hasFineLocation()
         val micGranted = androidx.core.content.ContextCompat.checkSelfPermission(
             context,
             android.Manifest.permission.RECORD_AUDIO,
         ) == android.content.pm.PackageManager.PERMISSION_GRANTED
         val audio = !settings.quietIncident() && micGranted && (settings.evidenceMode() || (stage == "SOS" && type == za.co.guardian.core.TriggerType.MANUAL_SOS && settings.shareAudio()))
-        controller.start(audio)
+        val plan = za.co.guardian.core.monitoringStart(origin, signals.hasFineLocation(), micGranted, audio && !settings.quietIncident())
+        controller.start(plan)
+        val tracking = plan.startService && plan.locationUpdates
         sendGuardianSms(incident.isTest)
         if (incident.syncState == SyncState.PENDING) {
             val request = OneTimeWorkRequestBuilder<IncidentFlushWorker>()
@@ -94,7 +106,12 @@ class DefaultSosActions @Inject constructor(
                 .build()
             WorkManager.getInstance(context).enqueueUniqueWork("guardian-incident-flush", ExistingWorkPolicy.KEEP, request)
         }
-        return SosOutcome.Started(incident, tracking)
+        val trackingNote = if (!plan.startService) {
+            "saved. Android will not start location or the microphone from this background trigger. Open Guardian to share location."
+        } else {
+            ""
+        }
+        return SosOutcome.Started(incident, tracking, trackingNote)
     }
 
     private fun sendGuardianSms(testIncident: Boolean) {
@@ -129,12 +146,46 @@ class DefaultSosActions @Inject constructor(
 class AndroidEmergencyServiceController @Inject constructor(
     @ApplicationContext private val context: Context,
 ) : EmergencyServiceController {
-    override fun start(captureAudio: Boolean) {
-        val intent = Intent(context, EmergencyMonitoringService::class.java).putExtra("captureAudio", captureAudio)
+    override fun start(plan: za.co.guardian.core.MonitoringStart) {
+        if (!plan.startService) {
+            if (plan.notifyToOpenApp) notifyOpenApp()
+            return
+        }
+        val intent = Intent(context, EmergencyMonitoringService::class.java)
+            .putExtra("location", plan.locationUpdates)
+            .putExtra("microphone", plan.microphone)
         try {
             ContextCompat.startForegroundService(context, intent)
         } catch (_: Exception) {
-            // Android can refuse a foreground service started from the background. The SOS is already stored.
+            if (plan.notifyToOpenApp) notifyOpenApp()
+        }
+    }
+
+    private fun notifyOpenApp() {
+        val channelId = "guardian.resume"
+        val manager = context.getSystemService(NotificationManager::class.java) ?: return
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+            manager.createNotificationChannel(
+                NotificationChannel(channelId, "Resume Guardian", NotificationManager.IMPORTANCE_HIGH),
+            )
+        }
+        val open = PendingIntent.getActivity(
+            context,
+            1,
+            Intent(context, MainActivity::class.java).putExtra("resume", true),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
+        val notification = NotificationCompat.Builder(context, channelId)
+            .setSmallIcon(android.R.drawable.ic_dialog_alert)
+            .setContentTitle("Guardian needs you to reopen the app")
+            .setContentText("SOS is saved. Android will not start location until you open Guardian.")
+            .setContentIntent(open)
+            .setAutoCancel(true)
+            .build()
+        if (android.os.Build.VERSION.SDK_INT < 33 ||
+            ContextCompat.checkSelfPermission(context, android.Manifest.permission.POST_NOTIFICATIONS) == android.content.pm.PackageManager.PERMISSION_GRANTED
+        ) {
+            manager.notify(1002, notification)
         }
     }
 }

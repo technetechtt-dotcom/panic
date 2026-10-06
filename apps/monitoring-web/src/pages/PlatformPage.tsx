@@ -1,7 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { api } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
-import { Shell } from "../components/Shell";
 
 interface PlatformStatus {
   postgres: "up" | "down";
@@ -25,7 +24,6 @@ export function PlatformPage() {
   const row = status.data;
 
   return (
-    <Shell>
       <main className="px-4 py-6">
         <h1 className="text-3xl font-semibold">Platform</h1>
         <p className="mt-2 max-w-3xl text-sm text-slate-300">
@@ -61,7 +59,6 @@ export function PlatformPage() {
           </ol>
         </section>
       </main>
-    </Shell>
   );
 }
 

@@ -2,7 +2,6 @@ import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
-import { Shell } from "../components/Shell";
 
 interface Account {
   id: string;
@@ -38,7 +37,6 @@ export function PeoplePage() {
   });
 
   return (
-    <Shell>
       <main className="px-4 py-6">
         <h1 className="text-3xl font-semibold">People</h1>
         <p className="mt-2 max-w-2xl text-sm text-slate-300">
@@ -74,6 +72,5 @@ export function PeoplePage() {
           ))}
         </ul>
       </main>
-    </Shell>
   );
 }

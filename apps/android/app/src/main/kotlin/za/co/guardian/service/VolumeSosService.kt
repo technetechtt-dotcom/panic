@@ -88,7 +88,7 @@ class VolumeSosService : AccessibilityService() {
         if (now - lastPatternAt < 5_000) return false
         lastPatternAt = now
         if (settings.vibrateOnTrigger()) vibrate()
-        scope.launch { actions.send(TriggerType.VOLUME_BUTTON) }
+        scope.launch { actions.send(TriggerType.VOLUME_BUTTON, za.co.guardian.core.MonitoringOrigin.ACCESSIBILITY) }
         return false
     }
 

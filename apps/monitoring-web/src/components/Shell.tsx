@@ -1,12 +1,20 @@
-import type { ReactNode } from "react";
-import { NavLink } from "react-router-dom";
+import { useState, type ReactNode } from "react";
+import { Link, NavLink } from "react-router-dom";
+import { useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "../auth/AuthContext";
+import { useMonitorSocket } from "../api/socket";
 
 export function Shell({ children }: { children: ReactNode }) {
   const { session, logout } = useAuth();
   const role = session?.user.role ?? "";
   const manage = role === "ADMIN" || role === "SUPERVISOR";
   const platform = role === "ADMIN" || role === "SUPERVISOR" || role === "MONITOR_OPERATOR";
+  const queryClient = useQueryClient();
+  const [alarm, setAlarm] = useState(false);
+  useMonitorSocket(session?.accessToken ?? null, (name) => {
+    void queryClient.invalidateQueries();
+    if (name === "incident.created" || name === "duress.detected") setAlarm(true);
+  });
 
   return (
     <div className="min-h-screen md:grid md:grid-cols-[220px_1fr]">
@@ -24,7 +32,17 @@ export function Shell({ children }: { children: ReactNode }) {
           Sign out
         </button>
       </aside>
-      <div>{children}</div>
+      <div>
+        {alarm ? (
+          <p className="border-b border-line bg-sos px-4 py-3 text-sm font-semibold">
+            A new SOS or duress flag arrived.{" "}
+            <Link to="/" className="underline" onClick={() => setAlarm(false)}>
+              Open incidents
+            </Link>
+          </p>
+        ) : null}
+        {children}
+      </div>
     </div>
   );
 }

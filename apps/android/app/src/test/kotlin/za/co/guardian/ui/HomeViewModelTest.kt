@@ -54,7 +54,7 @@ private class FakeSos(
     private val outcome: SosOutcome? = null,
 ) : SosActions {
     var called = false
-    override suspend fun send(type: TriggerType): SosOutcome {
+    override suspend fun send(type: TriggerType, origin: za.co.guardian.core.MonitoringOrigin): SosOutcome {
         called = true
         outcome?.let { return it }
         return SosOutcome.Started(

@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router-dom";
 import { describe, expect, it, vi } from "vitest";
+import { App } from "../App";
 import { LoginPage } from "../pages/LoginPage";
 import { IncidentsPage } from "../pages/IncidentsPage";
 
@@ -69,6 +70,20 @@ describe("monitoring hub", () => {
     expect(await screen.findByText("TEST INCIDENT")).toBeInTheDocument();
     expect(screen.getByText("Alex")).toBeInTheDocument();
     expect(screen.getByText(/Counts exclude test incidents/)).toBeInTheDocument();
+  });
+
+  it("sends an operator without account management back to incidents", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => json([])));
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={client}>
+        <MemoryRouter initialEntries={["/people"]}>
+          <App />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+    expect(await screen.findByRole("heading", { name: "Active incidents" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "People" })).not.toBeInTheDocument();
   });
 });
 
