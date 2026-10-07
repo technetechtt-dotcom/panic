@@ -19,8 +19,20 @@ export class DeviceService {
       if (input.publicKey && existing.publicKey && input.publicKey !== existing.publicKey) {
         throw new AppError("DEVICE_KEY_MISMATCH", 409, "This phone's safety key does not match the registered device.");
       }
+      let dirty = false;
       if (input.publicKey && !existing.publicKey) {
         existing.publicKey = input.publicKey;
+        dirty = true;
+      }
+      if (input.fcmToken && input.fcmToken !== existing.fcmToken) {
+        existing.fcmToken = input.fcmToken;
+        dirty = true;
+      }
+      if (existing.revokedAt) {
+        existing.revokedAt = null;
+        dirty = true;
+      }
+      if (dirty) {
         existing.updatedAt = now;
         await this.devices.save(existing);
       }
@@ -36,6 +48,8 @@ export class DeviceService {
       osVersion: input.osVersion,
       appVersion: input.appVersion,
       publicKey: input.publicKey ?? null,
+      fcmToken: input.fcmToken ?? null,
+      revokedAt: null,
       createdAt: now,
       updatedAt: now,
     };
@@ -64,6 +78,27 @@ export class DeviceService {
 
   async list(actor: Actor): Promise<DeviceRecord[]> {
     return this.devices.listForUser(actor.id);
+  }
+
+  async revoke(actor: Actor, deviceId: string, requestId: string | null): Promise<void> {
+    const device = await this.devices.findByIdForUser(deviceId, actor.id);
+    if (!device) throw new AppError("DEVICE_NOT_FOUND", 404, "That device was not found.");
+    const now = this.clock.now();
+    device.revokedAt = now;
+    device.fcmToken = null;
+    device.updatedAt = now;
+    await this.devices.save(device);
+    await this.audit.append({
+      id: this.ids.uuid(),
+      actorId: actor.id,
+      action: "device.revoked",
+      entityType: "Device",
+      entityId: device.id,
+      correlationId: null,
+      requestId,
+      metadata: { devicePublicId: device.devicePublicId },
+      createdAt: now,
+    });
   }
 
   async issueEmergencyCredential(actor: Actor, deviceId: string): Promise<string> {

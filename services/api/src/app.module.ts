@@ -23,7 +23,7 @@ import { ContactSweep } from "./contact-sweep";
 import { AuthService } from "./domain/auth-service";
 import { DeviceService } from "./domain/device-service";
 import { IncidentService } from "./domain/incident-service";
-import { FileEvidenceVault } from "./domain/evidence-vault";
+import { evidenceVaultKey, FileEvidenceVault } from "./domain/evidence-vault";
 import { FusionBridge } from "./domain/fusion-bridge";
 import { PlatformService, PrismaMfaStore } from "./domain/platform-service";
 import { ProtectionService } from "./domain/protection-service";
@@ -153,7 +153,10 @@ import { UsersController } from "./modules/users/users.controller";
     {
       provide: FileEvidenceVault,
       useFactory: (config: AppConfig) =>
-        new FileEvidenceVault(process.env.EVIDENCE_VAULT_DIR || "data/evidence-vault", process.env.EVIDENCE_VAULT_KEY || config.jwtSecret),
+        new FileEvidenceVault(
+          process.env.EVIDENCE_VAULT_DIR || "data/evidence-vault",
+          evidenceVaultKey(process.env, config.jwtSecret, config.nodeEnv),
+        ),
       inject: [APP_CONFIG],
     },
     RealtimeGateway,

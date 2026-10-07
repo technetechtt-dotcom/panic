@@ -19,6 +19,7 @@ export function IncidentDetailPage() {
   const [responderId, setResponderId] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [preview, setPreview] = useState<string | null>(null);
+  const [media, setMedia] = useState<{ url: string; type: string } | null>(null);
   const operator = session?.user.role !== "RESPONDER";
 
   const incident = useQuery({
@@ -46,7 +47,12 @@ export function IncidentDetailPage() {
   const evidence = useQuery({
     queryKey: ["evidence", id],
     enabled: operator,
-    queryFn: () => api<Array<{ id: string; sequence: number; contentType: string; byteLength: number }>>(`/api/v1/incidents/${id}/evidence`, token),
+    queryFn: () => api<Array<{ id: string; sequence: number; contentType: string; byteLength: number; capturedAt?: string; uploadedAt?: string; sha256?: string }>>(`/api/v1/incidents/${id}/evidence`, token),
+  });
+  const responders = useQuery({
+    queryKey: ["responders"],
+    enabled: operator,
+    queryFn: () => api<Array<{ id: string; displayName: string; email: string; status: string }>>("/api/v1/responders", token),
   });
   const heartbeats = useQuery({
     queryKey: ["heartbeats", id],
@@ -105,6 +111,8 @@ export function IncidentDetailPage() {
               <Row label="App status" value={current.distressCapsule.appProtectionStatus} />
             </dl>
             {current.isTest ? <div className="mt-4"><Badge tone="warn">TEST INCIDENT</Badge></div> : null}
+            {current.claimedBy ? <p className="mt-3 text-sm">Claimed by operator {current.claimedBy.slice(0, 8)}…</p> : <p className="mt-3 text-sm">Unclaimed.</p>}
+            {current.escalatedToSupervisorAt ? <p className="mt-2 text-sm text-warn">Escalated to supervisor at {new Date(current.escalatedToSupervisorAt).toLocaleTimeString()}.</p> : null}
           </section>
           <section className="min-h-[420px] rounded-2xl border border-line bg-panel p-4">
             <h2 className="text-lg font-semibold">Last confirmed location</h2>
@@ -164,28 +172,52 @@ export function IncidentDetailPage() {
               {(evidence.data ?? []).map((item) => (
                 <li key={item.id}>
                   {item.contentType} · {item.byteLength} bytes · part {item.sequence}
-                  {item.contentType === "image/jpeg" ? (
-                    <button
-                      type="button"
-                      className="ml-2 underline"
-                      onClick={() => {
-                        void api<{ contentType: string; bytesBase64: string }>(`/api/v1/incidents/${id}/evidence/${item.id}`, token)
-                          .then((file) => setPreview(`data:${file.contentType};base64,${file.bytesBase64}`))
-                          .catch((caught: unknown) => setError(caught instanceof Error ? caught.message : "The photo could not be opened."));
-                      }}
-                    >
-                      View photo
-                    </button>
-                  ) : null}
+                  {item.capturedAt ? ` · captured ${new Date(item.capturedAt).toLocaleString()}` : ""}
+                  {item.sha256 ? ` · sha256 ${item.sha256.slice(0, 12)}` : ""}
+                  <button
+                    type="button"
+                    className="ml-2 underline"
+                    onClick={() => {
+                      void api<{ contentType: string; bytesBase64: string }>(`/api/v1/incidents/${id}/evidence/${item.id}`, token)
+                        .then((file) => {
+                          if (file.contentType.startsWith("image/")) {
+                            setPreview(`data:${file.contentType};base64,${file.bytesBase64}`);
+                            setMedia(null);
+                            return;
+                          }
+                          const bytes = Uint8Array.from(atob(file.bytesBase64), (char) => char.charCodeAt(0));
+                          const url = URL.createObjectURL(new Blob([bytes], { type: file.contentType }));
+                          setMedia({ url, type: file.contentType });
+                          setPreview(null);
+                        })
+                        .catch((caught: unknown) => setError(caught instanceof Error ? caught.message : "The evidence could not be opened."));
+                    }}
+                  >
+                    Open
+                  </button>
                 </li>
               ))}
               {evidence.data?.length === 0 ? <li>No evidence stored for this incident.</li> : null}
             </ul>
             {preview ? <img src={preview} alt="Incident evidence" className="mt-3 max-h-64 rounded-lg" /> : null}
+            {media?.type.startsWith("audio/") ? <audio className="mt-3 w-full" controls src={media.url} /> : null}
+            {media?.type.startsWith("video/") ? <video className="mt-3 max-h-64 w-full" controls src={media.url} /> : null}
             {operator ? (
               <label className="mt-4 block text-sm" htmlFor="responder">
-                Responder account id
-                <input id="responder" value={responderId} onChange={(event) => setResponderId(event.target.value)} className="mt-1 w-full rounded-lg border border-line bg-ink p-2" />
+                Responder
+                <select
+                  id="responder"
+                  value={responderId}
+                  onChange={(event) => setResponderId(event.target.value)}
+                  className="mt-1 w-full rounded-lg border border-line bg-ink p-2"
+                >
+                  <option value="">Select a responder</option>
+                  {(responders.data ?? []).map((row) => (
+                    <option key={row.id} value={row.id}>
+                      {row.displayName} · {row.status} · {row.email}
+                    </option>
+                  ))}
+                </select>
               </label>
             ) : null}
             <h2 className="mt-4 text-lg font-semibold">Heartbeat</h2>
@@ -209,6 +241,20 @@ export function IncidentDetailPage() {
             </label>
             {error ? <p className="mt-2 text-sm text-sos">{error}</p> : null}
             <div className="mt-3 grid gap-2">
+              {operator ? (
+                <button
+                  type="button"
+                  disabled={Boolean(current.claimedBy) || action.isPending}
+                  onClick={() => {
+                    void api(`/api/v1/incidents/${id}/claim`, token, { method: "POST", body: JSON.stringify({}) })
+                      .then(() => queryClient.invalidateQueries())
+                      .catch((caught: unknown) => setError(caught instanceof Error ? caught.message : "Claim failed."));
+                  }}
+                  className="rounded-lg bg-sos px-4 py-3 font-semibold disabled:opacity-40"
+                >
+                  Claim this incident
+                </button>
+              ) : null}
               <button
                 type="button"
                 disabled={!operator || !["SOS", "CONCERN", "HIGH_RISK"].includes(current.state) || action.isPending}
@@ -242,7 +288,7 @@ export function IncidentDetailPage() {
               {operator ? (
                 <button
                   type="button"
-                  disabled={responderId.length < 30 || action.isPending}
+                  disabled={!responderId || action.isPending}
                   onClick={() => {
                     void api(`/api/v1/incidents/${id}/responders`, token, {
                       method: "POST",

@@ -174,6 +174,9 @@ export interface Incident {
   userDisplayName: string;
   acknowledgedAt: string | null;
   resolvedAt: string | null;
+  claimedBy: string | null;
+  claimedAt: string | null;
+  escalatedToSupervisorAt: string | null;
   createdAt: string;
   updatedAt: string;
 }

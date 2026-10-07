@@ -3,6 +3,7 @@ import {
   cancelIncidentSchema,
   evidenceChunkSchema,
   guardianSchema,
+  journeyExtendSchema,
   journeySchema,
   safetyPinSchema,
 } from "@guardian/shared-validation";
@@ -35,6 +36,13 @@ export class ProtectionController {
     return this.protection.removeGuardian(actorFrom(request), id);
   }
 
+  @Post("guardians/invitations/:token/accept")
+  @HttpCode(200)
+  @RequirePermissions(Permission.UserReadSelf)
+  acceptInvitation(@Param("token") token: string, @Req() request: RequestWithUser) {
+    return this.protection.acceptInvitation(actorFrom(request), token).then((data) => ({ data }));
+  }
+
   @Post("journeys")
   @RequirePermissions(Permission.ProtectionManageOwn)
   startJourney(@Body() body: unknown, @Req() request: RequestWithUser) {
@@ -53,6 +61,15 @@ export class ProtectionController {
   @RequirePermissions(Permission.ProtectionManageOwn)
   complete(@Param("id") id: string, @Req() request: RequestWithUser) {
     return this.protection.completeJourney(actorFrom(request), id).then((data) => ({ data }));
+  }
+
+  @Post("journeys/:id/extend")
+  @HttpCode(200)
+  @RequirePermissions(Permission.ProtectionManageOwn)
+  extend(@Param("id") id: string, @Body() body: unknown, @Req() request: RequestWithUser) {
+    return this.protection
+      .extendJourney(actorFrom(request), id, parseBody(journeyExtendSchema, body).minutes)
+      .then((data) => ({ data }));
   }
 
   @Post("safety-pins")

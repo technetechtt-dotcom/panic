@@ -76,37 +76,55 @@ class SafeWordService : android.app.Service() {
             recorder.release()
             return
         }
-        val window = ShortArray(rate)
+        val windowSize = rate
+        val hopSize = rate / 4 // 250ms hop
+        val window = ShortArray(windowSize)
+        val hopBuffer = ShortArray(hopSize)
         recorder.startRecording()
         var hits = 0
         try {
+            // Prime initial window
+            var primed = 0
+            while (primed < windowSize && scope.isActive) {
+                val read = recorder.read(window, primed, windowSize - primed)
+                if (read <= 0) break
+                primed += read
+            }
             while (scope.isActive && !matched && settings.safeWordEnabled()) {
-                var filled = 0
-                while (filled < window.size) {
-                    val read = recorder.read(window, filled, window.size - filled)
+                var hopFilled = 0
+                while (hopFilled < hopSize && scope.isActive) {
+                    val read = recorder.read(hopBuffer, hopFilled, hopSize - hopFilled)
                     if (read <= 0) break
-                    filled += read
+                    hopFilled += read
                 }
-                settings.noteSafeWordHeartbeat()
-                if (filled < window.size / 2) {
-                    delay(200)
+                if (hopFilled < hopSize) {
+                    delay(50)
                     continue
                 }
-                val live = pcmFeatures(window.copyOf(filled))
+                // Slide window by hopSize and append new audio samples
+                System.arraycopy(window, hopSize, window, 0, windowSize - hopSize)
+                System.arraycopy(hopBuffer, 0, window, windowSize - hopSize, hopSize)
+
+                settings.noteSafeWordHeartbeat()
+                val live = pcmFeatures(window, rate)
                 if (keywordMatches(live, enrolled, settings.safeWordSensitivity())) {
                     hits += 1
                     if (hits >= 2) {
                         matched = true
                         actions.send(TriggerType.VOICE_SAFE_WORD, za.co.guardian.core.MonitoringOrigin.PROCESS_FOREGROUND)
+                        settings.safeWordEnabled(false)
                         stopSelf()
+                        return
                     }
                 } else {
                     hits = 0
                 }
             }
         } finally {
-            recorder.stop()
-            recorder.release()
+            try {
+                recorder.stop()
+                recorder.release()
+            } catch (_: Exception) {}
         }
     }
 

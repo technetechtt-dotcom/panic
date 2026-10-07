@@ -107,6 +107,7 @@ model Device {
   publicKey          String?
   emergencyTokenHash String?
   fcmToken           String?
+  revokedAt          DateTime?
   createdAt          DateTime   @default(now())
   updatedAt          DateTime   @updatedAt
   user               User       @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -144,6 +145,9 @@ model Incident {
   acknowledgedById   String?           @db.Uuid
   resolvedAt         DateTime?
   resolvedById       String?           @db.Uuid
+  claimedBy          String?
+  claimedAt          DateTime?
+  escalatedToSupervisorAt DateTime?
   createdAt          DateTime          @default(now())
   updatedAt          DateTime          @updatedAt
   user               User              @relation(fields: [userId], references: [id])
@@ -269,6 +273,12 @@ model TrustedContact {
   canViewLocation    Boolean  @default(false)
   canViewEvidence    Boolean  @default(false)
   canCancelIncident  Boolean  @default(false)
+  relationship       String   @default("FRIEND")
+  priority           Int      @default(1)
+  notificationMethods String  @default("PUSH,SMS")
+  guardianUserId     String?  @db.Uuid
+  invitationStatus   String   @default("ACCEPTED")
+  invitationToken    String?  @unique
   createdAt          DateTime @default(now())
   updatedAt          DateTime @updatedAt
   user               User     @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -364,6 +374,8 @@ model IncidentRoom {
   id               String   @id @db.Uuid
   incidentId       String   @db.Uuid
   tokenHash        String   @unique
+  guardianName     String?
+  acknowledgedAt   DateTime?
   canViewLocation  Boolean
   canViewEvidence  Boolean
   expiresAt        DateTime

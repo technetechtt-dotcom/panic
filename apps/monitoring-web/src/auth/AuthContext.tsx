@@ -21,6 +21,17 @@ export class MfaRequiredError extends Error {
   }
 }
 
+export class MfaEnrollmentError extends Error {
+  constructor(
+    readonly mfaToken: string,
+    readonly secret: string,
+    readonly otpauth: string,
+  ) {
+    super("Enroll an authenticator before this operator can sign in.");
+    this.name = "MfaEnrollmentError";
+  }
+}
+
 const AuthContext = createContext<AuthState | null>(null);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
@@ -28,10 +39,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [restoring, setRestoring] = useState(true);
 
   const login = useCallback(async (email: string, password: string) => {
-    const data = await api<{ accessToken?: string; user?: AuthUser; mfaRequired?: boolean; mfaToken?: string }>("/api/v1/auth/login", null, {
+    const data = await api<{
+      accessToken?: string;
+      user?: AuthUser;
+      mfaRequired?: boolean;
+      mfaEnrollmentRequired?: boolean;
+      mfaToken?: string;
+      secret?: string;
+      otpauth?: string;
+    }>("/api/v1/auth/login", null, {
       method: "POST",
       body: JSON.stringify({ email, password }),
     });
+    if (data.mfaEnrollmentRequired && data.mfaToken && data.secret && data.otpauth) {
+      throw new MfaEnrollmentError(data.mfaToken, data.secret, data.otpauth);
+    }
     if (data.mfaRequired && data.mfaToken) throw new MfaRequiredError(data.mfaToken);
     if (!data.accessToken || !data.user) throw new Error("Sign-in did not return a session.");
     if (data.user.role === "USER" || data.user.role === "GUARDIAN") {

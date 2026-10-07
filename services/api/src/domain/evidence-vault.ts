@@ -26,11 +26,12 @@ export class FileEvidenceVault {
   }
 
   async get(storageKey: string): Promise<Buffer | null> {
+    const remote = await getObjectIfConfigured(storageKey);
     const local = await readFile(path.join(this.directory, `${storageKey}.bin`)).catch(() => null);
-    const sealed = local && local.length >= 29 ? local : await getObjectIfConfigured(storageKey);
-    if (sealed && !local) {
+    const sealed = remote && remote.length >= 29 ? remote : local;
+    if (remote && remote.length >= 29 && (!local || local.length !== remote.length)) {
       await mkdir(this.directory, { recursive: true });
-      await writeFile(path.join(this.directory, `${storageKey}.bin`), sealed).catch(() => undefined);
+      await writeFile(path.join(this.directory, `${storageKey}.bin`), remote).catch(() => undefined);
     }
     if (!sealed || sealed.length < 29) return null;
     const iv = sealed.subarray(0, 12);
@@ -44,6 +45,17 @@ export class FileEvidenceVault {
   private key(): Buffer {
     return scryptSync(this.keyMaterial, "guardian-evidence", 32);
   }
+}
+
+export function evidenceVaultKey(env: NodeJS.ProcessEnv = process.env, jwtSecret = "", nodeEnv = env.NODE_ENV ?? "development"): string {
+  const key = env.EVIDENCE_VAULT_KEY?.trim() ?? "";
+  if (key && key !== jwtSecret) return key;
+  if (nodeEnv === "production") {
+    throw new Error("EVIDENCE_VAULT_KEY must be set in production and must be independent of JWT_ACCESS_SECRET.");
+  }
+  if (key) return key;
+  if (jwtSecret.length >= 32) return jwtSecret;
+  throw new Error("EVIDENCE_VAULT_KEY is required.");
 }
 
 export function s3Configured(env: NodeJS.ProcessEnv = process.env): boolean {

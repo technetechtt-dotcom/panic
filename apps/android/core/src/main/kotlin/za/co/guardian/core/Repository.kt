@@ -38,8 +38,8 @@ interface IncidentLocalStore {
 data class RemoteCreateResult(val serverId: String, val replayed: Boolean, val escalated: Boolean = false)
 
 interface IncidentRemoteApi {
-    suspend fun create(incident: LocalIncident): RemoteCreateResult
-    suspend fun escalate(incident: LocalIncident, triggerId: String, type: TriggerType): RemoteCreateResult
+    suspend fun create(incident: LocalIncident, stage: String = "SOS"): RemoteCreateResult
+    suspend fun escalate(incident: LocalIncident, triggerId: String, type: TriggerType, stage: String = "EVIDENCE"): RemoteCreateResult
 }
 
 class OfflineIncidentRepository(
@@ -54,7 +54,7 @@ class OfflineIncidentRepository(
 ) {
     suspend fun triggerManual(context: SosContext): LocalIncident = trigger(TriggerType.MANUAL_SOS, context)
 
-    suspend fun trigger(type: TriggerType, context: SosContext): LocalIncident {
+    suspend fun trigger(type: TriggerType, context: SosContext, stage: String = "SOS"): LocalIncident {
         val active = local.list().firstOrNull { it.state != IncidentState.RESOLVED && it.state != IncidentState.ARCHIVED }
         if (active != null) {
             escalations.add(
@@ -62,6 +62,7 @@ class OfflineIncidentRepository(
                     triggerId = newId(),
                     incidentTriggerId = active.triggerId,
                     triggerType = type.name,
+                    stage = if (stage == "SOS") "EVIDENCE" else stage,
                     createdAtEpochMs = now(),
                     sent = false,
                 ),
@@ -129,7 +130,7 @@ class OfflineIncidentRepository(
             val incident = local.get(item.incidentTriggerId) ?: continue
             if (incident.serverId == null) continue
             try {
-                remote.escalate(incident, item.triggerId, TriggerType.valueOf(item.triggerType))
+                remote.escalate(incident, item.triggerId, TriggerType.valueOf(item.triggerType), item.stage)
                 escalations.markSent(item.triggerId)
                 sent += 1
             } catch (_: Exception) {
@@ -143,7 +144,7 @@ class OfflineIncidentRepository(
 
     private suspend fun send(incident: LocalIncident): LocalIncident {
         return try {
-            val result = remote.create(incident)
+            val result = remote.create(incident, "SOS")
             val synced = incident.copy(serverId = result.serverId, syncState = SyncState.SYNCED, lastError = null)
             local.update(synced)
             synced

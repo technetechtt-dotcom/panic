@@ -706,6 +706,9 @@ export function toIncidentDto(incident: IncidentRecord): Incident {
     userDisplayName: incident.userDisplayName,
     acknowledgedAt: incident.acknowledgedAt?.toISOString() ?? null,
     resolvedAt: incident.resolvedAt?.toISOString() ?? null,
+    claimedBy: incident.claimedBy ?? null,
+    claimedAt: incident.claimedAt?.toISOString() ?? null,
+    escalatedToSupervisorAt: incident.escalatedToSupervisorAt?.toISOString() ?? null,
     createdAt: incident.createdAt.toISOString(),
     updatedAt: incident.updatedAt.toISOString(),
   };

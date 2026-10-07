@@ -8,7 +8,7 @@ import type {
   UserRecord,
   UserStore,
 } from "./ports";
-import { readMfaChallenge, signMfaChallenge, verifyTotp } from "./operations";
+import { generateTotpSecret, readMfaChallenge, signMfaChallenge, verifyTotp } from "./operations";
 import {
   generateRefreshToken,
   hashToken,
@@ -19,6 +19,8 @@ import {
 export interface MfaStore {
   isEnabled(userId: string): Promise<boolean>;
   secret(userId: string): Promise<string | null>;
+  prepareEnrollment?(userId: string, secret: string): Promise<void>;
+  enable?(userId: string): Promise<void>;
 }
 
 export interface AccessTokenIssuer {
@@ -26,7 +28,12 @@ export interface AccessTokenIssuer {
   verify(token: string): Promise<AccessClaims>;
 }
 
-export type LoginResult = AuthResult | { mfaRequired: true; mfaToken: string };
+const MFA_ROLES: Role[] = ["ADMIN", "SUPERVISOR", "MONITOR_OPERATOR", "RESPONDER"];
+
+export type LoginResult =
+  | AuthResult
+  | { mfaRequired: true; mfaToken: string }
+  | { mfaEnrollmentRequired: true; mfaToken: string; secret: string; otpauth: string };
 
 export interface AuthResult {
   accessToken: string;
@@ -105,9 +112,19 @@ export class AuthService {
       });
       throw new AppError("INVALID_CREDENTIALS", 401, "Invalid email or password.");
     }
-    if (this.mfa && (await this.mfa.store.isEnabled(user.id))) {
+    if (this.mfa && MFA_ROLES.includes(user.role)) {
       const token = signMfaChallenge(this.mfa.secret, user.id, this.clock.now().getTime() + 5 * 60 * 1000);
-      return { mfaRequired: true, mfaToken: token };
+      if (await this.mfa.store.isEnabled(user.id)) {
+        return { mfaRequired: true, mfaToken: token };
+      }
+      const secret = generateTotpSecret();
+      await this.mfa.store.prepareEnrollment?.(user.id, secret);
+      return {
+        mfaEnrollmentRequired: true,
+        mfaToken: token,
+        secret,
+        otpauth: `otpauth://totp/Guardian:${encodeURIComponent(user.email)}?secret=${secret}&issuer=Guardian`,
+      };
     }
     await this.audit({ actorId: user.id, action: "auth.login", entityId: user.id });
     return this.issue(user, this.ids.uuid());
@@ -122,6 +139,7 @@ export class AuthService {
     }
     const user = await this.users.findById(userId);
     if (!user) throw new AppError("INVALID_MFA", 401, "That authenticator code was not accepted.");
+    await this.mfa.store.enable?.(userId);
     await this.audit({ actorId: user.id, action: "auth.mfa", entityId: user.id });
     return this.issue(user, this.ids.uuid());
   }

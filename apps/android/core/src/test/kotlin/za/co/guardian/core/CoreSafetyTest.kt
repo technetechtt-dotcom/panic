@@ -52,13 +52,13 @@ class CoreSafetyTest {
         val store = MemoryIncidentStore()
         var calls = 0
         val remote = object : IncidentRemoteApi {
-            override suspend fun create(incident: LocalIncident): RemoteCreateResult {
+            override suspend fun create(incident: LocalIncident, stage: String): RemoteCreateResult {
                 calls += 1
                 if (calls == 1) error("offline")
                 return RemoteCreateResult("server-1", calls > 2)
             }
 
-            override suspend fun escalate(incident: LocalIncident, triggerId: String, type: TriggerType): RemoteCreateResult {
+            override suspend fun escalate(incident: LocalIncident, triggerId: String, type: TriggerType, stage: String): RemoteCreateResult {
                 return RemoteCreateResult(incident.serverId ?: "missing", false, true)
             }
         }
@@ -115,11 +115,11 @@ class CoreSafetyTest {
         var created = 0
         var escalated = 0
         val remote = object : IncidentRemoteApi {
-            override suspend fun create(incident: LocalIncident): RemoteCreateResult {
+            override suspend fun create(incident: LocalIncident, stage: String): RemoteCreateResult {
                 created += 1
                 return RemoteCreateResult("server-1", false)
             }
-            override suspend fun escalate(incident: LocalIncident, triggerId: String, type: TriggerType): RemoteCreateResult {
+            override suspend fun escalate(incident: LocalIncident, triggerId: String, type: TriggerType, stage: String): RemoteCreateResult {
                 escalated += 1
                 return RemoteCreateResult(incident.serverId ?: "missing", false, true)
             }
@@ -174,8 +174,16 @@ class CoreSafetyTest {
         assertEquals("PRIORITY", triggerStage(3))
         assertTrue(phraseQualityWarning("dog").contains("high false-trigger"))
         val tone = pcmFeatures(ShortArray(1600) { index -> (kotlin.math.sin(index / 8.0) * 8000).toInt().toShort() })
+        assertEquals(KEYWORD_FEATURE_SIZE, tone.size)
         assertTrue(keywordMatches(tone, listOf(tone), 40))
         assertFalse(keywordMatches(tone, emptyList(), 100))
+        val tone1 = pcmFeatures(ShortArray(16000) { index -> (kotlin.math.sin(index / 8.0) * 8000).toInt().toShort() })
+        val toneDiff = pcmFeatures(ShortArray(16000) { index -> (kotlin.math.sin(index / 2.0) * 8000).toInt().toShort() })
+        val silence = pcmFeatures(ShortArray(16000) { 0 })
+        assertTrue(keywordConfidence(tone1, tone1) > 0.95f)
+        assertTrue(keywordMatches(tone1, listOf(tone1), 50))
+        assertFalse(keywordMatches(toneDiff, listOf(tone1), 50))
+        assertFalse(keywordMatches(silence, listOf(tone1), 50))
         assertTrue(captureEvidence("audio", 4))
         assertFalse(captureEvidence("video", 4))
         assertFalse(captureEvidence("photo", 10))

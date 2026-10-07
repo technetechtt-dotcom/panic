@@ -226,10 +226,21 @@ class SettingsViewModel @Inject constructor(
         private set
     var shareAudio by mutableStateOf(settings.shareAudio())
         private set
+    var guardians by mutableStateOf<List<za.co.guardian.data.GuardianWire>>(emptyList())
+        private set
+    var devices by mutableStateOf<List<za.co.guardian.data.DeviceListItem>>(emptyList())
+        private set
+    var incidentActive by mutableStateOf(settings.incidentActive())
+        private set
 
     fun refresh() {
         testRemaining = settings.remainingMs()
         shareAudio = settings.shareAudio()
+        incidentActive = settings.incidentActive()
+        viewModelScope.launch {
+            runCatching { guardians = protection.listGuardians() }
+            runCatching { devices = protection.listDevices() }
+        }
     }
 
     fun note(message: String) {
@@ -369,7 +380,11 @@ class SettingsViewModel @Inject constructor(
     }
 
     fun checkConnection() = run { "Backend ${auth.checkConnection()}" }
-    fun addGuardian(name: String, phone: String) = run { protection.addGuardian(name, phone) }
+    fun addGuardian(name: String, phone: String, email: String = "") = run { protection.addGuardian(name, phone, email) }
+    fun acceptInvitation(token: String) = run { protection.acceptInvitation(token) }
+    fun revokeDevice(id: String) = run { protection.revokeDevice(id) }
+    fun extendJourney(minutes: String) = run { protection.extendJourney(minutes.toIntOrNull() ?: 15) }
+    fun completeJourney() = run { protection.completeJourney() }
     fun startJourney(label: String, minutes: String) = run { protection.startJourney(label, minutes.toIntOrNull() ?: 30, settings.protectionMode()) }
     fun cycleProtectionMode() {
         val modes = listOf("WALK", "RIDE", "DRIVE", "MEETING", "HIGH_RISK")
@@ -511,6 +526,10 @@ private fun AuthForm(
 fun HomeScreen(
     onHistory: () -> Unit,
     onSettings: () -> Unit,
+    onProtect: () -> Unit = onSettings,
+    onGuardians: () -> Unit = onSettings,
+    onProfile: () -> Unit = onSettings,
+    onActiveIncident: () -> Unit = onSettings,
     onAllowLocation: () -> Unit,
     onAllowNotifications: () -> Unit,
     viewModel: HomeViewModel = hiltViewModel(),
@@ -520,10 +539,8 @@ fun HomeScreen(
     val activeIncident by viewModel.active.collectAsStateWithLifecycle()
     val practice by viewModel.practice.collectAsStateWithLifecycle()
     val context = androidx.compose.ui.platform.LocalContext.current
-    var paymentPin by remember { mutableStateOf("") }
-    var paymentNote by remember { mutableStateOf<String?>(null) }
     androidx.compose.runtime.LaunchedEffect(Unit) { viewModel.refresh() }
-    Scaffold(bottomBar = { BottomNav(onHome = {}, onHistory = onHistory, onSettings = onSettings, selected = "home") }) { padding ->
+    Scaffold(bottomBar = { BottomNav(onHome = {}, onProtect = onProtect, onGuardians = onGuardians, onActivity = onHistory, onProfile = onProfile, selected = "home") }) { padding ->
         Column(Modifier.fillMaxSize().padding(padding).padding(20.dp).verticalScroll(rememberScrollState())) {
             if (practice) Text("TEST MODE", color = Color(0xFF111111), modifier = Modifier.fillMaxWidth().padding(8.dp))
             Text(health.level.name.replace('_', ' '), fontSize = 34.sp, fontWeight = FontWeight.Bold)
@@ -557,9 +574,12 @@ fun HomeScreen(
             }
             if (activeIncident != null) {
                 Text(
-                    "Emergency is active on this phone. Settings can add a photo, a short video, or a PIN cancellation. Android still shows its location and microphone icons.",
+                    "Emergency is active on this phone. Open Active Incident for a photo, a short video, or a PIN cancellation. Android still shows its location and microphone icons.",
                     modifier = Modifier.padding(top = 12.dp),
                 )
+                Button(onClick = onActiveIncident, modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) {
+                    Text("Open active incident")
+                }
             }
             message?.let { Text(it, modifier = Modifier.padding(top = 12.dp)) }
             Spacer(Modifier.height(20.dp))
@@ -571,23 +591,24 @@ fun HomeScreen(
                 Text("Open the phone dialer for 112")
             }
             Text("This opens the dialer. Guardian does not place the call.", modifier = Modifier.padding(vertical = 8.dp))
-            OutlinedTextField(paymentPin, { paymentPin = it }, label = { Text("Payment password") }, modifier = Modifier.fillMaxWidth())
-            Button(onClick = {
-                paymentNote = viewModel.confirmPayment(paymentPin, context)
-                paymentPin = ""
-            }, modifier = Modifier.fillMaxWidth()) { Text("Confirm payment") }
-            paymentNote?.let { Text(it, modifier = Modifier.padding(top = 8.dp)) }
         }
     }
 }
 
 @Composable
-fun HistoryScreen(onHome: () -> Unit, onSettings: () -> Unit, viewModel: HistoryViewModel = hiltViewModel()) {
+fun HistoryScreen(
+    onHome: () -> Unit,
+    onSettings: () -> Unit,
+    onProtect: () -> Unit = onSettings,
+    onGuardians: () -> Unit = onSettings,
+    onProfile: () -> Unit = onSettings,
+    viewModel: HistoryViewModel = hiltViewModel(),
+) {
     val items by viewModel.items.collectAsStateWithLifecycle()
     androidx.compose.runtime.LaunchedEffect(Unit) { viewModel.refresh() }
-    Scaffold(bottomBar = { BottomNav(onHome = onHome, onHistory = {}, onSettings = onSettings, selected = "history") }) { padding ->
+    Scaffold(bottomBar = { BottomNav(onHome = onHome, onProtect = onProtect, onGuardians = onGuardians, onActivity = {}, onProfile = onProfile, selected = "activity") }) { padding ->
         Column(Modifier.fillMaxSize().padding(padding).padding(20.dp)) {
-            Text("History", fontSize = 32.sp, fontWeight = FontWeight.SemiBold)
+            Text("Activity", fontSize = 32.sp, fontWeight = FontWeight.SemiBold)
             if (items.isEmpty()) Text("No SOS events on this phone yet.", modifier = Modifier.padding(top = 12.dp))
             items.forEach { Text(it, modifier = Modifier.padding(top = 12.dp), fontSize = 18.sp) }
         }
@@ -599,48 +620,18 @@ fun SettingsScreen(
     onHome: () -> Unit,
     onHistory: () -> Unit,
     onSignedOut: () -> Unit,
+    onGuardians: () -> Unit = onHistory,
+    onProfile: () -> Unit = onSignedOut,
     viewModel: SettingsViewModel = hiltViewModel(),
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
     var safeWord by remember { mutableStateOf("") }
-    var guardian by remember { mutableStateOf("") }
-    var guardianPhone by remember { mutableStateOf("") }
-    var blood by remember { mutableStateOf("") }
-    var allergies by remember { mutableStateOf("") }
-    var medications by remember { mutableStateOf("") }
-    var profileNotes by remember { mutableStateOf("") }
     var destination by remember { mutableStateOf("") }
     var minutes by remember { mutableStateOf("30") }
-    var cancelPin by remember { mutableStateOf("") }
-    var duressPin by remember { mutableStateOf("") }
     var decoyPin by remember { mutableStateOf("") }
     var releasePin by remember { mutableStateOf("") }
     var showVolumeDisclosure by remember { mutableStateOf(false) }
     var pendingMic by remember { mutableStateOf<String?>(null) }
-    val photoCapture = androidx.activity.compose.rememberLauncherForActivityResult(
-        androidx.activity.result.contract.ActivityResultContracts.TakePicturePreview(),
-    ) { bitmap ->
-        if (bitmap == null) return@rememberLauncherForActivityResult
-        val stream = java.io.ByteArrayOutputStream()
-        bitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 70, stream)
-        viewModel.saveCapture("photo", stream.toByteArray())
-    }
-    val videoCapture = androidx.activity.compose.rememberLauncherForActivityResult(
-        androidx.activity.result.contract.ActivityResultContracts.StartActivityForResult(),
-    ) { result ->
-        val uri = result.data?.data ?: return@rememberLauncherForActivityResult
-        viewModel.saveCapture("video", context.contentResolver.openInputStream(uri)?.use { it.readBytes() } ?: byteArrayOf())
-    }
-    val cameraPermission = androidx.activity.compose.rememberLauncherForActivityResult(
-        androidx.activity.result.contract.ActivityResultContracts.RequestPermission(),
-    ) { granted ->
-        if (granted) photoCapture.launch(null)
-    }
-    val smsPermission = androidx.activity.compose.rememberLauncherForActivityResult(
-        androidx.activity.result.contract.ActivityResultContracts.RequestPermission(),
-    ) { granted ->
-        viewModel.note(if (granted) "This phone can text the saved guardian number during a live SOS." else "SMS permission stays off. The hub can still text when SMS is configured.")
-    }
     val audioPermission = androidx.activity.compose.rememberLauncherForActivityResult(
         androidx.activity.result.contract.ActivityResultContracts.RequestPermission(),
     ) { granted ->
@@ -673,9 +664,9 @@ fun SettingsScreen(
             dismissButton = { TextButton(onClick = { showVolumeDisclosure = false }) { Text("Not now") } },
         )
     }
-    Scaffold(bottomBar = { BottomNav(onHome = onHome, onHistory = onHistory, onSettings = {}, selected = "settings") }) { padding ->
+    Scaffold(bottomBar = { BottomNav(onHome = onHome, onProtect = {}, onGuardians = onGuardians, onActivity = onHistory, onProfile = onProfile, selected = "protect") }) { padding ->
         Column(Modifier.fillMaxSize().padding(padding).padding(20.dp).verticalScroll(rememberScrollState())) {
-            Text("Settings", fontSize = 32.sp, fontWeight = FontWeight.SemiBold)
+            Text("Protect", fontSize = 32.sp, fontWeight = FontWeight.SemiBold)
             Text(
                 if (viewModel.testRemaining > 0) "Test session: ${(viewModel.testRemaining / 60000) + 1} min left"
                 else "No test session. A test expires on its own.",
@@ -686,11 +677,10 @@ fun SettingsScreen(
             Button(onClick = { showVolumeDisclosure = true }, modifier = Modifier.fillMaxWidth()) { Text("Enable volume SOS") }
             Button(onClick = viewModel::cycleVolumePattern, modifier = Modifier.fillMaxWidth()) { Text("Change volume pattern") }
             Button(onClick = viewModel::cycleFreezePattern, modifier = Modifier.fillMaxWidth()) { Text("Change freeze volume pattern") }
-            OutlinedTextField(decoyPin, { decoyPin = it }, label = { Text("Decoy payment PIN") }, modifier = Modifier.fillMaxWidth())
+            OutlinedTextField(decoyPin, { decoyPin = it }, label = { Text("Decoy PIN (enters freeze screen)") }, modifier = Modifier.fillMaxWidth())
             OutlinedTextField(releasePin, { releasePin = it }, label = { Text("Secret PIN to leave the freeze") }, modifier = Modifier.fillMaxWidth())
             Button(onClick = { viewModel.saveFreezePins(decoyPin, releasePin); decoyPin = ""; releasePin = "" }, modifier = Modifier.fillMaxWidth()) { Text("Save freeze PINs") }
-            Text("A decoy PIN or the freeze volume pattern holds this app on one still screen. Hold the clock, then enter the secret PIN. A reboot clears the freeze. This does not block the power button.", modifier = Modifier.padding(vertical = 8.dp))
-            Button(onClick = { smsPermission.launch(android.Manifest.permission.SEND_SMS) }, modifier = Modifier.fillMaxWidth()) { Text("Allow SMS to the saved guardian") }
+            Text("Coercion protection: entering the decoy PIN or the freeze volume pattern holds this app on one frozen screen. Long-press the clock and enter the secret PIN to unlock. A reboot clears the freeze.", modifier = Modifier.padding(vertical = 8.dp))
             Button(onClick = viewModel::cycleVolumeWindow, modifier = Modifier.fillMaxWidth()) { Text("Change volume timing window") }
             Button(onClick = viewModel::toggleVolumeVibration, modifier = Modifier.fillMaxWidth()) { Text("Toggle volume vibration confirmation") }
             Button(onClick = viewModel::startVolumeTest, modifier = Modifier.fillMaxWidth()) { Text("Test volume button for 30 seconds") }
@@ -716,35 +706,86 @@ fun SettingsScreen(
                     }
                 })
             }
-            OutlinedTextField(guardian, { guardian = it }, label = { Text("Guardian name") }, modifier = Modifier.fillMaxWidth().padding(top = 12.dp))
-            OutlinedTextField(guardianPhone, { guardianPhone = it }, label = { Text("Guardian phone for SMS") }, modifier = Modifier.fillMaxWidth())
-            Button(onClick = { viewModel.addGuardian(guardian, guardianPhone) }, modifier = Modifier.fillMaxWidth()) { Text("Add guardian") }
-            Button(onClick = viewModel::cycleProtectionMode, modifier = Modifier.fillMaxWidth()) { Text("Change protection mode") }
+            Button(onClick = viewModel::cycleProtectionMode, modifier = Modifier.fillMaxWidth().padding(top = 12.dp)) { Text("Change protection mode") }
             Button(onClick = viewModel::toggleFallWatch, modifier = Modifier.fillMaxWidth()) { Text("Toggle impact detection") }
-            Button(onClick = {
-                cameraPermission.launch(android.Manifest.permission.CAMERA)
-            }, modifier = Modifier.fillMaxWidth()) { Text("Take a photo for the open emergency") }
-            Button(onClick = {
-                val intent = android.content.Intent(android.provider.MediaStore.ACTION_VIDEO_CAPTURE)
-                intent.putExtra(android.provider.MediaStore.EXTRA_DURATION_LIMIT, 8)
-                intent.putExtra(android.provider.MediaStore.EXTRA_VIDEO_QUALITY, 0)
-                videoCapture.launch(intent)
-            }, modifier = Modifier.fillMaxWidth()) { Text("Record a short video for the open emergency") }
+            OutlinedTextField(destination, { destination = it }, label = { Text("Journey destination") }, modifier = Modifier.fillMaxWidth())
+            OutlinedTextField(minutes, { minutes = it }, label = { Text("Minutes") }, modifier = Modifier.fillMaxWidth())
+            Button(onClick = { viewModel.startJourney(destination, minutes) }, modifier = Modifier.fillMaxWidth()) { Text("Start journey, ride, meeting, or high-risk watch") }
+            Button(onClick = { viewModel.extendJourney("15") }, modifier = Modifier.fillMaxWidth()) { Text("Extend journey 15 minutes") }
+            Button(onClick = viewModel::completeJourney, modifier = Modifier.fillMaxWidth()) { Text("Mark arrived / end journey") }
+            viewModel.status?.let { Text(it, modifier = Modifier.padding(top = 8.dp)) }
+        }
+    }
+}
+
+@Composable
+fun GuardiansScreen(
+    onHome: () -> Unit,
+    onProtect: () -> Unit,
+    onActivity: () -> Unit,
+    onProfile: () -> Unit,
+    viewModel: SettingsViewModel = hiltViewModel(),
+) {
+    var guardian by remember { mutableStateOf("") }
+    var guardianPhone by remember { mutableStateOf("") }
+    var guardianEmail by remember { mutableStateOf("") }
+    var inviteToken by remember { mutableStateOf("") }
+    androidx.compose.runtime.LaunchedEffect(Unit) { viewModel.refresh() }
+    Scaffold(bottomBar = { BottomNav(onHome = onHome, onProtect = onProtect, onGuardians = {}, onActivity = onActivity, onProfile = onProfile, selected = "guardians") }) { padding ->
+        Column(Modifier.fillMaxSize().padding(padding).padding(20.dp).verticalScroll(rememberScrollState())) {
+            Text("Guardians", fontSize = 32.sp, fontWeight = FontWeight.SemiBold)
+            Text("Invite by email so they can accept on a Guardian account. Phone is used for SMS when the hub has Twilio.", modifier = Modifier.padding(vertical = 8.dp))
+            OutlinedTextField(guardian, { guardian = it }, label = { Text("Guardian name") }, modifier = Modifier.fillMaxWidth())
+            OutlinedTextField(guardianPhone, { guardianPhone = it }, label = { Text("Phone") }, modifier = Modifier.fillMaxWidth())
+            OutlinedTextField(guardianEmail, { guardianEmail = it }, label = { Text("Email for invitation") }, modifier = Modifier.fillMaxWidth())
+            Button(onClick = { viewModel.addGuardian(guardian, guardianPhone, guardianEmail) }, modifier = Modifier.fillMaxWidth()) { Text("Add guardian") }
+            OutlinedTextField(inviteToken, { inviteToken = it }, label = { Text("Invitation token to accept") }, modifier = Modifier.fillMaxWidth().padding(top = 12.dp))
+            Button(onClick = { viewModel.acceptInvitation(inviteToken) }, modifier = Modifier.fillMaxWidth()) { Text("Accept invitation on this account") }
+            viewModel.guardians.forEach { row ->
+                Text("${row.displayName} · ${row.invitationStatus}", modifier = Modifier.padding(top = 8.dp))
+            }
+            if (viewModel.guardians.isEmpty()) Text("No guardians saved yet.", modifier = Modifier.padding(top = 12.dp))
+            viewModel.status?.let { Text(it, modifier = Modifier.padding(top = 8.dp)) }
+        }
+    }
+}
+
+@Composable
+fun ProfileScreen(
+    onHome: () -> Unit,
+    onProtect: () -> Unit,
+    onGuardians: () -> Unit,
+    onActivity: () -> Unit,
+    onSignedOut: () -> Unit,
+    viewModel: SettingsViewModel = hiltViewModel(),
+) {
+    var blood by remember { mutableStateOf("") }
+    var allergies by remember { mutableStateOf("") }
+    var medications by remember { mutableStateOf("") }
+    var profileNotes by remember { mutableStateOf("") }
+    var cancelPin by remember { mutableStateOf("") }
+    var duressPin by remember { mutableStateOf("") }
+    androidx.compose.runtime.LaunchedEffect(Unit) { viewModel.refresh() }
+    Scaffold(bottomBar = { BottomNav(onHome = onHome, onProtect = onProtect, onGuardians = onGuardians, onActivity = onActivity, onProfile = {}, selected = "profile") }) { padding ->
+        Column(Modifier.fillMaxSize().padding(padding).padding(20.dp).verticalScroll(rememberScrollState())) {
+            Text("Profile", fontSize = 32.sp, fontWeight = FontWeight.SemiBold)
             OutlinedTextField(blood, { blood = it }, label = { Text("Blood type") }, modifier = Modifier.fillMaxWidth().padding(top = 12.dp))
             OutlinedTextField(allergies, { allergies = it }, label = { Text("Allergies") }, modifier = Modifier.fillMaxWidth())
             OutlinedTextField(medications, { medications = it }, label = { Text("Medications") }, modifier = Modifier.fillMaxWidth())
             OutlinedTextField(profileNotes, { profileNotes = it }, label = { Text("Emergency notes") }, modifier = Modifier.fillMaxWidth())
             Button(onClick = { viewModel.saveProfile(blood, allergies, medications, profileNotes) }, modifier = Modifier.fillMaxWidth()) { Text("Save emergency profile") }
-            OutlinedTextField(destination, { destination = it }, label = { Text("Journey destination") }, modifier = Modifier.fillMaxWidth())
-            OutlinedTextField(minutes, { minutes = it }, label = { Text("Minutes") }, modifier = Modifier.fillMaxWidth())
-            Button(onClick = { viewModel.startJourney(destination, minutes) }, modifier = Modifier.fillMaxWidth()) { Text("Start journey, ride, meeting, or high-risk watch") }
             OutlinedTextField(cancelPin, { cancelPin = it }, label = { Text("Cancel PIN") }, modifier = Modifier.fillMaxWidth())
             OutlinedTextField(duressPin, { duressPin = it }, label = { Text("Duress PIN") }, modifier = Modifier.fillMaxWidth())
             Button(onClick = { viewModel.savePins(cancelPin, duressPin); cancelPin = ""; duressPin = "" }, modifier = Modifier.fillMaxWidth()) { Text("Save PINs") }
-            Text("The cancel screen always says the emergency is cancelled. A duress PIN keeps monitoring open. Android still shows location and microphone icons.", modifier = Modifier.padding(vertical = 8.dp))
-            Button(onClick = { viewModel.cancel(cancelPin) }, modifier = Modifier.fillMaxWidth()) { Text("Cancel emergency with PIN") }
-            Spacer(Modifier.height(12.dp))
-            Button(onClick = viewModel::checkConnection, modifier = Modifier.fillMaxWidth()) { Text("Check connection") }
+            Text("Devices on this account. Revoke a lost phone. Sign-out stops listening unless an emergency is already open.", modifier = Modifier.padding(vertical = 8.dp))
+            viewModel.devices.forEach { device ->
+                val state = if (device.revokedAt != null) "revoked" else if (device.fcmToken != null) "push ready" else "no push token"
+                Text("${device.model ?: "Phone"} · ${device.osVersion} · $state", modifier = Modifier.padding(top = 8.dp))
+                if (device.revokedAt == null) {
+                    Button(onClick = { viewModel.revokeDevice(device.id) }, modifier = Modifier.fillMaxWidth()) { Text("Revoke this device") }
+                }
+            }
+            Button(onClick = viewModel::checkConnection, modifier = Modifier.fillMaxWidth().padding(top = 12.dp)) { Text("Check connection") }
             viewModel.status?.let { Text(it, modifier = Modifier.padding(top = 8.dp)) }
             Spacer(Modifier.height(20.dp))
             Button(onClick = { viewModel.signOut(onSignedOut) }, modifier = Modifier.fillMaxWidth()) { Text("Sign out") }
@@ -753,11 +794,64 @@ fun SettingsScreen(
 }
 
 @Composable
-private fun BottomNav(onHome: () -> Unit, onHistory: () -> Unit, onSettings: () -> Unit, selected: String) {
+fun ActiveIncidentScreen(onBack: () -> Unit, viewModel: SettingsViewModel = hiltViewModel()) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    var cancelPin by remember { mutableStateOf("") }
+    val photoCapture = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.TakePicturePreview(),
+    ) { bitmap ->
+        if (bitmap == null) return@rememberLauncherForActivityResult
+        val stream = java.io.ByteArrayOutputStream()
+        bitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 70, stream)
+        viewModel.saveCapture("photo", stream.toByteArray())
+    }
+    val videoCapture = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.StartActivityForResult(),
+    ) { result ->
+        val uri = result.data?.data ?: return@rememberLauncherForActivityResult
+        viewModel.saveCapture("video", context.contentResolver.openInputStream(uri)?.use { it.readBytes() } ?: byteArrayOf())
+    }
+    val cameraPermission = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.RequestPermission(),
+    ) { granted ->
+        if (granted) photoCapture.launch(null)
+    }
+    androidx.compose.runtime.LaunchedEffect(Unit) { viewModel.refresh() }
+    Scaffold { padding ->
+        Column(Modifier.fillMaxSize().padding(padding).padding(20.dp).verticalScroll(rememberScrollState())) {
+            Text("Active incident", fontSize = 32.sp, fontWeight = FontWeight.SemiBold)
+            Text("Photos and video are taken by you, with the camera app visible. They are not captured in the background.", modifier = Modifier.padding(vertical = 8.dp))
+            Button(onClick = { cameraPermission.launch(android.Manifest.permission.CAMERA) }, modifier = Modifier.fillMaxWidth()) { Text("Take a photo") }
+            Button(onClick = {
+                val intent = android.content.Intent(android.provider.MediaStore.ACTION_VIDEO_CAPTURE)
+                intent.putExtra(android.provider.MediaStore.EXTRA_DURATION_LIMIT, 8)
+                intent.putExtra(android.provider.MediaStore.EXTRA_VIDEO_QUALITY, 0)
+                videoCapture.launch(intent)
+            }, modifier = Modifier.fillMaxWidth()) { Text("Record a short video") }
+            OutlinedTextField(cancelPin, { cancelPin = it }, label = { Text("Cancel PIN") }, modifier = Modifier.fillMaxWidth().padding(top = 12.dp))
+            Button(onClick = { viewModel.cancel(cancelPin) }, modifier = Modifier.fillMaxWidth()) { Text("Cancel emergency with PIN") }
+            Text("The cancel screen always says the emergency is cancelled. A duress PIN keeps monitoring open. Android still shows location and microphone icons.", modifier = Modifier.padding(vertical = 8.dp))
+            viewModel.status?.let { Text(it, modifier = Modifier.padding(top = 8.dp)) }
+            Button(onClick = onBack, modifier = Modifier.fillMaxWidth()) { Text("Back") }
+        }
+    }
+}
+
+@Composable
+private fun BottomNav(
+    onHome: () -> Unit,
+    onProtect: () -> Unit,
+    onGuardians: () -> Unit,
+    onActivity: () -> Unit,
+    onProfile: () -> Unit,
+    selected: String,
+) {
     NavigationBar {
         NavigationBarItem(selected = selected == "home", onClick = onHome, icon = { Text("Home") }, label = { Text("Home") })
-        NavigationBarItem(selected = selected == "history", onClick = onHistory, icon = { Text("History") }, label = { Text("History") })
-        NavigationBarItem(selected = selected == "settings", onClick = onSettings, icon = { Text("Settings") }, label = { Text("Settings") })
+        NavigationBarItem(selected = selected == "protect", onClick = onProtect, icon = { Text("Protect") }, label = { Text("Protect") })
+        NavigationBarItem(selected = selected == "guardians", onClick = onGuardians, icon = { Text("Guardians") }, label = { Text("Guardians") })
+        NavigationBarItem(selected = selected == "activity", onClick = onActivity, icon = { Text("Activity") }, label = { Text("Activity") })
+        NavigationBarItem(selected = selected == "profile", onClick = onProfile, icon = { Text("Profile") }, label = { Text("Profile") })
     }
 }
 

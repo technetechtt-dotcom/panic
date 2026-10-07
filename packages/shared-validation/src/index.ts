@@ -46,6 +46,7 @@ export const deviceRegistrationSchema = z
     osVersion: z.string().trim().min(1).max(40),
     appVersion: z.string().trim().min(1).max(40),
     publicKey: z.string().regex(/^[A-Za-z0-9+/]+={0,2}$/).min(32).max(512).optional(),
+    fcmToken: z.string().trim().max(512).optional(),
   })
   .strict();
 
@@ -159,8 +160,15 @@ export const guardianSchema = z
     email: z.string().trim().email().max(254).optional(),
     canViewLocation: z.boolean().optional(),
     canViewEvidence: z.boolean().optional(),
+    relationship: z.string().trim().max(40).optional(),
+    priority: z.number().int().min(1).max(20).optional(),
+    notificationMethods: z.string().trim().max(40).optional(),
   })
   .strict();
+
+export const invitationTokenSchema = z.object({ token: z.string().uuid() }).strict();
+
+export const journeyExtendSchema = z.object({ minutes: z.number().int().min(5).max(12 * 60) }).strict();
 
 export const journeySchema = z
   .object({
@@ -279,3 +287,4 @@ export type JourneyInput = z.infer<typeof journeySchema>;
 export type SafetyPinInput = z.infer<typeof safetyPinSchema>;
 export type CancelIncidentInput = z.infer<typeof cancelIncidentSchema>;
 export type EvidenceChunkInput = z.infer<typeof evidenceChunkSchema>;
+export type JourneyExtendInput = z.infer<typeof journeyExtendSchema>;

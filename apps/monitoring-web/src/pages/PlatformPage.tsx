@@ -4,6 +4,10 @@ import { useAuth } from "../auth/AuthContext";
 
 interface PlatformStatus {
   postgres: "up" | "down";
+  sms: string;
+  fcm: string;
+  apns: string;
+  s3: string;
   smsConfigured: boolean;
   fcmConfigured: boolean;
   apnsConfigured: boolean;
@@ -32,10 +36,10 @@ export function PlatformPage() {
         {status.isError ? <p className="mt-4 text-sos">Platform status could not be loaded.</p> : null}
         <section className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           <Tile label="Postgres" value={row ? row.postgres : "—"} />
-          <Tile label="SMS provider" value={flag(row?.smsConfigured)} />
-          <Tile label="FCM" value={flag(row?.fcmConfigured)} />
-          <Tile label="APNs" value={flag(row?.apnsConfigured)} />
-          <Tile label="S3 vault" value={flag(row?.s3Configured)} />
+          <Tile label="SMS provider" value={row?.sms ?? flag(row?.smsConfigured)} />
+          <Tile label="FCM" value={row?.fcm ?? flag(row?.fcmConfigured)} />
+          <Tile label="APNs" value={row?.apns ?? flag(row?.apnsConfigured)} />
+          <Tile label="S3 vault" value={row?.s3 ?? flag(row?.s3Configured)} />
           <Tile label="Local evidence vault" value={row?.vault ?? "—"} />
           <Tile label="HTTP requests" value={row ? String(row.requests) : "—"} />
           <Tile label="Server errors" value={row ? String(row.serverErrors) : "—"} />

@@ -61,6 +61,9 @@ function mapIncident(row: IncidentRow): IncidentRecord {
     acknowledgedById: row.acknowledgedById,
     resolvedAt: row.resolvedAt,
     resolvedById: row.resolvedById,
+    claimedBy: row.claimedBy,
+    claimedAt: row.claimedAt,
+    escalatedToSupervisorAt: row.escalatedToSupervisorAt,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
     userDisplayName: row.user.displayName,
@@ -163,7 +166,12 @@ export class PrismaDeviceStore implements DeviceStore {
   async save(device: DeviceRecord): Promise<void> {
     await this.prisma.device.update({
       where: { id: device.id },
-      data: { publicKey: device.publicKey ?? null, updatedAt: device.updatedAt },
+      data: {
+        publicKey: device.publicKey ?? null,
+        fcmToken: device.fcmToken ?? null,
+        revokedAt: device.revokedAt ?? null,
+        updatedAt: device.updatedAt,
+      },
     });
   }
 }
@@ -178,13 +186,29 @@ function toDeviceRecord(row: {
   osVersion: string;
   appVersion: string;
   publicKey: string | null;
+  fcmToken?: string | null;
+  revokedAt?: Date | null;
   createdAt: Date;
   updatedAt: Date;
 }): DeviceRecord {
   if (row.platform !== "ANDROID") {
     throw new Error("Stored device platform is not ANDROID.");
   }
-  return { ...row, platform: "ANDROID" };
+  return {
+    id: row.id,
+    userId: row.userId,
+    devicePublicId: row.devicePublicId,
+    platform: "ANDROID",
+    manufacturer: row.manufacturer,
+    model: row.model,
+    osVersion: row.osVersion,
+    appVersion: row.appVersion,
+    publicKey: row.publicKey,
+    fcmToken: row.fcmToken ?? null,
+    revokedAt: row.revokedAt ?? null,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+  };
 }
 
 export class PrismaIncidentStore implements IncidentStore {

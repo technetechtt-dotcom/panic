@@ -68,6 +68,7 @@ data class EscalationEntity(
     @PrimaryKey val triggerId: String,
     val localIncidentTriggerId: String,
     val triggerType: String,
+    val stage: String = "EVIDENCE",
     val createdAtEpochMs: Long,
     val sent: Boolean,
 )
@@ -120,6 +121,9 @@ interface LocationDao {
 
     @Query("SELECT * FROM locations WHERE uploaded = 0 ORDER BY recordedAt ASC LIMIT 20")
     suspend fun pending(): List<LocationEntity>
+
+    @Query("SELECT * FROM locations WHERE uploaded = 0 AND incidentServerId = :incidentServerId ORDER BY recordedAt ASC LIMIT 20")
+    suspend fun pendingForIncident(incidentServerId: String): List<LocationEntity>
 
     @Query("UPDATE locations SET uploaded = 1 WHERE clientPointId = :id")
     suspend fun markUploaded(id: String)
@@ -178,7 +182,7 @@ interface EvidenceDao {
 
 @Database(
     entities = [IncidentEntity::class, LocationEntity::class, HeartbeatEntity::class, EscalationEntity::class, EvidenceEntity::class],
-    version = 3,
+    version = 4,
     exportSchema = true,
 )
 abstract class GuardianDatabase : RoomDatabase() {
@@ -237,7 +241,7 @@ object DatabaseModule {
     @Singleton
     fun database(@ApplicationContext context: Context): GuardianDatabase =
         Room.databaseBuilder(context, GuardianDatabase::class.java, "guardian.db")
-            .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
+            .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
             .build()
 }
 
@@ -282,16 +286,22 @@ private val MIGRATION_2_3 = object : Migration(2, 3) {
     }
 }
 
+private val MIGRATION_3_4 = object : Migration(3, 4) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE escalation_outbox ADD COLUMN stage TEXT NOT NULL DEFAULT 'EVIDENCE'")
+    }
+}
+
 class RoomEscalationStore(private val dao: EscalationDao) : za.co.guardian.core.EscalationLocalStore {
     override suspend fun add(item: za.co.guardian.core.LocalEscalation) {
         dao.insert(
-            EscalationEntity(item.triggerId, item.incidentTriggerId, item.triggerType, item.createdAtEpochMs, item.sent),
+            EscalationEntity(item.triggerId, item.incidentTriggerId, item.triggerType, item.stage, item.createdAtEpochMs, item.sent),
         )
     }
 
     override suspend fun pending(): List<za.co.guardian.core.LocalEscalation> {
         return dao.pending().map {
-            za.co.guardian.core.LocalEscalation(it.triggerId, it.localIncidentTriggerId, it.triggerType, it.createdAtEpochMs, it.sent)
+            za.co.guardian.core.LocalEscalation(it.triggerId, it.localIncidentTriggerId, it.triggerType, it.stage, it.createdAtEpochMs, it.sent)
         }
     }
 

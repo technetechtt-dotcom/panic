@@ -8,6 +8,23 @@ jobs:
   backend-dashboard-security:
     name: Backend, dashboard, security
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: guardian
+          POSTGRES_PASSWORD: guardian
+          POSTGRES_DB: guardian
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U guardian -d guardian"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      GUARDIAN_PG_TEST: "1"
+      DATABASE_URL: postgresql://guardian:guardian@localhost:5432/guardian
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -17,6 +34,8 @@ jobs:
           cache-dependency-path: package-lock.json
       - name: Install
         run: npm ci
+      - name: Migrate
+        run: npx prisma migrate deploy --schema services/api/prisma/schema.prisma
       - name: Test API, validation, and dashboard
         run: npm test
       - name: Build
@@ -25,7 +44,7 @@ jobs:
         run: npm audit --omit=dev --audit-level=critical
 
   android:
-    name: Android unit tests
+    name: Android unit tests, lint, debug APK
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -36,6 +55,6 @@ jobs:
       - uses: android-actions/setup-android@v3
       - name: Install Android SDK packages
         run: sdkmanager --install "platforms;android-35" "build-tools;35.0.0"
-      - name: Unit tests
+      - name: Unit tests, lint, and debug APK
         working-directory: apps/android
-        run: chmod +x ./gradlew && ./gradlew :core:test :app:testDebugUnitTest --no-daemon
+        run: chmod +x ./gradlew && ./gradlew :core:test :app:testDebugUnitTest :app:lintDebug :app:assembleDebug --no-daemon

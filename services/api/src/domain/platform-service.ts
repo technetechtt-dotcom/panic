@@ -11,7 +11,7 @@ import { ProtectionService } from "./protection-service";
 import type { Actor, Clock, DeviceStore, IdGenerator, UserStore } from "./ports";
 import type { PasswordHasher } from "./security";
 import { sha256 } from "./security";
-import { sendApns, sendFcm, TwilioSmsProvider } from "./sms";
+import { apnsHealth, fcmHealth, sendApns, sendFcm, smsHealth, TwilioSmsProvider } from "./sms";
 import { requestMetrics } from "../common/http";
 import type { MfaStore } from "./auth-service";
 
@@ -42,28 +42,38 @@ export class PlatformService {
   async notifyIncident(incident: { id: string; userId: string; userDisplayName: string; state: string; isTest: boolean }): Promise<void> {
     if (incident.isTest) return;
     try {
-      const contacts = await this.prisma.trustedContact.findMany({ where: { userId: incident.userId } });
-      const phones = await this.prisma.device.findMany({ where: { userId: incident.userId, fcmToken: { not: null } } });
+      const contacts = await this.prisma.trustedContact.findMany({
+        where: { userId: incident.userId, invitationStatus: { not: "DECLINED" } },
+        orderBy: { priority: "asc" },
+      });
       for (const contact of contacts) {
-        const room = await this.openRoom(incident.id, contact.canViewLocation, contact.canViewEvidence);
+        const methods = (contact.notificationMethods || "PUSH,SMS").split(",").map((item) => item.trim().toUpperCase());
+        const room = await this.openRoom(incident.id, contact.canViewLocation, contact.canViewEvidence, contact.displayName);
         const body = guardianSmsBody({
           name: incident.userDisplayName,
           incidentState: incident.state,
           roomUrl: room.url,
         });
-        const sms = contact.phone
-          ? await this.sms.send({ to: contact.phone, body, incidentId: incident.id })
-          : { delivered: false, simulated: true, reason: "This guardian has no phone number." };
-        await this.record(incident.id, "SMS", contact.phone ?? contact.email ?? contact.displayName, sms.delivered ? "SENT" : "SKIPPED", sms.reason);
+        if (methods.includes("SMS")) {
+          const sms = contact.phone
+            ? await this.sms.send({ to: contact.phone, body, incidentId: incident.id })
+            : { delivered: false, simulated: true, reason: "This guardian has no phone number." };
+          await this.record(incident.id, "SMS", contact.phone ?? contact.email ?? contact.displayName, sms.delivered ? "SENT" : "SKIPPED", sms.reason);
+        }
         await this.record(incident.id, "ROOM", contact.displayName, "SENT", "A private room link was created for this guardian.");
-      }
-      for (const phone of phones) {
-        if (!phone.fcmToken) continue;
-        const apple = phone.platform === "IOS";
-        const push = apple
-          ? await sendApns(phone.fcmToken, "Guardian", `${incident.userDisplayName} needs help.`)
-          : await sendFcm(phone.fcmToken, "Guardian", `${incident.userDisplayName} needs help.`);
-        await this.record(incident.id, apple ? "APNS" : "FCM", "device", push.delivered ? "SENT" : "SKIPPED", push.reason);
+        if (methods.includes("PUSH") && contact.guardianUserId) {
+          const guardianPhones = await this.prisma.device.findMany({
+            where: { userId: contact.guardianUserId, fcmToken: { not: null }, revokedAt: null },
+          });
+          for (const phone of guardianPhones) {
+            if (!phone.fcmToken) continue;
+            const apple = phone.platform === "IOS";
+            const push = apple
+              ? await sendApns(phone.fcmToken, "Guardian", `${incident.userDisplayName} needs help.`)
+              : await sendFcm(phone.fcmToken, "Guardian", `${incident.userDisplayName} needs help.`);
+            await this.record(incident.id, apple ? "APNS" : "FCM", contact.displayName, push.delivered ? "SENT" : "SKIPPED", push.reason);
+          }
+        }
       }
     } catch (error) {
       console.error(JSON.stringify({ level: "error", message: "guardian notify failed", detail: error instanceof Error ? error.message : "unknown" }));
@@ -103,8 +113,24 @@ export class PlatformService {
     return this.prisma.evidenceChunk.findMany({
       where: { incidentId },
       orderBy: { sequence: "asc" },
-      select: { id: true, clientChunkId: true, sequence: true, contentType: true, byteLength: true, sha256: true, storageKey: true },
-    });
+      select: {
+        id: true,
+        clientChunkId: true,
+        sequence: true,
+        contentType: true,
+        byteLength: true,
+        sha256: true,
+        storageKey: true,
+        createdAt: true,
+        updatedAt: true,
+      },
+    }).then((rows) =>
+      rows.map((row) => ({
+        ...row,
+        capturedAt: row.createdAt.toISOString(),
+        uploadedAt: row.updatedAt.toISOString(),
+      })),
+    );
   }
 
   async deliveries(actor: Actor, incidentId: string) {
@@ -132,9 +158,74 @@ export class PlatformService {
     if (row.storageKey) {
       const opened = await this.vault.get(row.storageKey);
       if (!opened) throw new AppError("NOT_FOUND", 404, "The evidence file is not in the vault.");
+      await this.prisma.auditEvent.create({
+        data: {
+          id: this.ids.uuid(),
+          actorId: actor.id,
+          action: "evidence.read",
+          entityType: "EvidenceChunk",
+          entityId: row.id,
+          correlationId: incidentId,
+          requestId: null,
+          metadata: { incidentId, contentType: row.contentType },
+          createdAt: this.clock.now(),
+        },
+      }).catch(() => undefined);
       return { bytes: opened, contentType: row.contentType };
     }
     return { bytes: Buffer.from(row.payload), contentType: row.contentType };
+  }
+
+  async listResponders(actor: Actor) {
+    this.operator(actor);
+    const rows = await this.prisma.user.findMany({
+      where: { role: "RESPONDER" },
+      select: { id: true, displayName: true, email: true },
+      take: 100,
+    });
+    const busy = await this.prisma.responderAssignment.findMany({
+      where: { status: { in: ["ASSIGNED", "RESPONDING"] } },
+      select: { responderId: true, incidentId: true },
+    });
+    const busyIds = new Set(busy.map((row) => row.responderId));
+    return rows.map((row) => ({
+      id: row.id,
+      displayName: row.displayName,
+      email: row.email,
+      status: busyIds.has(row.id) ? "BUSY" : "AVAILABLE",
+    }));
+  }
+
+  async claimIncident(actor: Actor, incidentId: string, requestId: string | null) {
+    this.operator(actor);
+    const current = await this.prisma.incident.findUnique({ where: { id: incidentId } });
+    if (!current) throw new AppError("NOT_FOUND", 404, "That incident was not found.");
+    if (current.claimedBy && current.claimedBy !== actor.id) {
+      throw new AppError("CONFLICT", 409, "Another operator already claimed this incident.");
+    }
+    const now = this.clock.now();
+    await this.prisma.incident.update({
+      where: { id: incidentId },
+      data: { claimedBy: actor.id, claimedAt: current.claimedAt ?? now, updatedAt: now },
+    });
+    if (current.state === "SOS" || current.state === "CONCERN" || current.state === "HIGH_RISK") {
+      return this.incidents.acknowledge(actor, incidentId, "Operator claimed this incident.", requestId);
+    }
+    return this.incidents.get(actor, incidentId);
+  }
+
+  async sweepUnackedSos(): Promise<void> {
+    const cutoff = new Date(this.clock.now().getTime() - 30_000);
+    await this.prisma.incident.updateMany({
+      where: {
+        state: "SOS",
+        isTest: false,
+        acknowledgedAt: null,
+        escalatedToSupervisorAt: null,
+        createdAt: { lte: cutoff },
+      },
+      data: { escalatedToSupervisorAt: this.clock.now() },
+    });
   }
 
   async assign(actor: Actor, incidentId: string, responderId: string, requestId: string | null) {
@@ -282,6 +373,7 @@ export class PlatformService {
           select: { sequence: true, contentType: true, byteLength: true },
         })
       : [];
+    const locationAt = row.incident.lastPositionAt ?? row.incident.updatedAt;
     return {
       displayName: row.incident.user.displayName,
       state: row.incident.state,
@@ -289,12 +381,26 @@ export class PlatformService {
       location: row.canViewLocation
         ? { latitude: row.incident.lastLatitude, longitude: row.incident.lastLongitude, accuracy: row.incident.lastAccuracy }
         : null,
+      lastConfirmedAt: locationAt.toISOString(),
+      serverTime: this.clock.now().toISOString(),
+      acknowledgedAt: row.acknowledgedAt?.toISOString() ?? null,
       evidence,
-      notice: "This room shows only what the person allowed this guardian to see.",
+      notice: "This room shows the last confirmed device report, not a live track unless the time is a few seconds old.",
     };
   }
 
-  private async openRoom(incidentId: string, canViewLocation: boolean, canViewEvidence: boolean): Promise<{ url: string }> {
+  async acknowledgeRoom(token: string) {
+    const row = await this.prisma.incidentRoom.findUnique({ where: { tokenHash: sha256(token) } });
+    if (!row || row.expiresAt.getTime() < this.clock.now().getTime()) {
+      throw new AppError("NOT_FOUND", 404, "This room is closed.");
+    }
+    const now = this.clock.now();
+    await this.prisma.incidentRoom.update({ where: { id: row.id }, data: { acknowledgedAt: now } });
+    await this.record(row.incidentId, "ROOM_ACK", row.guardianName ?? "guardian", "SENT", "A guardian opened and acknowledged the room.");
+    return { acknowledgedAt: now.toISOString() };
+  }
+
+  private async openRoom(incidentId: string, canViewLocation: boolean, canViewEvidence: boolean, guardianName?: string): Promise<{ url: string }> {
     const token = randomBytes(32).toString("base64url");
     const now = this.clock.now();
     await this.prisma.incidentRoom.create({
@@ -302,6 +408,7 @@ export class PlatformService {
         id: this.ids.uuid(),
         incidentId,
         tokenHash: sha256(token),
+        guardianName: guardianName ?? null,
         canViewLocation,
         canViewEvidence,
         expiresAt: new Date(now.getTime() + 24 * 60 * 60 * 1000),
@@ -355,13 +462,17 @@ export class PlatformService {
     }
     return {
       postgres,
-      smsConfigured: Boolean(process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN && process.env.TWILIO_FROM),
-      fcmConfigured: Boolean(process.env.FCM_SERVER_KEY),
-      apnsConfigured: Boolean(process.env.APNS_KEY_ID && process.env.APNS_TEAM_ID),
-      s3Configured: s3Configured(),
-      vault: "local-aes-gcm",
+      sms: smsHealth(),
+      fcm: fcmHealth(),
+      apns: apnsHealth(),
+      s3: s3Configured() ? "CONFIGURED" : "NOT_CONFIGURED",
+      vault: process.env.EVIDENCE_VAULT_KEY ? "independent-aes-gcm" : "dev-jwt-fallback",
       requests: requestMetrics.total,
       serverErrors: requestMetrics.serverErrors,
+      smsConfigured: smsHealth() === "CONFIGURED",
+      fcmConfigured: fcmHealth() === "CONFIGURED",
+      apnsConfigured: apnsHealth() === "CONFIGURED",
+      s3Configured: s3Configured(),
     };
   }
 
@@ -397,9 +508,22 @@ export class PrismaMfaStore implements MfaStore {
   async secret(userId: string): Promise<string | null> {
     try {
       const row = await this.prisma.operatorMfa.findUnique({ where: { userId } });
-      return row?.enabled ? row.secret : null;
+      return row?.secret ?? null;
     } catch {
       return null;
     }
+  }
+
+  async prepareEnrollment(userId: string, secret: string): Promise<void> {
+    const now = new Date();
+    await this.prisma.operatorMfa.upsert({
+      where: { userId },
+      create: { userId, secret, enabled: false, createdAt: now, updatedAt: now },
+      update: { secret, enabled: false, updatedAt: now },
+    });
+  }
+
+  async enable(userId: string): Promise<void> {
+    await this.prisma.operatorMfa.updateMany({ where: { userId }, data: { enabled: true, updatedAt: new Date() } });
   }
 }

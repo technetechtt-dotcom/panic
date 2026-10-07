@@ -102,6 +102,22 @@ class EmergencyMonitoringService : android.app.Service() {
         super.onDestroy()
     }
 
+    override fun onTimeout(startId: Int, fgsType: Int) {
+        scope.launch {
+            try {
+                val request = androidx.work.OneTimeWorkRequestBuilder<IncidentFlushWorker>()
+                    .setConstraints(androidx.work.Constraints.Builder().setRequiredNetworkType(androidx.work.NetworkType.CONNECTED).build())
+                    .build()
+                androidx.work.WorkManager.getInstance(applicationContext).enqueueUniqueWork(
+                    "guardian-emergency-fgs-timeout",
+                    androidx.work.ExistingWorkPolicy.REPLACE,
+                    request,
+                )
+            } catch (_: Exception) {}
+            stopSelf(startId)
+        }
+    }
+
     private fun startInForeground(notification: Notification, location: Boolean, microphone: Boolean): Boolean {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
             startForeground(NOTIFICATION_ID, notification)
@@ -114,9 +130,13 @@ class EmergencyMonitoringService : android.app.Service() {
         for (type in attempts) {
             try {
                 startForeground(NOTIFICATION_ID, notification, type)
+                if (type == ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC && location) {
+                    shareLocation = false
+                }
                 return true
             } catch (_: SecurityException) {
                 // This Android version refused the sensor type. Try data sync alone.
+                shareLocation = false
             } catch (_: IllegalStateException) {
                 // The process is not allowed to enter the foreground.
             }
@@ -141,7 +161,9 @@ class EmergencyMonitoringService : android.app.Service() {
                 manager.requestLocationUpdates(LocationManager.NETWORK_PROVIDER, intervalMs, 0f, created, Looper.getMainLooper())
             }
         } catch (_: SecurityException) {
-            stopSelf()
+            shareLocation = false
+            listener?.let { manager.removeUpdates(it) }
+            listener = null
         }
     }
 
@@ -284,7 +306,7 @@ class EmergencyUploader @Inject constructor(
     }
 
     private suspend fun uploadLocations(incidentId: String) {
-        val pending = database.locations().pending().filter { it.incidentServerId == incidentId }
+        val pending = database.locations().pendingForIncident(incidentId)
         if (pending.isEmpty()) return
         try {
             api.locations(

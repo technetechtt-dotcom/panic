@@ -268,6 +268,8 @@ test("a heartbeat restores contact and a duplicate heartbeat is ignored", async 
 
 test("guardians cannot read the monitoring list and responders only get assigned incidents", () => {
   assert.equal(hasPermission("GUARDIAN", Permission.IncidentReadActive), false);
+  assert.equal(hasPermission("GUARDIAN", Permission.UserReadSelf), true);
+  assert.equal(hasPermission("GUARDIAN", Permission.DeviceRegisterOwn), true);
   assert.equal(hasPermission("RESPONDER", Permission.IncidentReadOwn), false);
   assert.equal(hasPermission("RESPONDER", Permission.IncidentReadAssigned), true);
   assert.equal(hasPermission("USER", Permission.IncidentAcknowledge), false);

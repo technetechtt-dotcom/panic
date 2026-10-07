@@ -47,7 +47,7 @@ export class AuthController {
     this.enforceLimit(`login:${request.ip}`);
     const input = parseBody(loginSchema, body);
     const session = await this.auth.login(input);
-    if ("mfaRequired" in session) return { data: session };
+    if ("mfaRequired" in session || "mfaEnrollmentRequired" in session) return { data: session };
     response.cookie(REFRESH_COOKIE, session.refreshToken, cookieOptions(this.config));
     return { data: session };
   }

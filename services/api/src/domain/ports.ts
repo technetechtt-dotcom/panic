@@ -73,6 +73,8 @@ export interface DeviceRecord {
   osVersion: string;
   appVersion: string;
   publicKey?: string | null;
+  fcmToken?: string | null;
+  revokedAt?: Date | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -114,6 +116,9 @@ export interface IncidentRecord {
   acknowledgedById: string | null;
   resolvedAt: Date | null;
   resolvedById: string | null;
+  claimedBy?: string | null;
+  claimedAt?: Date | null;
+  escalatedToSupervisorAt?: Date | null;
   createdAt: Date;
   updatedAt: Date;
   userDisplayName: string;

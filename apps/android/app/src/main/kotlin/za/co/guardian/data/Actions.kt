@@ -75,6 +75,7 @@ class DefaultSosActions @Inject constructor(
         val userId = tokens.userId() ?: return SosOutcome.NeedSignIn
         val deviceId = tokens.deviceServerId() ?: return SosOutcome.NeedDevice
         val (fresh, lastKnown) = signals.freshAndLastKnown()
+        val stage = settings.advanceTrigger()
         val incident = repository.trigger(
             type,
             SosContext(
@@ -86,10 +87,10 @@ class DefaultSosActions @Inject constructor(
                 deviceState = signals.deviceState(),
                 protectionStatus = health.current().level.name,
             ),
+            stage,
         )
         settings.setIncidentActive(true)
         if (!settings.quietIncident()) settings.quietIncident(false)
-        val stage = settings.advanceTrigger()
         val micGranted = androidx.core.content.ContextCompat.checkSelfPermission(
             context,
             android.Manifest.permission.RECORD_AUDIO,
@@ -115,31 +116,8 @@ class DefaultSosActions @Inject constructor(
     }
 
     private fun sendGuardianSms(testIncident: Boolean) {
-        if (testIncident) return
-        val phone = settings.guardianPhone()
-        if (phone.isBlank()) return
-        val granted = androidx.core.content.ContextCompat.checkSelfPermission(
-            context,
-            android.Manifest.permission.SEND_SMS,
-        ) == android.content.pm.PackageManager.PERMISSION_GRANTED
-        if (!granted) return
-        try {
-            val sms = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
-                context.getSystemService(android.telephony.SmsManager::class.java)
-            } else {
-                @Suppress("DEPRECATION")
-                android.telephony.SmsManager.getDefault()
-            }
-            sms?.sendTextMessage(
-                phone,
-                null,
-                "Guardian: I need help. This text was sent from my phone.",
-                null,
-                null,
-            )
-        } catch (_: Exception) {
-            // A missing SIM or a carrier rejection must not block the SOS that is already saved.
-        }
+        // Guardian backend handles SMS transmission to verified trusted contacts via the Twilio/SMS provider,
+        // avoiding Play Store restricted SEND_SMS permissions on device.
     }
 }
 
@@ -260,6 +238,8 @@ class AuthRepository @Inject constructor(
     private val api: GuardianApi,
     private val tokens: TokenStore,
     private val signer: DeviceSigner,
+    private val settings: SettingsStore,
+    @ApplicationContext private val context: Context,
 ) {
     suspend fun register(email: String, password: String, displayName: String) {
         val session = api.register(RegisterBody(email.trim(), password, displayName.trim(), true)).data
@@ -285,6 +265,7 @@ class AuthRepository @Inject constructor(
                 osVersion = android.os.Build.VERSION.RELEASE ?: "unknown",
                 appVersion = za.co.guardian.BuildConfig.VERSION_NAME,
                 publicKey = signer.publicKeySpki(),
+                fcmToken = tokens.fcmToken(),
             ),
         ).data
         tokens.saveDevice(device.id)
@@ -302,6 +283,11 @@ class AuthRepository @Inject constructor(
             } catch (_: Exception) {
                 // Local sign-out still proceeds.
             }
+        }
+        context.stopService(Intent(context, za.co.guardian.service.SafeWordService::class.java))
+        context.stopService(Intent(context, za.co.guardian.service.FallWatchService::class.java))
+        if (!settings.incidentActive()) {
+            context.stopService(Intent(context, za.co.guardian.service.EmergencyMonitoringService::class.java))
         }
         tokens.clear()
     }
@@ -325,15 +311,53 @@ class ProtectionActions @Inject constructor(
     private val database: GuardianDatabase,
     private val settings: SettingsStore,
 ) {
-    suspend fun addGuardian(name: String, phone: String = ""): String {
+    suspend fun addGuardian(name: String, phone: String = "", email: String = ""): String {
         if (name.isBlank()) return "Enter a guardian's name."
         val saved = api.addGuardian(
-            GuardianBody(name.trim(), canViewLocation = true, canViewEvidence = false, phone = phone.trim().ifBlank { null }),
+            GuardianBody(
+                name.trim(),
+                canViewLocation = true,
+                canViewEvidence = false,
+                phone = phone.trim().ifBlank { null },
+                email = email.trim().ifBlank { null },
+            ),
         ).data
         settings.guardianReady(true)
         if (phone.isNotBlank()) settings.setGuardianPhone(phone)
-        val delivery = if (phone.isBlank()) "No phone number was saved, so SMS cannot be sent for this guardian." else "The hub texts this number when SMS is configured. This phone can also text it after you allow SMS."
-        return "Saved ${saved.displayName}. $delivery"
+        val invite = if (saved.invitationStatus == "PENDING") {
+            "Invitation is pending until they accept on their Guardian account. Token ${saved.invitationToken ?: "was not returned"}."
+        } else {
+            "Saved without an email invite, so this contact is marked accepted on this account only."
+        }
+        return "Saved ${saved.displayName}. $invite"
+    }
+
+    suspend fun listGuardians(): List<GuardianWire> = api.guardians().data
+
+    suspend fun acceptInvitation(token: String): String {
+        if (token.isBlank()) return "Paste the invitation token from the protected person."
+        val saved = api.acceptInvitation(token.trim()).data
+        return "You are now a guardian for this circle (${saved.displayName})."
+    }
+
+    suspend fun listDevices(): List<DeviceListItem> = api.devices().data
+
+    suspend fun revokeDevice(id: String): String {
+        api.revokeDevice(id)
+        return "That device can no longer receive push or send SOS until it signs in again."
+    }
+
+    suspend fun extendJourney(minutes: Int): String {
+        val id = settings.journeyId() ?: return "Start a journey first."
+        api.extendJourney(id, JourneyExtendBody(minutes.coerceIn(5, 12 * 60)))
+        return "Arrival time extended by $minutes minutes."
+    }
+
+    suspend fun completeJourney(): String {
+        val id = settings.journeyId() ?: return "Start a journey first."
+        api.completeJourney(id)
+        settings.setJourneyId(null)
+        return "Journey marked complete."
     }
 
     suspend fun startJourney(label: String, minutes: Int, mode: String): String {
@@ -351,6 +375,7 @@ class ProtectionActions @Inject constructor(
             .format(arrival)
         val journey = api.startJourney(JourneyBody(label.trim(), stamp, interval, mode)).data
         settings.setProtectionMode(mode)
+        settings.setJourneyId(journey.id)
         return "${mode.lowercase().replace('_', ' ')} watch is ${journey.status.lowercase()}. A missed check-in raises concern on the server. It does not replace the SOS button."
     }
 

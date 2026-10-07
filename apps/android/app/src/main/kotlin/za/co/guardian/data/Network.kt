@@ -14,6 +14,7 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import retrofit2.Retrofit
 import retrofit2.http.Body
+import retrofit2.http.DELETE
 import retrofit2.http.GET
 import retrofit2.http.POST
 import retrofit2.http.Path
@@ -66,6 +67,7 @@ data class DeviceBody(
     val osVersion: String,
     val appVersion: String,
     @OptIn(ExperimentalSerializationApi::class) @EncodeDefault(EncodeDefault.Mode.NEVER) val publicKey: String? = null,
+    @OptIn(ExperimentalSerializationApi::class) @EncodeDefault(EncodeDefault.Mode.NEVER) val fcmToken: String? = null,
 )
 
 @Serializable
@@ -172,6 +174,12 @@ interface GuardianApi {
     @POST("devices")
     suspend fun registerDevice(@Body body: DeviceBody): DeviceEnvelope
 
+    @GET("devices")
+    suspend fun devices(): DeviceListEnvelope
+
+    @DELETE("devices/{id}")
+    suspend fun revokeDevice(@Path("id") id: String)
+
     @POST("devices/emergency-credential")
     suspend fun emergencyCredential(@Body body: EmergencyCredentialBody): EmergencyCredentialEnvelope
 
@@ -199,8 +207,20 @@ interface GuardianApi {
     @POST("guardians")
     suspend fun addGuardian(@Body body: GuardianBody): GuardianEnvelope
 
+    @GET("guardians")
+    suspend fun guardians(): GuardianListEnvelope
+
+    @POST("guardians/invitations/{token}/accept")
+    suspend fun acceptInvitation(@Path("token") token: String): GuardianEnvelope
+
     @POST("journeys")
     suspend fun startJourney(@Body body: JourneyBody): JourneyEnvelope
+
+    @POST("journeys/{id}/extend")
+    suspend fun extendJourney(@Path("id") id: String, @Body body: JourneyExtendBody): JourneyEnvelope
+
+    @POST("journeys/{id}/complete")
+    suspend fun completeJourney(@Path("id") id: String): JourneyEnvelope
 
     @POST("users/me/profile")
     suspend fun saveProfile(@Body body: ProfileBody)
@@ -228,13 +248,42 @@ data class GuardianBody(
     val canViewEvidence: Boolean = false,
     @OptIn(kotlinx.serialization.ExperimentalSerializationApi::class)
     @EncodeDefault(EncodeDefault.Mode.NEVER) val phone: String? = null,
+    @OptIn(kotlinx.serialization.ExperimentalSerializationApi::class)
+    @EncodeDefault(EncodeDefault.Mode.NEVER) val email: String? = null,
+    @OptIn(kotlinx.serialization.ExperimentalSerializationApi::class)
+    @EncodeDefault(EncodeDefault.Mode.NEVER) val relationship: String? = null,
 )
 
 @Serializable
-data class GuardianWire(val id: String, val displayName: String)
+data class GuardianWire(
+    val id: String,
+    val displayName: String,
+    val invitationStatus: String = "ACCEPTED",
+    val invitationToken: String? = null,
+    val phone: String? = null,
+    val email: String? = null,
+)
 
 @Serializable
 data class GuardianEnvelope(val data: GuardianWire)
+
+@Serializable
+data class GuardianListEnvelope(val data: List<GuardianWire>)
+
+@Serializable
+data class DeviceListItem(
+    val id: String,
+    val model: String? = null,
+    val osVersion: String = "",
+    val revokedAt: String? = null,
+    val fcmToken: String? = null,
+)
+
+@Serializable
+data class DeviceListEnvelope(val data: List<DeviceListItem>)
+
+@Serializable
+data class JourneyExtendBody(val minutes: Int)
 
 @Serializable
 data class JourneyBody(
@@ -288,13 +337,13 @@ class RetrofitIncidentApi constructor(
     private val tokens: TokenStore,
     private val settings: SettingsStore,
 ) : IncidentRemoteApi {
-    override suspend fun create(incident: LocalIncident): RemoteCreateResult = post(incident, incident.triggerId, incident.triggerType.name)
+    override suspend fun create(incident: LocalIncident, stage: String): RemoteCreateResult = post(incident, incident.triggerId, incident.triggerType.name, stage)
 
-    override suspend fun escalate(incident: LocalIncident, triggerId: String, type: za.co.guardian.core.TriggerType): RemoteCreateResult {
-        return post(incident, triggerId, type.name)
+    override suspend fun escalate(incident: LocalIncident, triggerId: String, type: za.co.guardian.core.TriggerType, stage: String): RemoteCreateResult {
+        return post(incident, triggerId, type.name, stage)
     }
 
-    private suspend fun post(incident: LocalIncident, triggerId: String, type: String): RemoteCreateResult {
+    private suspend fun post(incident: LocalIncident, triggerId: String, type: String, stage: String): RemoteCreateResult {
         val response = api.createIncident(
             CreateIncidentBody(
                 triggerId = triggerId,
@@ -304,7 +353,7 @@ class RetrofitIncidentApi constructor(
                 isTest = incident.isTest,
                 distressCapsule = incident.capsule,
                 deviceProof = proof(triggerId),
-                metadata = mapOf("stage" to settings.triggerStage()),
+                metadata = mapOf("stage" to stage),
             ),
         )
         return RemoteCreateResult(response.data.id, response.replayed, response.escalated)

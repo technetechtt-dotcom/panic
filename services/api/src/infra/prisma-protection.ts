@@ -20,23 +20,73 @@ export class PrismaGuardianStore implements GuardianStore {
 
   async list(userId: string): Promise<TrustedContactRecord[]> {
     const rows = await this.prisma.trustedContact.findMany({ where: { userId }, orderBy: { createdAt: "asc" } });
-    return rows.map((row) => ({
-      id: row.id,
-      userId: row.userId,
-      displayName: row.displayName,
-      phone: row.phone,
-      email: row.email,
-      canViewLocation: row.canViewLocation,
-      canViewEvidence: row.canViewEvidence,
-      canCancelIncident: row.canCancelIncident,
-      createdAt: row.createdAt,
-    }));
+    return rows.map(toGuardian);
   }
 
   async remove(id: string, userId: string): Promise<boolean> {
     const result = await this.prisma.trustedContact.deleteMany({ where: { id, userId } });
     return result.count > 0;
   }
+
+  async findByInvitationToken(token: string): Promise<TrustedContactRecord | null> {
+    const row = await this.prisma.trustedContact.findUnique({ where: { invitationToken: token } });
+    return row ? toGuardian(row) : null;
+  }
+
+  async save(contact: TrustedContactRecord): Promise<void> {
+    await this.prisma.trustedContact.update({
+      where: { id: contact.id },
+      data: {
+        displayName: contact.displayName,
+        phone: contact.phone,
+        email: contact.email,
+        canViewLocation: contact.canViewLocation,
+        canViewEvidence: contact.canViewEvidence,
+        relationship: contact.relationship ?? "FRIEND",
+        priority: contact.priority ?? 1,
+        notificationMethods: contact.notificationMethods ?? "PUSH,SMS",
+        guardianUserId: contact.guardianUserId ?? null,
+        invitationStatus: contact.invitationStatus ?? "ACCEPTED",
+        invitationToken: contact.invitationToken ?? null,
+      },
+    });
+  }
+}
+
+function toGuardian(row: {
+  id: string;
+  userId: string;
+  displayName: string;
+  phone: string | null;
+  email: string | null;
+  canViewLocation: boolean;
+  canViewEvidence: boolean;
+  canCancelIncident: boolean;
+  relationship: string;
+  priority: number;
+  notificationMethods: string;
+  guardianUserId: string | null;
+  invitationStatus: string;
+  invitationToken: string | null;
+  createdAt: Date;
+}): TrustedContactRecord {
+  return {
+    id: row.id,
+    userId: row.userId,
+    displayName: row.displayName,
+    phone: row.phone,
+    email: row.email,
+    canViewLocation: row.canViewLocation,
+    canViewEvidence: row.canViewEvidence,
+    canCancelIncident: row.canCancelIncident,
+    relationship: row.relationship,
+    priority: row.priority,
+    notificationMethods: row.notificationMethods,
+    guardianUserId: row.guardianUserId,
+    invitationStatus: row.invitationStatus,
+    invitationToken: row.invitationToken,
+    createdAt: row.createdAt,
+  };
 }
 
 export class PrismaJourneyStore implements JourneyStore {
@@ -55,7 +105,12 @@ export class PrismaJourneyStore implements JourneyStore {
   async save(journey: JourneyRecord): Promise<void> {
     await this.prisma.protectionSession.update({
       where: { id: journey.id },
-      data: { lastCheckInAt: journey.lastCheckInAt, status: journey.status, updatedAt: new Date() },
+      data: {
+        lastCheckInAt: journey.lastCheckInAt,
+        status: journey.status,
+        expectedArrivalAt: journey.expectedArrivalAt,
+        updatedAt: new Date(),
+      },
     });
   }
 

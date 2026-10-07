@@ -28,7 +28,7 @@ export const ROLE_PERMISSIONS: Record<Role, readonly PermissionName[]> = {
     Permission.ProtectionManageOwn,
     Permission.UserReadSelf,
   ],
-  GUARDIAN: [],
+  GUARDIAN: [Permission.UserReadSelf, Permission.DeviceRegisterOwn],
   MONITOR_OPERATOR: [
     Permission.IncidentReadActive,
     Permission.IncidentAcknowledge,

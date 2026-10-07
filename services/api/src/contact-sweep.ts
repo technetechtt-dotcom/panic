@@ -2,6 +2,7 @@ import { Inject, Injectable, OnModuleDestroy, OnModuleInit } from "@nestjs/commo
 import type { AppConfig } from "./config";
 import { APP_CONFIG } from "./common/tokens";
 import { IncidentService } from "./domain/incident-service";
+import { PlatformService } from "./domain/platform-service";
 import { ProtectionService } from "./domain/protection-service";
 
 @Injectable()
@@ -11,6 +12,7 @@ export class ContactSweep implements OnModuleInit, OnModuleDestroy {
   constructor(
     @Inject(IncidentService) private readonly incidents: IncidentService,
     @Inject(ProtectionService) private readonly protection: ProtectionService,
+    @Inject(PlatformService) private readonly platform: PlatformService,
     @Inject(APP_CONFIG) private readonly config: AppConfig,
   ) {}
 
@@ -22,6 +24,9 @@ export class ContactSweep implements OnModuleInit, OnModuleDestroy {
       });
       void this.protection.sweepJourneys().catch((error: unknown) => {
         console.error(JSON.stringify({ level: "error", message: "journey sweep failed", detail: String(error) }));
+      });
+      void this.platform.sweepUnackedSos().catch((error: unknown) => {
+        console.error(JSON.stringify({ level: "error", message: "unacked SOS sweep failed", detail: String(error) }));
       });
     }, 15_000);
     this.timer.unref();

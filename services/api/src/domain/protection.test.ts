@@ -46,14 +46,20 @@ test("guardians stay least privilege and a missed journey does not create an SOS
     memory.clock,
   );
   const actor = { id: randomUUID(), role: "USER" as const, displayName: "Alex" };
-  const contact = await protection.addGuardian(actor, { displayName: "Sam", canViewLocation: false, canViewEvidence: false }, null);
+  const contact = await protection.addGuardian(actor, { displayName: "Sam", email: "sam@example.com", canViewLocation: false, canViewEvidence: false }, null);
   assert.equal(contact.canCancelIncident, false);
   assert.equal(contact.canViewLocation, false);
+  assert.equal(contact.invitationStatus, "PENDING");
+  const guardian = { id: randomUUID(), role: "GUARDIAN" as const, displayName: "Sam" };
+  const accepted = await protection.acceptInvitation(guardian, contact.invitationToken!);
+  assert.equal(accepted.invitationStatus, "ACCEPTED");
+  assert.equal(accepted.guardianUserId, guardian.id);
   const journey = await protection.startJourney(actor, {
     destinationLabel: "Home",
     expectedArrivalAt: new Date(memory.clock.now().getTime() - 1000).toISOString(),
     checkInIntervalSeconds: 60,
   });
+  const originalArrival = journey.expectedArrivalAt.getTime();
   memory.clock.current = new Date(memory.clock.now().getTime() + 120_000);
   const raised = await protection.sweepJourneys();
   assert.equal(raised, 1);
@@ -62,6 +68,8 @@ test("guardians stay least privilege and a missed journey does not create an SOS
   assert.equal(sms.recorded.length, 0);
   const second = await protection.sweepJourneys();
   assert.equal(second, 0);
+  const extended = await protection.extendJourney(actor, journey.id, 20);
+  assert.equal(extended.expectedArrivalAt.getTime(), originalArrival + 20 * 60_000);
 });
 
 test("duress keeps the incident open while a cancel pin resolves it, and evidence checks the hash", async () => {
@@ -153,6 +161,13 @@ class MemoryGuardians implements GuardianStore {
     const next = this.rows.filter((row) => !(row.id === id && row.userId === userId));
     this.rows.splice(0, this.rows.length, ...next);
     return next.length !== before;
+  }
+  async findByInvitationToken(token: string) {
+    return this.rows.find((row) => row.invitationToken === token) ?? null;
+  }
+  async save(contact: TrustedContactRecord) {
+    const index = this.rows.findIndex((row) => row.id === contact.id);
+    if (index >= 0) this.rows[index] = contact;
   }
 }
 

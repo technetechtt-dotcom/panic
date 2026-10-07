@@ -36,6 +36,9 @@ export interface Incident {
   createdAt: string;
   acknowledgedAt: string | null;
   resolvedAt: string | null;
+  claimedBy: string | null;
+  claimedAt: string | null;
+  escalatedToSupervisorAt: string | null;
   distressCapsule: {
     batteryLevel: number | null;
     networkType: string;

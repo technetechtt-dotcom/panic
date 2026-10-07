@@ -7,15 +7,19 @@ import { App } from "../App";
 import { LoginPage } from "../pages/LoginPage";
 import { IncidentsPage } from "../pages/IncidentsPage";
 
-vi.mock("../auth/AuthContext", () => ({
-  useAuth: () => ({
-    session: { accessToken: "token", user: { id: "1", email: "op@example.com", displayName: "Op", role: "MONITOR_OPERATOR" } },
-    restoring: false,
-    login: vi.fn(),
-    completeMfa: vi.fn(),
-    logout: vi.fn(),
-  }),
-}));
+vi.mock("../auth/AuthContext", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../auth/AuthContext")>();
+  return {
+    ...actual,
+    useAuth: () => ({
+      session: { accessToken: "token", user: { id: "1", email: "op@example.com", displayName: "Op", role: "MONITOR_OPERATOR" } },
+      restoring: false,
+      login: vi.fn(),
+      completeMfa: vi.fn(),
+      logout: vi.fn(),
+    }),
+  };
+});
 
 vi.mock("../api/socket", () => ({
   useMonitorSocket: () => undefined,

@@ -17,14 +17,27 @@ android {
         targetSdk = 35
         versionCode = 1
         versionName = "0.1.0"
-        val api = providers.gradleProperty("apiBaseUrl").get()
-        buildConfigField("String", "API_BASE_URL", "\"$api\"")
     }
 
     buildTypes {
+        debug {
+            val api = providers.gradleProperty("apiBaseUrl").getOrElse("http://127.0.0.1:3000/api/v1/")
+            buildConfigField("String", "API_BASE_URL", "\"$api\"")
+        }
+        create("staging") {
+            initWith(getByName("debug"))
+            val api = providers.gradleProperty("stagingApiBaseUrl").getOrElse("https://staging.guardian.local/api/v1/")
+            buildConfigField("String", "API_BASE_URL", "\"$api\"")
+            matchingFallbacks += listOf("debug")
+        }
         release {
             isMinifyEnabled = false
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            val releaseApi = providers.gradleProperty("releaseApiBaseUrl").getOrElse("https://api.guardian.local/api/v1/")
+            if (!releaseApi.startsWith("https://")) {
+                throw GradleException("Production release builds require an HTTPS API URL. Found: $releaseApi")
+            }
+            buildConfigField("String", "API_BASE_URL", "\"$releaseApi\"")
         }
     }
 
@@ -74,10 +87,15 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
     implementation("androidx.security:security-crypto:1.0.0")
     implementation("androidx.work:work-runtime-ktx:2.10.0")
+    implementation("com.google.firebase:firebase-messaging:24.1.0")
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.9.0")
 }
 
 ksp {
     arg("room.schemaLocation", "$projectDir/schemas")
+}
+
+if (file("google-services.json").exists()) {
+    apply(plugin = "com.google.gms.google-services")
 }

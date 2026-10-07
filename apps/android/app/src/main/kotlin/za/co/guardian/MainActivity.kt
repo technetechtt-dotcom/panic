@@ -17,11 +17,14 @@ import za.co.guardian.data.EmergencyServiceController
 import za.co.guardian.data.PhoneSignals
 import za.co.guardian.data.SettingsStore
 import za.co.guardian.data.TokenStore
+import za.co.guardian.ui.ActiveIncidentScreen
 import za.co.guardian.ui.GuardianTheme
+import za.co.guardian.ui.GuardiansScreen
 import za.co.guardian.ui.OnboardingScreen
 import za.co.guardian.ui.HistoryScreen
 import za.co.guardian.ui.HomeScreen
 import za.co.guardian.ui.LoginScreen
+import za.co.guardian.ui.ProfileScreen
 import za.co.guardian.ui.RegisterScreen
 import za.co.guardian.ui.SettingsScreen
 import za.co.guardian.ui.WelcomeScreen
@@ -69,26 +72,61 @@ class MainActivity : ComponentActivity() {
                     }
                     composable("home") {
                         HomeScreen(
-                            onHistory = { nav.navigate("history") },
-                            onSettings = { nav.navigate("settings") },
+                            onHistory = { nav.navigate("activity") },
+                            onSettings = { nav.navigate("protect") },
+                            onProtect = { nav.navigate("protect") },
+                            onGuardians = { nav.navigate("guardians") },
+                            onProfile = { nav.navigate("profile") },
+                            onActiveIncident = { nav.navigate("active") },
                             onAllowLocation = { locationPermission.launch(Manifest.permission.ACCESS_FINE_LOCATION) },
                             onAllowNotifications = {
                                 if (Build.VERSION.SDK_INT >= 33) notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
                             },
                         )
                     }
-                    composable("history") {
-                        HistoryScreen(onHome = { nav.popBackStack("home", false) }, onSettings = { nav.navigate("settings") })
+                    composable("activity") {
+                        HistoryScreen(
+                            onHome = { nav.popBackStack("home", false) },
+                            onSettings = { nav.navigate("protect") },
+                            onProtect = { nav.navigate("protect") },
+                            onGuardians = { nav.navigate("guardians") },
+                            onProfile = { nav.navigate("profile") },
+                        )
                     }
-                    composable("settings") {
+                    composable("protect") {
                         SettingsScreen(
                             onHome = { nav.popBackStack("home", false) },
-                            onHistory = { nav.navigate("history") },
+                            onHistory = { nav.navigate("activity") },
+                            onGuardians = { nav.navigate("guardians") },
+                            onProfile = { nav.navigate("profile") },
                             onSignedOut = {
                                 signedIn = false
                                 nav.navigate("welcome") { popUpTo(0) { inclusive = true } }
                             },
                         )
+                    }
+                    composable("guardians") {
+                        GuardiansScreen(
+                            onHome = { nav.popBackStack("home", false) },
+                            onProtect = { nav.navigate("protect") },
+                            onActivity = { nav.navigate("activity") },
+                            onProfile = { nav.navigate("profile") },
+                        )
+                    }
+                    composable("profile") {
+                        ProfileScreen(
+                            onHome = { nav.popBackStack("home", false) },
+                            onProtect = { nav.navigate("protect") },
+                            onGuardians = { nav.navigate("guardians") },
+                            onActivity = { nav.navigate("activity") },
+                            onSignedOut = {
+                                signedIn = false
+                                nav.navigate("welcome") { popUpTo(0) { inclusive = true } }
+                            },
+                        )
+                    }
+                    composable("active") {
+                        ActiveIncidentScreen(onBack = { nav.popBackStack() })
                     }
                 }
             }

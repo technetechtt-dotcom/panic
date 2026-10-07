@@ -17,6 +17,12 @@ export interface TrustedContactRecord {
   canViewLocation: boolean;
   canViewEvidence: boolean;
   canCancelIncident: boolean;
+  relationship?: string;
+  priority?: number;
+  notificationMethods?: string;
+  guardianUserId?: string | null;
+  invitationStatus?: string;
+  invitationToken?: string | null;
   createdAt: Date;
 }
 
@@ -24,6 +30,8 @@ export interface GuardianStore {
   insert(contact: TrustedContactRecord): Promise<void>;
   list(userId: string): Promise<TrustedContactRecord[]>;
   remove(id: string, userId: string): Promise<boolean>;
+  findByInvitationToken(token: string): Promise<TrustedContactRecord | null>;
+  save(contact: TrustedContactRecord): Promise<void>;
 }
 
 export interface JourneyRecord {
@@ -105,6 +113,7 @@ export class ProtectionService {
 
   async addGuardian(actor: Actor, input: GuardianInput, requestId: string | null): Promise<TrustedContactRecord> {
     this.own(actor);
+    const invited = Boolean(input.email);
     const contact: TrustedContactRecord = {
       id: this.ids.uuid(),
       userId: actor.id,
@@ -114,6 +123,12 @@ export class ProtectionService {
       canViewLocation: input.canViewLocation ?? false,
       canViewEvidence: input.canViewEvidence ?? false,
       canCancelIncident: false,
+      relationship: input.relationship ?? "FRIEND",
+      priority: input.priority ?? 1,
+      notificationMethods: input.notificationMethods ?? "PUSH,SMS",
+      guardianUserId: null,
+      invitationStatus: invited ? "PENDING" : "ACCEPTED",
+      invitationToken: invited ? this.ids.uuid() : null,
       createdAt: this.clock.now(),
     };
     await this.guardians.insert(contact);
@@ -140,6 +155,24 @@ export class ProtectionService {
     this.own(actor);
     const removed = await this.guardians.remove(id, actor.id);
     if (!removed) throw new AppError("NOT_FOUND", 404, "That guardian was not found.");
+  }
+
+  async acceptInvitation(actor: Actor, token: string): Promise<TrustedContactRecord> {
+    const contact = await this.guardians.findByInvitationToken(token);
+    if (!contact || contact.invitationStatus === "DECLINED") {
+      throw new AppError("NOT_FOUND", 404, "That invitation was not found.");
+    }
+    contact.guardianUserId = actor.id;
+    contact.invitationStatus = "ACCEPTED";
+    await this.guardians.save(contact);
+    return contact;
+  }
+
+  async extendJourney(actor: Actor, id: string, minutes: number): Promise<JourneyRecord> {
+    const journey = await this.requireJourney(actor, id);
+    journey.expectedArrivalAt = new Date(journey.expectedArrivalAt.getTime() + minutes * 60_000);
+    await this.journeys.save(journey);
+    return journey;
   }
 
   async startJourney(actor: Actor, input: JourneyInput): Promise<JourneyRecord> {

@@ -1,6 +1,7 @@
-import { useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Link, NavLink } from "react-router-dom";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { api, type Incident } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
 import { useMonitorSocket } from "../api/socket";
 
@@ -11,10 +12,56 @@ export function Shell({ children }: { children: ReactNode }) {
   const platform = role === "ADMIN" || role === "SUPERVISOR" || role === "MONITOR_OPERATOR";
   const queryClient = useQueryClient();
   const [alarm, setAlarm] = useState(false);
+  const audioRef = useRef<AudioContext | null>(null);
+  const token = session?.accessToken ?? null;
+  const incidents = useQuery({
+    queryKey: ["incidents"],
+    enabled: Boolean(token),
+    queryFn: () => api<Incident[]>("/api/v1/incidents", token),
+    refetchInterval: 5_000,
+  });
+  const openSos = useMemo(
+    () => (incidents.data ?? []).filter((row) => row.state === "SOS" && !row.isTest && !row.acknowledgedAt),
+    [incidents.data],
+  );
+  const overdue = openSos.find((row) => Date.now() - new Date(row.createdAt).getTime() >= 30_000);
+
   useMonitorSocket(session?.accessToken ?? null, (name) => {
     void queryClient.invalidateQueries();
     if (name === "incident.created" || name === "duress.detected") setAlarm(true);
   });
+
+  useEffect(() => {
+    if (openSos.length === 0) {
+      setAlarm(false);
+      return;
+    }
+    setAlarm(true);
+    if (typeof Notification !== "undefined" && Notification.permission === "default") {
+      void Notification.requestPermission();
+    }
+    if (typeof Notification !== "undefined" && Notification.permission === "granted") {
+      new Notification("Guardian SOS", { body: `${openSos.length} unacknowledged SOS waiting.` });
+    }
+    try {
+      audioRef.current ??= new AudioContext();
+      const ctx = audioRef.current;
+      const oscillator = ctx.createOscillator();
+      const gain = ctx.createGain();
+      oscillator.type = "square";
+      oscillator.frequency.value = 880;
+      gain.gain.value = 0.05;
+      oscillator.connect(gain).connect(ctx.destination);
+      oscillator.start();
+      oscillator.stop(ctx.currentTime + 0.4);
+    } catch {
+      // Audio is blocked until the operator interacts with the page.
+    }
+  }, [openSos.length]);
+
+  const remaining = openSos[0]
+    ? Math.max(0, 30 - Math.floor((Date.now() - new Date(openSos[0].createdAt).getTime()) / 1000))
+    : 0;
 
   return (
     <div className="min-h-screen md:grid md:grid-cols-[220px_1fr]">
@@ -33,11 +80,12 @@ export function Shell({ children }: { children: ReactNode }) {
         </button>
       </aside>
       <div>
-        {alarm ? (
+        {alarm && openSos[0] ? (
           <p className="border-b border-line bg-sos px-4 py-3 text-sm font-semibold">
-            A new SOS or duress flag arrived.{" "}
-            <Link to="/" className="underline" onClick={() => setAlarm(false)}>
-              Open incidents
+            Unacknowledged SOS. Operator claim countdown {remaining}s.
+            {overdue ? " Escalated to a supervisor after 30 seconds without an ack." : ""}{" "}
+            <Link to={`/incidents/${openSos[0].id}`} className="underline" onClick={() => setAlarm(false)}>
+              Open incident
             </Link>
           </p>
         ) : null}

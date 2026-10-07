@@ -1,11 +1,12 @@
 import { FormEvent, useState } from "react";
-import { MfaRequiredError, useAuth } from "../auth/AuthContext";
+import { MfaEnrollmentError, MfaRequiredError, useAuth } from "../auth/AuthContext";
 
 export function LoginPage() {
   const { login, completeMfa } = useAuth();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [mfaToken, setMfaToken] = useState<string | null>(null);
+  const [enrolling, setEnrolling] = useState<{ secret: string; otpauth: string } | null>(null);
   const [code, setCode] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
@@ -25,8 +26,15 @@ export function LoginPage() {
       }
       await login(email, password);
     } catch (caught) {
+      if (caught instanceof MfaEnrollmentError) {
+        setMfaToken(caught.mfaToken);
+        setEnrolling({ secret: caught.secret, otpauth: caught.otpauth });
+        setError(null);
+        return;
+      }
       if (caught instanceof MfaRequiredError) {
         setMfaToken(caught.mfaToken);
+        setEnrolling(null);
         setError(null);
         return;
       }
@@ -66,6 +74,13 @@ export function LoginPage() {
             className="mt-1 w-full rounded-lg border border-line bg-ink px-3 py-3"
           />
         </label>
+        {enrolling ? (
+          <div className="mt-4 space-y-2 text-sm">
+            <p>Scan this otpauth URL in an authenticator, or type the secret. The secret is shown once.</p>
+            <p className="break-all rounded-lg border border-line bg-ink p-2 font-mono text-xs">{enrolling.otpauth}</p>
+            <p className="break-all font-mono text-xs">Secret {enrolling.secret}</p>
+          </div>
+        ) : null}
         {mfaToken ? (
           <label className="mt-4 block text-sm" htmlFor="code">
             Authenticator code
@@ -80,7 +95,7 @@ export function LoginPage() {
           </label>
         ) : null}
         <p className="mt-3 text-xs text-slate-400">
-          Authenticator setup is optional until an operator enrolls. Password sign-in still works before that.
+          ADMIN, SUPERVISOR, MONITOR OPERATOR, and RESPONDER accounts must enroll an authenticator on first sign-in.
         </p>
         {error ? (
           <p role="alert" className="mt-4 text-sm text-sos">

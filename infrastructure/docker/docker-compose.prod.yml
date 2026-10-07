@@ -54,6 +54,26 @@ services:
       api:
         condition: service_healthy
 
+  backup:
+    image: postgres:16-alpine
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-guardian}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-guardian}
+    volumes:
+      - guardian_backups:/backups
+    depends_on:
+      postgres:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        while true; do
+          stamp=$$(date -u +%Y%m%dT%H%M%SZ)
+          pg_dump --dbname "$$DATABASE_URL" --format=plain --file "/backups/guardian-$$stamp.sql"
+          find /backups -name 'guardian-*.sql' -mtime +14 -delete
+          sleep 86400
+        done
+
 volumes:
   guardian_postgres:
   guardian_evidence:
+  guardian_backups:

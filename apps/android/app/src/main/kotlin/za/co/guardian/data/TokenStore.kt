@@ -53,6 +53,8 @@ class TokenStore @Inject constructor(@ApplicationContext context: Context) {
     fun setFreezeDecoyPin(pin: String) = prefs.edit().putString(FREEZE_DECOY, pin).apply()
     fun freezeReleasePin(): String = prefs.getString(FREEZE_RELEASE, "").orEmpty()
     fun setFreezeReleasePin(pin: String) = prefs.edit().putString(FREEZE_RELEASE, pin).apply()
+    fun fcmToken(): String? = prefs.getString(FCM_TOKEN, null)
+    fun setFcmToken(token: String?) = prefs.edit().putString(FCM_TOKEN, token).apply()
 
     fun clear() {
         val publicId = prefs.getString(PUBLIC_DEVICE, null)
@@ -70,6 +72,7 @@ class TokenStore @Inject constructor(@ApplicationContext context: Context) {
         const val ROLE = "role"
         const val FREEZE_DECOY = "freeze_decoy"
         const val FREEZE_RELEASE = "freeze_release"
+        const val FCM_TOKEN = "fcm_token"
     }
 }
 
@@ -99,7 +102,23 @@ class SettingsStore @Inject constructor(@ApplicationContext context: Context) : 
     }
 
     fun safeWord(): String = prefs.getString(SAFE_WORD, "").orEmpty()
-    fun setSafeWord(phrase: String) = prefs.edit().putString(SAFE_WORD, phrase.trim()).apply()
+    fun setSafeWord(phrase: String) {
+        val trimmed = phrase.trim()
+        val current = prefs.getString(SAFE_WORD, "").orEmpty()
+        if (current.isNotBlank() && !current.equals(trimmed, ignoreCase = true)) {
+            // Changing the safe word phrase invalidates old voice recordings and requires fresh enrolment
+            prefs.edit()
+                .putString(SAFE_WORD, trimmed)
+                .remove(SAFE_TEMPLATES)
+                .putBoolean(SAFE_ENABLED, false)
+                .apply()
+        } else {
+            prefs.edit().putString(SAFE_WORD, trimmed).apply()
+        }
+    }
+    fun clearSafeWordTemplates() {
+        prefs.edit().remove(SAFE_TEMPLATES).putBoolean(SAFE_ENABLED, false).apply()
+    }
     fun shareAudio(): Boolean = prefs.getBoolean(SHARE_AUDIO, false)
     fun setShareAudio(enabled: Boolean) = prefs.edit().putBoolean(SHARE_AUDIO, enabled).apply()
     fun volumeTestActive(now: Long): Boolean = now < prefs.getLong(VOLUME_TEST_UNTIL, 0L)
@@ -136,7 +155,8 @@ class SettingsStore @Inject constructor(@ApplicationContext context: Context) : 
     fun safeWordTemplates(): List<FloatArray> {
         return prefs.getString(SAFE_TEMPLATES, "").orEmpty().split(';').mapNotNull { row ->
             val values = row.split(',').mapNotNull { it.toFloatOrNull() }
-            if (values.size < 8) null else values.take(8).toFloatArray()
+            if (values.size < za.co.guardian.core.KEYWORD_FEATURE_SIZE) null
+            else values.take(za.co.guardian.core.KEYWORD_FEATURE_SIZE).toFloatArray()
         }
     }
     fun addSafeWordTemplate(features: FloatArray) {
@@ -157,6 +177,10 @@ class SettingsStore @Inject constructor(@ApplicationContext context: Context) : 
     fun setFallWatch(enabled: Boolean) = prefs.edit().putBoolean(FALL_WATCH, enabled).apply()
     fun protectionMode(): String = prefs.getString(PROTECTION_MODE, "WALK").orEmpty()
     fun setProtectionMode(mode: String) = prefs.edit().putString(PROTECTION_MODE, mode).apply()
+    fun journeyId(): String? = prefs.getString(JOURNEY_ID, null)
+    fun setJourneyId(id: String?) {
+        if (id == null) prefs.edit().remove(JOURNEY_ID).apply() else prefs.edit().putString(JOURNEY_ID, id).apply()
+    }
     fun freezePattern(): za.co.guardian.core.VolumePattern =
         za.co.guardian.core.VolumePattern.fromStored(prefs.getString(FREEZE_PATTERN, za.co.guardian.core.VolumePattern.UP_2.name))
     fun setFreezePattern(pattern: za.co.guardian.core.VolumePattern) = prefs.edit().putString(FREEZE_PATTERN, pattern.name).apply()
@@ -191,6 +215,7 @@ class SettingsStore @Inject constructor(@ApplicationContext context: Context) : 
         const val ONBOARDED = "onboarded"
         const val FALL_WATCH = "fall_watch"
         const val PROTECTION_MODE = "protection_mode"
+        const val JOURNEY_ID = "journey_id"
         const val FREEZE_PATTERN = "freeze_pattern"
         const val GUARDIAN_PHONE = "guardian_phone"
     }

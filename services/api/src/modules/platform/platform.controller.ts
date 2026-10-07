@@ -156,6 +156,28 @@ export class PlatformController {
   room(@Param("token") token: string) {
     return this.platform.room(token).then((data) => ({ data }));
   }
+
+  @Public()
+  @Post("rooms/:token/ack")
+  @HttpCode(200)
+  acknowledgeRoom(@Param("token") token: string) {
+    return this.platform.acknowledgeRoom(token).then((data) => ({ data }));
+  }
+
+  @Get("responders")
+  @RequirePermissions(Permission.IncidentAcknowledge)
+  responders(@Req() request: RequestWithUser) {
+    return this.platform.listResponders(actorFrom(request)).then((data) => ({ data }));
+  }
+
+  @Post("incidents/:id/claim")
+  @HttpCode(200)
+  @RequirePermissions(Permission.IncidentAcknowledge)
+  claim(@Param("id") id: string, @Req() request: RequestWithUser) {
+    return this.platform
+      .claimIncident(actorFrom(request), id, requestContext.getStore()?.requestId ?? null)
+      .then((data) => ({ data }));
+  }
 }
 
 function actorFrom(request: RequestWithUser): Actor {

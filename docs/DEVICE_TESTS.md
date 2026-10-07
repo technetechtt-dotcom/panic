@@ -16,5 +16,11 @@ Record the phone model, Android version, whether the screen was locked, and whet
 | Open Guardian from that notification | Location tracking starts again if permission is still granted. |
 | Phone in Doze with no network | The SOS remains on the phone and uploads after the network returns. |
 | Decoy PIN and the other volume key | The freeze screen stays up. The secret PIN leaves it. Reboot clears it. |
+| Sign out while no emergency is open | Safe-word listening and fall watch stop. Location monitoring stops. |
+| Sign out during an open emergency | Emergency monitoring stays up. Safe-word listening stops. |
+| FCM with google-services.json present | The device row stores an FCM token after sign-in. |
+| FCM without google-services.json | No token is uploaded. The hub reports FCM as not configured or degraded. |
+
+These checks were not run in this change. A CI debug APK is not a physical-device result.
 
 A failure on a locked screen, Doze, or an OEM battery killer is a product result, not a reason to start the microphone from the background.

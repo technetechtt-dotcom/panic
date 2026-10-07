@@ -65,17 +65,21 @@ fun phraseQualityWarning(phrase: String): String {
     return "This phrase is better than a single short word."
 }
 
-fun pcmFeatures(samples: ShortArray, sampleRate: Int = 16_000): FloatArray {
-    if (samples.isEmpty()) return FloatArray(8)
-    val count = samples.size
+const val KEYWORD_FRAMES = 8
+const val FEATURES_PER_FRAME = 8
+const val KEYWORD_FEATURE_SIZE = KEYWORD_FRAMES * FEATURES_PER_FRAME
+
+private fun frameFeatures(samples: ShortArray, start: Int, end: Int, sampleRate: Int): FloatArray {
+    val count = end - start
+    if (count <= 0) return FloatArray(FEATURES_PER_FRAME)
     var energy = 0.0
     var crossings = 0
-    for (index in samples.indices) {
+    for (index in start until end) {
         val sample = samples[index].toInt()
         energy += sample.toDouble() * sample
-        if (index > 0 && (samples[index - 1].toInt() >= 0) != (sample >= 0)) crossings += 1
+        if (index > start && (samples[index - 1].toInt() >= 0) != (sample >= 0)) crossings += 1
     }
-    val bands = FloatArray(8)
+    val bands = FloatArray(FEATURES_PER_FRAME)
     bands[0] = kotlin.math.sqrt(energy / count).toFloat() / 32768f
     bands[1] = crossings.toFloat() / count
     val frequencies = doubleArrayOf(200.0, 400.0, 800.0, 1200.0, 2000.0, 3000.0)
@@ -84,7 +88,8 @@ fun pcmFeatures(samples: ShortArray, sampleRate: Int = 16_000): FloatArray {
         val coefficient = 2.0 * kotlin.math.cos(omega)
         var previous = 0.0
         var prior = 0.0
-        for (sample in samples) {
+        for (index in start until end) {
+            val sample = samples[index]
             val next = sample / 32768.0 + coefficient * previous - prior
             prior = previous
             previous = next
@@ -93,6 +98,20 @@ fun pcmFeatures(samples: ShortArray, sampleRate: Int = 16_000): FloatArray {
         bands[band + 2] = kotlin.math.sqrt(power.coerceAtLeast(0.0)).toFloat()
     }
     return bands
+}
+
+fun pcmFeatures(samples: ShortArray, sampleRate: Int = 16_000): FloatArray {
+    if (samples.isEmpty()) return FloatArray(KEYWORD_FEATURE_SIZE)
+    val total = samples.size
+    val result = FloatArray(KEYWORD_FEATURE_SIZE)
+    val frameSize = (total / KEYWORD_FRAMES).coerceAtLeast(1)
+    for (frame in 0 until KEYWORD_FRAMES) {
+        val start = frame * frameSize
+        val end = if (frame == KEYWORD_FRAMES - 1) total else (start + frameSize).coerceAtMost(total)
+        val f = frameFeatures(samples, start, end, sampleRate)
+        System.arraycopy(f, 0, result, frame * FEATURES_PER_FRAME, FEATURES_PER_FRAME)
+    }
+    return result
 }
 
 fun featureSimilarity(left: FloatArray, right: FloatArray): Float {
@@ -110,10 +129,65 @@ fun featureSimilarity(left: FloatArray, right: FloatArray): Float {
     return (dot / (kotlin.math.sqrt(leftEnergy) * kotlin.math.sqrt(rightEnergy))).toFloat()
 }
 
+fun frameSimilarity(left: FloatArray, leftOffset: Int, right: FloatArray, rightOffset: Int, length: Int = FEATURES_PER_FRAME): Float {
+    var specDot = 0.0
+    var leftSpecEnergy = 0.0
+    var rightSpecEnergy = 0.0
+    for (i in 2 until length) {
+        val l = left[leftOffset + i]
+        val r = right[rightOffset + i]
+        specDot += l * r
+        leftSpecEnergy += l * l
+        rightSpecEnergy += r * r
+    }
+    val specSim = if (leftSpecEnergy > 0.0 && rightSpecEnergy > 0.0) {
+        (specDot / (kotlin.math.sqrt(leftSpecEnergy) * kotlin.math.sqrt(rightSpecEnergy))).toFloat()
+    } else 0f
+
+    val zcrDiff = kotlin.math.abs(left[leftOffset + 1] - right[rightOffset + 1])
+    val zcrSim = (1.0f - zcrDiff * 4f).coerceIn(0f, 1f)
+    return (0.75f * specSim + 0.25f * zcrSim).coerceIn(0f, 1f)
+}
+
+fun keywordConfidence(live: FloatArray, enrolled: FloatArray): Float {
+    if (live.isEmpty() || enrolled.isEmpty()) return 0f
+    if (live.size < KEYWORD_FEATURE_SIZE || enrolled.size < KEYWORD_FEATURE_SIZE) {
+        return featureSimilarity(live, enrolled)
+    }
+    var maxEnergy = 0f
+    for (f in 0 until KEYWORD_FRAMES) {
+        val frameEnergy = live[f * FEATURES_PER_FRAME]
+        if (frameEnergy > maxEnergy) maxEnergy = frameEnergy
+    }
+    if (maxEnergy < 0.005f) return 0f
+
+    var totalSim = 0f
+    for (f in 0 until KEYWORD_FRAMES) {
+        val liveOffset = f * FEATURES_PER_FRAME
+        var bestFrameSim = 0f
+        for (delta in -1..1) {
+            val enrolledFrame = f + delta
+            if (enrolledFrame in 0 until KEYWORD_FRAMES) {
+                val enrolledOffset = enrolledFrame * FEATURES_PER_FRAME
+                val sim = frameSimilarity(live, liveOffset, enrolled, enrolledOffset)
+                if (sim > bestFrameSim) bestFrameSim = sim
+            }
+        }
+        totalSim += bestFrameSim
+    }
+    return (totalSim / KEYWORD_FRAMES).coerceIn(0f, 1f)
+}
+
+fun keywordConfidenceScore(live: FloatArray, enrolled: List<FloatArray>): Float {
+    if (enrolled.isEmpty()) return 0f
+    return enrolled.maxOfOrNull { keywordConfidence(live, it) } ?: 0f
+}
+
 fun keywordMatches(live: FloatArray, enrolled: List<FloatArray>, sensitivity: Int): Boolean {
     if (enrolled.isEmpty()) return false
-    val threshold = 0.93f - (sensitivity.coerceIn(0, 100) / 100f) * 0.28f
-    return enrolled.any { featureSimilarity(live, it) >= threshold }
+    val confidence = keywordConfidenceScore(live, enrolled)
+    val threshold = 0.88f - (sensitivity.coerceIn(0, 100) / 100f) * 0.22f
+    return confidence >= threshold
 }
 
 fun locationIntervalMs(mode: String): Long = when (mode) {
@@ -277,6 +351,7 @@ data class LocalEscalation(
     val triggerId: String,
     val incidentTriggerId: String,
     val triggerType: String,
+    val stage: String = "EVIDENCE",
     val createdAtEpochMs: Long,
     val sent: Boolean,
 )

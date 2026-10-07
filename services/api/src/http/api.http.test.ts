@@ -95,16 +95,30 @@ test("authentication, SOS idempotency, and operator actions", async () => {
     assert.equal(me.status, 200);
     assert.equal(me.body.data.role, "USER");
 
+    const devicePublicId = randomUUID();
     const device = await request(server)
       .post("/api/v1/devices")
       .set("Authorization", `Bearer ${token}`)
       .send({
-        devicePublicId: randomUUID(),
+        devicePublicId,
         platform: "ANDROID",
         osVersion: "15",
         appVersion: "0.1.0",
+        fcmToken: "fcm-token-1",
       });
     assert.equal(device.status, 201);
+    assert.equal(device.body.data.fcmToken, "fcm-token-1");
+    const again = await request(server)
+      .post("/api/v1/devices")
+      .set("Authorization", `Bearer ${token}`)
+      .send({
+        devicePublicId,
+        platform: "ANDROID",
+        osVersion: "15",
+        appVersion: "0.1.0",
+        fcmToken: "fcm-token-2",
+      });
+    assert.equal(again.body.data.fcmToken, "fcm-token-2");
 
     const incidentBody = {
       triggerId: randomUUID(),

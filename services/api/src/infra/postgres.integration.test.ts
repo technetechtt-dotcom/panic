@@ -13,6 +13,9 @@ test("postgres accepts a migrated emergency profile table", async (t) => {
     assert.equal(Number(rows[0]?.ok), 1);
     await prisma.$queryRaw`SELECT "userId" FROM "EmergencyProfile" LIMIT 1`;
     await prisma.$queryRaw`SELECT "tokenHash" FROM "IncidentRoom" LIMIT 1`;
+    await prisma.$queryRaw`SELECT "revokedAt", "fcmToken" FROM "Device" LIMIT 1`;
+    await prisma.$queryRaw`SELECT "invitationToken", "guardianUserId" FROM "TrustedContact" LIMIT 1`;
+    await prisma.$queryRaw`SELECT "claimedBy", "escalatedToSupervisorAt" FROM "Incident" LIMIT 1`;
   } finally {
     await prisma.$disconnect();
   }

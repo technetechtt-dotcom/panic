@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Inject, Post, Req } from "@nestjs/common";
+import { Body, Controller, Delete, Get, HttpCode, Inject, Param, Post, Req } from "@nestjs/common";
 import { deviceRegistrationSchema } from "@guardian/shared-validation";
 import { z } from "zod";
 import { RequirePermissions, type RequestWithUser } from "../../common/guards";
@@ -34,6 +34,13 @@ export class DevicesController {
   @RequirePermissions(Permission.DeviceRegisterOwn)
   async list(@Req() request: RequestWithUser) {
     return { data: await this.devices.list(actorFrom(request)) };
+  }
+
+  @Delete(":id")
+  @HttpCode(204)
+  @RequirePermissions(Permission.DeviceRegisterOwn)
+  async revoke(@Param("id") id: string, @Req() request: RequestWithUser) {
+    await this.devices.revoke(actorFrom(request), id, requestContext.getStore()?.requestId ?? null);
   }
 }
 
