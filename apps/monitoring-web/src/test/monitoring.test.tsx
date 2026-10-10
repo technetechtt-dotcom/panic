@@ -76,7 +76,7 @@ describe("monitoring hub", () => {
     expect(screen.getByText(/Counts exclude test incidents/)).toBeInTheDocument();
   });
 
-  it("sends an operator without account management back to incidents", async () => {
+  it("shows a 403 page when an operator cannot manage accounts", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => json([])));
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     render(
@@ -86,7 +86,7 @@ describe("monitoring hub", () => {
         </MemoryRouter>
       </QueryClientProvider>,
     );
-    expect(await screen.findByRole("heading", { name: "Active incidents" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "You don't have access" })).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "People" })).not.toBeInTheDocument();
   });
 });

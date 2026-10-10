@@ -24,6 +24,8 @@ export interface UserRecord {
   passwordHash: string;
   displayName: string;
   role: Role;
+  emailVerifiedAt?: Date | null;
+  phone?: string | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -32,6 +34,20 @@ export interface UserStore {
   findByEmail(email: string): Promise<UserRecord | null>;
   findById(id: string): Promise<UserRecord | null>;
   insert(user: UserRecord): Promise<void>;
+  save?(user: UserRecord): Promise<void>;
+}
+
+export interface RecoveryRecord {
+  tokenHash: string;
+  userId: string;
+  purpose: "PASSWORD_RESET" | "EMAIL_VERIFY";
+  expiresAt: Date;
+  consumedAt: Date | null;
+}
+
+export interface RecoveryStore {
+  insert(record: RecoveryRecord): Promise<void>;
+  consume(tokenHash: string, purpose: RecoveryRecord["purpose"], now: Date): Promise<string | null>;
 }
 
 export interface RefreshTokenRecord {
@@ -75,6 +91,9 @@ export interface DeviceRecord {
   publicKey?: string | null;
   fcmToken?: string | null;
   revokedAt?: Date | null;
+  lastSeenAt?: Date | null;
+  nickname?: string | null;
+  pushTokenUpdatedAt?: Date | null;
   createdAt: Date;
   updatedAt: Date;
 }

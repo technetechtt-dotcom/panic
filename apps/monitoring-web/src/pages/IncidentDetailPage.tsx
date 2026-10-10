@@ -20,6 +20,7 @@ export function IncidentDetailPage() {
   const [error, setError] = useState<string | null>(null);
   const [preview, setPreview] = useState<string | null>(null);
   const [media, setMedia] = useState<{ url: string; type: string } | null>(null);
+  const [tab, setTab] = useState("overview");
   const operator = session?.user.role !== "RESPONDER";
 
   const incident = useQuery({
@@ -52,7 +53,7 @@ export function IncidentDetailPage() {
   const responders = useQuery({
     queryKey: ["responders"],
     enabled: operator,
-    queryFn: () => api<Array<{ id: string; displayName: string; email: string; status: string }>>("/api/v1/responders", token),
+    queryFn: () => api<Array<{ id: string; displayName: string; email: string; status: string; team?: string | null; region?: string | null; capabilities?: string | null }>>("/api/v1/responders", token),
   });
   const heartbeats = useQuery({
     queryKey: ["heartbeats", id],
@@ -62,7 +63,7 @@ export function IncidentDetailPage() {
   const deliveries = useQuery({
     queryKey: ["deliveries", id],
     enabled: operator,
-    queryFn: () => api<Array<{ id: string; channel: string; status: string; detail: string; destination: string }>>(`/api/v1/incidents/${id}/deliveries`, token),
+    queryFn: () => api<Array<{ id: string; channel: string; status: string; detail: string; destination: string; providerMessageId?: string; attemptNumber?: number; sentAt?: string; deliveredAt?: string; failedAt?: string; failureCode?: string }>>(`/api/v1/incidents/${id}/deliveries`, token),
   });
 
   const action = useMutation({
@@ -89,7 +90,7 @@ export function IncidentDetailPage() {
 
   return (
     <main className="min-h-screen px-4 py-4">
-      <Link to="/" className="text-sm text-slate-300">
+      <Link to="/incidents" className="text-sm text-slate-300">
         Back to incidents
       </Link>
       {current?.isTest ? (
@@ -100,8 +101,21 @@ export function IncidentDetailPage() {
       ) : null}
       {incident.isError ? <p className="mt-6 text-sos">This incident could not be loaded.</p> : null}
       {current ? (
+        <>
+        <nav className="mt-4 flex flex-wrap gap-2">
+          {["overview", "map", "evidence", "guardians", "responders", "timeline"].map((name) => (
+            <button
+              key={name}
+              type="button"
+              onClick={() => setTab(name)}
+              className={`rounded-lg px-3 py-2 text-sm ${tab === name ? "bg-ink text-white" : "border border-line"}`}
+            >
+              {name}
+            </button>
+          ))}
+        </nav>
         <div className="mt-4 grid gap-4 lg:grid-cols-[280px_1fr_320px]">
-          <section className="rounded-2xl border border-line bg-panel p-4">
+          <section className={`rounded-2xl border border-line bg-panel p-4 ${tab === "overview" || tab === "responders" ? "" : "lg:block hidden"}`}>
             <h1 className="text-2xl font-semibold">{current.userDisplayName}</h1>
             <dl className="mt-4 space-y-2 text-sm">
               <Row label="Trigger" value={current.triggerType} />
@@ -114,14 +128,14 @@ export function IncidentDetailPage() {
             {current.claimedBy ? <p className="mt-3 text-sm">Claimed by operator {current.claimedBy.slice(0, 8)}…</p> : <p className="mt-3 text-sm">Unclaimed.</p>}
             {current.escalatedToSupervisorAt ? <p className="mt-2 text-sm text-warn">Escalated to supervisor at {new Date(current.escalatedToSupervisorAt).toLocaleTimeString()}.</p> : null}
           </section>
-          <section className="min-h-[420px] rounded-2xl border border-line bg-panel p-4">
+          <section className={`min-h-[50vh] rounded-2xl border border-line bg-panel p-4 ${tab === "map" || tab === "overview" ? "" : "hidden"}`}>
             <h2 className="text-lg font-semibold">Last confirmed location</h2>
             <p className="mt-1 text-sm text-slate-300">
               {position
                 ? `${position.lat.toFixed(5)}, ${position.lng.toFixed(5)} · accuracy ${current.lastAccuracy ?? "unknown"} m`
                 : "No confirmed location yet."}
             </p>
-            <div className="mt-3 h-80 overflow-hidden rounded-xl">
+            <div className="mt-3 h-[min(28rem,60vh)] overflow-hidden rounded-xl">
               {position ? (
                 <MapContainer center={[position.lat, position.lng]} zoom={15} scrollWheelZoom>
                   <TileLayer attribution={tileAttribution} url={tileUrl} />
@@ -140,9 +154,9 @@ export function IncidentDetailPage() {
               Replace the public tile server before production use.
             </p>
           </section>
-          <section className="rounded-2xl border border-line bg-panel p-4">
-            <h2 className="text-lg font-semibold">Timeline</h2>
-            <ol className="mt-3 max-h-64 space-y-3 overflow-auto text-sm">
+          <section className="sticky bottom-0 rounded-2xl border border-line bg-panel p-4 lg:static">
+            <h2 className={`text-lg font-semibold ${tab === "timeline" || tab === "overview" ? "" : "hidden"}`}>Timeline</h2>
+            <ol className={`mt-3 max-h-64 space-y-3 overflow-auto text-sm ${tab === "timeline" || tab === "overview" ? "" : "hidden"}`}>
               {(timeline.data ?? []).map((entry) => (
                 <li key={entry.id}>
                   <time className="block text-xs text-slate-400">{new Date(entry.occurredAt).toLocaleString()}</time>
@@ -151,7 +165,7 @@ export function IncidentDetailPage() {
               ))}
             </ol>
             {brief.data ? (
-              <div className="mt-4 text-sm">
+              <div className={`mt-4 text-sm ${tab === "timeline" || tab === "overview" ? "" : "hidden"}`}>
                 <h2 className="text-lg font-semibold">Rules brief</h2>
                 <p className="mt-2">{brief.data.summary}</p>
                 <ul className="mt-2 list-disc pl-4 text-slate-300">
@@ -160,15 +174,21 @@ export function IncidentDetailPage() {
                 <p className="mt-2 text-xs text-slate-400">This restates the incident. It cannot cancel, accuse, or dispatch.</p>
               </div>
             ) : null}
-            <h2 className="mt-4 text-lg font-semibold">Guardian delivery</h2>
-            <ul className="mt-2 text-sm">
+            <h2 className={`mt-4 text-lg font-semibold ${tab === "guardians" || tab === "overview" ? "" : "hidden"}`}>Guardian delivery</h2>
+            <ul className={`mt-2 text-sm ${tab === "guardians" || tab === "overview" ? "" : "hidden"}`}>
               {(deliveries.data ?? []).map((item) => (
-                <li key={item.id}>{item.channel} · {item.status} · {item.destination} · {item.detail}</li>
+                <li key={item.id}>
+                  {item.channel} · {item.status} · {item.destination} · attempt {item.attemptNumber ?? 1}
+                  {item.sentAt ? ` · sent ${new Date(item.sentAt).toLocaleTimeString()}` : " · provider submission"}
+                  {item.deliveredAt ? ` · delivered ${new Date(item.deliveredAt).toLocaleTimeString()}` : ""}
+                  {item.failureCode ? ` · ${item.failureCode}` : ""}
+                  · {item.detail}
+                </li>
               ))}
               {deliveries.data?.length === 0 ? <li>No guardian message has been recorded for this incident.</li> : null}
             </ul>
-            <h2 className="mt-4 text-lg font-semibold">Evidence</h2>
-            <ul className="mt-2 space-y-2 text-sm">
+            <h2 className={`mt-4 text-lg font-semibold ${tab === "evidence" || tab === "overview" ? "" : "hidden"}`}>Evidence</h2>
+            <ul className={`mt-2 space-y-2 text-sm ${tab === "evidence" || tab === "overview" ? "" : "hidden"}`}>
               {(evidence.data ?? []).map((item) => (
                 <li key={item.id}>
                   {item.contentType} · {item.byteLength} bytes · part {item.sequence}
@@ -214,7 +234,7 @@ export function IncidentDetailPage() {
                   <option value="">Select a responder</option>
                   {(responders.data ?? []).map((row) => (
                     <option key={row.id} value={row.id}>
-                      {row.displayName} · {row.status} · {row.email}
+                      {row.displayName} · {row.status} · {row.team ?? "no team"} · {row.region ?? "no region"}
                     </option>
                   ))}
                 </select>
@@ -263,14 +283,16 @@ export function IncidentDetailPage() {
               >
                 Acknowledge
               </button>
-              <button
-                type="button"
-                disabled={!canResolve(current.state) || action.isPending}
-                onClick={() => action.mutate("resolve")}
-                className="rounded-lg bg-slate-100 px-4 py-3 font-semibold text-ink disabled:opacity-40"
-              >
-                Resolve
-              </button>
+              {operator ? (
+                <button
+                  type="button"
+                  disabled={!canResolve(current.state) || action.isPending}
+                  onClick={() => action.mutate("resolve")}
+                  className="rounded-lg bg-slate-100 px-4 py-3 font-semibold text-ink disabled:opacity-40"
+                >
+                  Resolve
+                </button>
+              ) : null}
               {operator ? (
                 <button
                   type="button"
@@ -316,6 +338,7 @@ export function IncidentDetailPage() {
             </div>
           </section>
         </div>
+        </>
       ) : null}
     </main>
   );

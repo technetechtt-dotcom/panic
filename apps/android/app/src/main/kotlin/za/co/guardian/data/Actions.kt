@@ -241,8 +241,18 @@ class AuthRepository @Inject constructor(
     private val settings: SettingsStore,
     @ApplicationContext private val context: Context,
 ) {
-    suspend fun register(email: String, password: String, displayName: String) {
-        val session = api.register(RegisterBody(email.trim(), password, displayName.trim(), true)).data
+    suspend fun register(email: String, password: String, displayName: String, phone: String = "") {
+        val session = api.register(
+            RegisterBody(
+                email.trim(),
+                password,
+                displayName.trim(),
+                acceptedSafetyConsent = true,
+                acceptedTerms = true,
+                acceptedPrivacy = true,
+                phone = phone.trim().ifBlank { null },
+            ),
+        ).data
         tokens.saveSession(session.accessToken, session.refreshToken, session.user.id)
         tokens.setUserRole(session.user.role)
         registerDevice()
@@ -295,6 +305,26 @@ class AuthRepository @Inject constructor(
     suspend fun checkConnection(): String = api.health().data.status
 
     fun signedIn(): Boolean = tokens.accessToken() != null
+
+    suspend fun forgotPassword(email: String): String {
+        val result = api.forgotPassword(ForgotBody(email.trim())).data
+        val extra = if (!result.emailSent && result.devToken != null) {
+            " No email provider is configured. Development token: ${result.devToken}"
+        } else if (!result.emailSent) {
+            " No email provider is configured, so nothing was sent."
+        } else {
+            " If that email exists, a reset message was accepted by the mail provider."
+        }
+        return "Reset request recorded.$extra"
+    }
+
+    suspend fun resetPassword(token: String, password: String) {
+        api.resetPassword(ResetBody(token.trim(), password))
+    }
+
+    suspend fun verifyEmail(token: String) {
+        api.verifyEmail(VerifyBody(token.trim()))
+    }
 }
 
 fun Throwable.userMessage(): String {
@@ -358,6 +388,32 @@ class ProtectionActions @Inject constructor(
         api.completeJourney(id)
         settings.setJourneyId(null)
         return "Journey marked complete."
+    }
+
+    suspend fun checkIn(): String {
+        val id = settings.journeyId() ?: return "Start a journey first."
+        val journey = api.checkIn(id).data
+        return "Check-in recorded. Status ${journey.status.lowercase()}."
+    }
+
+    suspend fun listJourneys(): List<JourneyWire> = api.journeys().data
+
+    suspend fun removeGuardian(id: String): String {
+        api.removeGuardian(id)
+        return "Guardian removed from this account."
+    }
+
+    suspend fun loadProfile(): ProfileWire = api.profile().data
+
+    suspend fun exportAccount(): String {
+        api.exportAccount()
+        return "Account export was prepared on the server. It includes profile, guardians, devices, and incident metadata, not evidence bytes."
+    }
+
+    suspend fun eraseAccount(password: String): String {
+        if (password.length < 12) return "Enter the account password to erase this profile."
+        api.eraseAccount(EraseBody(password))
+        return "Profile and guardian contacts were erased. Incident rows stay so an open emergency is not deleted."
     }
 
     suspend fun startJourney(label: String, minutes: Int, mode: String): String {

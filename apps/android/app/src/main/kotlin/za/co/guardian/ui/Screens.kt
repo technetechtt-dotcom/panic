@@ -8,9 +8,18 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.DateRange
+import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Button
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
@@ -92,10 +101,13 @@ class HomeViewModel @Inject constructor(
         private set
     var assignments by mutableStateOf<List<Pair<String, String>>>(emptyList())
         private set
+    var remainingMs by mutableStateOf(practiceMode.remainingMs())
+        private set
 
     fun refresh() {
         healthState.value = healthSource.current()
         practiceState.value = practiceMode.enabled()
+        remainingMs = practiceMode.remainingMs()
         role = tokens?.userRole() ?: "USER"
         if (role == "RESPONDER" && api != null) {
             viewModelScope.launch {
@@ -170,12 +182,34 @@ class AuthViewModel @Inject constructor(private val auth: AuthRepository) : View
     var error by mutableStateOf<String?>(null)
         private set
 
-    fun register(email: String, password: String, name: String, onDone: () -> Unit) = submit(onDone) {
-        auth.register(email, password, name)
+    fun register(email: String, password: String, name: String, onDone: () -> Unit, phone: String = "") = submit(onDone) {
+        auth.register(email, password, name, phone)
     }
 
     fun login(email: String, password: String, onDone: () -> Unit) = submit(onDone) {
         auth.login(email, password)
+    }
+
+    fun forgot(email: String, onDone: (String) -> Unit) {
+        viewModelScope.launch {
+            busy = true
+            error = null
+            try {
+                onDone(auth.forgotPassword(email))
+            } catch (caught: Exception) {
+                error = caught.userMessage()
+            } finally {
+                busy = false
+            }
+        }
+    }
+
+    fun reset(token: String, password: String, onDone: () -> Unit) = submit(onDone) {
+        auth.resetPassword(token, password)
+    }
+
+    fun verify(token: String, onDone: () -> Unit) = submit(onDone) {
+        auth.verifyEmail(token)
     }
 
     private fun submit(onDone: () -> Unit, block: suspend () -> Unit) {
@@ -195,19 +229,38 @@ class AuthViewModel @Inject constructor(private val auth: AuthRepository) : View
 }
 
 @HiltViewModel
-class HistoryViewModel @Inject constructor(private val database: GuardianDatabase) : ViewModel() {
-    private val itemsState = MutableStateFlow<List<String>>(emptyList())
-    val items: StateFlow<List<String>> = itemsState
+class HistoryViewModel @Inject constructor(
+    private val database: GuardianDatabase,
+    private val protection: za.co.guardian.data.ProtectionActions,
+) : ViewModel() {
+    private val itemsState = MutableStateFlow<List<HistoryRow>>(emptyList())
+    val items: StateFlow<List<HistoryRow>> = itemsState
+    var journeys by mutableStateOf<List<za.co.guardian.data.JourneyWire>>(emptyList())
+        private set
 
     fun refresh() {
         viewModelScope.launch {
             itemsState.value = database.incidents().list().map { incident ->
-                val test = if (incident.isTest) "TEST · " else ""
-                "$test${incident.state} · ${incident.syncState}"
+                HistoryRow(
+                    id = incident.triggerId,
+                    title = if (incident.isTest) "TEST · ${incident.triggerType}" else incident.triggerType,
+                    detail = "${incident.state} · ${incident.syncState}",
+                    whenLabel = java.text.DateFormat.getDateTimeInstance().format(java.util.Date(incident.createdAtEpochMs)),
+                    isTest = incident.isTest,
+                )
             }
+            runCatching { journeys = protection.listJourneys() }
         }
     }
 }
+
+data class HistoryRow(
+    val id: String,
+    val title: String,
+    val detail: String,
+    val whenLabel: String,
+    val isTest: Boolean,
+)
 
 @HiltViewModel
 class SettingsViewModel @Inject constructor(
@@ -232,15 +285,86 @@ class SettingsViewModel @Inject constructor(
         private set
     var incidentActive by mutableStateOf(settings.incidentActive())
         private set
+    var profile by mutableStateOf<za.co.guardian.data.ProfileWire?>(null)
+        private set
+    var journeys by mutableStateOf<List<za.co.guardian.data.JourneyWire>>(emptyList())
+        private set
+    var phrase by mutableStateOf(settings.safeWord())
+        private set
+    var sampleCount by mutableStateOf(settings.safeWordTemplateCount())
+        private set
+    var listening by mutableStateOf(settings.safeWordEnabled())
+        private set
+    var sensitivity by mutableStateOf(settings.safeWordSensitivity())
+        private set
+    var volumePattern by mutableStateOf(settings.volumePattern().name)
+        private set
+    var volumeWindow by mutableStateOf(settings.volumeWindowMs())
+        private set
+    var volumeVibrate by mutableStateOf(settings.vibrateOnTrigger())
+        private set
+    var volumeConnected by mutableStateOf(settings.volumeConnected())
+        private set
+    var protectionMode by mutableStateOf(settings.protectionMode())
+        private set
+    var battery by mutableStateOf<Int?>(null)
+        private set
+    var network by mutableStateOf("UNKNOWN")
+        private set
+    var lastLocation by mutableStateOf("No confirmed location yet")
+        private set
 
     fun refresh() {
         testRemaining = settings.remainingMs()
         shareAudio = settings.shareAudio()
         incidentActive = settings.incidentActive()
+        phrase = settings.safeWord()
+        sampleCount = settings.safeWordTemplateCount()
+        listening = settings.safeWordEnabled()
+        sensitivity = settings.safeWordSensitivity()
+        volumePattern = settings.volumePattern().name
+        volumeWindow = settings.volumeWindowMs()
+        volumeVibrate = settings.vibrateOnTrigger()
+        volumeConnected = settings.volumeConnected()
+        protectionMode = settings.protectionMode()
+        val device = signals.deviceState()
+        battery = device.batteryLevel
+        network = device.networkType
+        val (fresh, lastKnown) = signals.freshAndLastKnown()
+        val point = fresh ?: lastKnown
+        lastLocation = if (point == null) "No confirmed location yet" else "${"%.5f".format(point.latitude)}, ${"%.5f".format(point.longitude)}"
         viewModelScope.launch {
             runCatching { guardians = protection.listGuardians() }
             runCatching { devices = protection.listDevices() }
+            runCatching { profile = protection.loadProfile() }
+            runCatching { journeys = protection.listJourneys() }
         }
+    }
+
+    fun updateSensitivity(value: Int) {
+        settings.setSafeWordSensitivity(value)
+        sensitivity = value
+    }
+
+    fun disableListening() {
+        settings.safeWordEnabled(false)
+        listening = false
+        context.stopService(android.content.Intent(context, za.co.guardian.service.SafeWordService::class.java))
+        status = "Safe-word listening is off."
+    }
+
+    fun clearSamples() {
+        settings.clearSafeWordTemplates()
+        sampleCount = 0
+        settings.safeWordEnabled(false)
+        listening = false
+        status = "Recorded samples were deleted. Record the current phrase again before listening."
+    }
+
+    fun setMode(mode: String) {
+        settings.setProtectionMode(mode)
+        protectionMode = mode
+        status = "Mode is $mode."
     }
 
     fun note(message: String) {
@@ -263,6 +387,7 @@ class SettingsViewModel @Inject constructor(
         val order = za.co.guardian.core.VolumePattern.entries
         val next = order[(order.indexOf(settings.volumePattern()) + 1) % order.size]
         settings.setVolumePattern(next)
+        volumePattern = next.name
         status = "Volume trigger is now ${next.presses}× ${next.key.name.lowercase()}."
     }
 
@@ -290,6 +415,7 @@ class SettingsViewModel @Inject constructor(
     fun toggleVolumeVibration() {
         val enabled = !settings.vibrateOnTrigger()
         settings.setVibrateOnTrigger(enabled)
+        volumeVibrate = enabled
         status = if (enabled) "The phone vibrates when the volume pattern matches." else "Volume confirmation is silent."
     }
 
@@ -298,6 +424,7 @@ class SettingsViewModel @Inject constructor(
         val index = windows.indexOf(settings.volumeWindowMs()).let { if (it < 0) 1 else it }
         val next = windows[(index + 1) % windows.size]
         settings.setVolumeWindowMs(next)
+        volumeWindow = next
         status = "Volume presses must fit inside ${next / 1000.0} seconds."
     }
 
@@ -317,8 +444,14 @@ class SettingsViewModel @Inject constructor(
     }
 
     fun saveSafeWord(phrase: String) {
+        val previous = settings.safeWord()
         settings.setSafeWord(phrase)
-        status = za.co.guardian.core.phraseQualityWarning(phrase) + " The phrase stays on this phone."
+        this.phrase = settings.safeWord()
+        sampleCount = settings.safeWordTemplateCount()
+        listening = settings.safeWordEnabled()
+        val cleared = previous.isNotBlank() && !previous.equals(phrase.trim(), ignoreCase = true)
+        status = za.co.guardian.core.phraseQualityWarning(phrase) + " The phrase stays on this phone." +
+            if (cleared) " Previous recordings were deleted because the phrase changed." else ""
     }
 
     fun recordSafeWordSample() {
@@ -382,9 +515,13 @@ class SettingsViewModel @Inject constructor(
     fun checkConnection() = run { "Backend ${auth.checkConnection()}" }
     fun addGuardian(name: String, phone: String, email: String = "") = run { protection.addGuardian(name, phone, email) }
     fun acceptInvitation(token: String) = run { protection.acceptInvitation(token) }
+    fun removeGuardian(id: String) = run { protection.removeGuardian(id) }
     fun revokeDevice(id: String) = run { protection.revokeDevice(id) }
     fun extendJourney(minutes: String) = run { protection.extendJourney(minutes.toIntOrNull() ?: 15) }
     fun completeJourney() = run { protection.completeJourney() }
+    fun checkIn() = run { protection.checkIn() }
+    fun exportAccount() = run { protection.exportAccount() }
+    fun eraseAccount(password: String) = run { protection.eraseAccount(password) }
     fun startJourney(label: String, minutes: String) = run { protection.startJourney(label, minutes.toIntOrNull() ?: 30, settings.protectionMode()) }
     fun cycleProtectionMode() {
         val modes = listOf("WALK", "RIDE", "DRIVE", "MEETING", "HIGH_RISK")
@@ -445,8 +582,15 @@ class SettingsViewModel @Inject constructor(
 }
 
 @Composable
-fun WelcomeScreen(onRegister: () -> Unit, onLogin: () -> Unit) {
-    Column(Modifier.fillMaxSize().padding(24.dp), verticalArrangement = Arrangement.Center) {
+fun WelcomeScreen(
+    onRegister: () -> Unit,
+    onLogin: () -> Unit,
+    onPrivacy: () -> Unit = {},
+    onTerms: () -> Unit = {},
+    onHelp: () -> Unit = {},
+    onSafety: () -> Unit = {},
+) {
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp), verticalArrangement = Arrangement.Center) {
         Text("GUARDIAN", fontSize = 14.sp, color = Color(0xFFF5C451), fontWeight = FontWeight.Bold)
         Text("Personal safety", fontSize = 36.sp, fontWeight = FontWeight.SemiBold)
         Spacer(Modifier.height(12.dp))
@@ -455,37 +599,72 @@ fun WelcomeScreen(onRegister: () -> Unit, onLogin: () -> Unit) {
         Button(onClick = onRegister, modifier = Modifier.fillMaxWidth().height(56.dp)) { Text("Create account") }
         Spacer(Modifier.height(12.dp))
         TextButton(onClick = onLogin, modifier = Modifier.fillMaxWidth()) { Text("I already have an account") }
+        TextButton(onClick = onPrivacy, modifier = Modifier.fillMaxWidth()) { Text("Privacy Policy") }
+        TextButton(onClick = onTerms, modifier = Modifier.fillMaxWidth()) { Text("Terms of Use") }
+        TextButton(onClick = onHelp, modifier = Modifier.fillMaxWidth()) { Text("How Guardian Works") }
+        TextButton(onClick = onSafety, modifier = Modifier.fillMaxWidth()) { Text("Safety Disclaimer") }
+        TextButton(onClick = onHelp, modifier = Modifier.fillMaxWidth()) { Text("Help & Contact") }
+        Text("Accessibility: large system fonts scroll on this page. TalkBack labels use the button names above.", color = Color(0xFFB7C0CC), modifier = Modifier.padding(top = 8.dp))
     }
 }
 
 @Composable
-fun RegisterScreen(onDone: () -> Unit, onBack: () -> Unit, viewModel: AuthViewModel = hiltViewModel()) {
+fun RegisterScreen(
+    onDone: () -> Unit,
+    onBack: () -> Unit,
+    onTerms: () -> Unit = {},
+    onPrivacy: () -> Unit = {},
+    viewModel: AuthViewModel = hiltViewModel(),
+) {
     var name by remember { mutableStateOf("") }
     var email by remember { mutableStateOf("") }
+    var phone by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
+    var confirm by remember { mutableStateOf("") }
     var consent by remember { mutableStateOf(false) }
+    var terms by remember { mutableStateOf(false) }
+    var privacy by remember { mutableStateOf(false) }
+    val ready = consent && terms && privacy && password.length >= 12 && password == confirm
     AuthForm(
         title = "Create account",
         error = viewModel.error,
         busy = viewModel.busy,
         onBack = onBack,
         onSubmit = {
-            if (!consent) return@AuthForm
-            viewModel.register(email, password, name, onDone)
+            if (!ready) return@AuthForm
+            viewModel.register(email, password, name, onDone, phone)
         },
     ) {
         OutlinedTextField(name, { name = it }, label = { Text("Name") }, modifier = Modifier.fillMaxWidth())
         OutlinedTextField(email, { email = it }, label = { Text("Email") }, modifier = Modifier.fillMaxWidth())
-        OutlinedTextField(password, { password = it }, label = { Text("Password") }, modifier = Modifier.fillMaxWidth())
+        OutlinedTextField(phone, { phone = it }, label = { Text("Mobile number") }, modifier = Modifier.fillMaxWidth())
+        PasswordField(password, { password = it }, "Password")
+        PasswordField(confirm, { confirm = it }, "Confirm password")
+        Text("Password must be at least 12 characters. The server rejects shorter passwords.", color = Color(0xFFB7C0CC))
         Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
             Switch(checked = consent, onCheckedChange = { consent = it })
             Text("I understand SOS will share my location with the monitoring hub.", modifier = Modifier.padding(start = 8.dp))
+        }
+        Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+            Switch(checked = terms, onCheckedChange = { terms = it })
+            TextButton(onClick = onTerms) { Text("I accept the Terms of Use") }
+        }
+        Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+            Switch(checked = privacy, onCheckedChange = { privacy = it })
+            TextButton(onClick = onPrivacy) { Text("I accept the Privacy Policy") }
         }
     }
 }
 
 @Composable
-fun LoginScreen(onDone: () -> Unit, onBack: () -> Unit, viewModel: AuthViewModel = hiltViewModel()) {
+fun LoginScreen(
+    onDone: () -> Unit,
+    onBack: () -> Unit,
+    onForgot: () -> Unit = {},
+    onReset: () -> Unit = {},
+    onVerify: () -> Unit = {},
+    viewModel: AuthViewModel = hiltViewModel(),
+) {
     var email by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
     AuthForm(
@@ -496,7 +675,11 @@ fun LoginScreen(onDone: () -> Unit, onBack: () -> Unit, viewModel: AuthViewModel
         onSubmit = { viewModel.login(email, password, onDone) },
     ) {
         OutlinedTextField(email, { email = it }, label = { Text("Email") }, modifier = Modifier.fillMaxWidth())
-        OutlinedTextField(password, { password = it }, label = { Text("Password") }, modifier = Modifier.fillMaxWidth())
+        PasswordField(password, { password = it }, "Password")
+        TextButton(onClick = onForgot) { Text("Forgot password?") }
+        TextButton(onClick = onReset) { Text("I have a reset token") }
+        TextButton(onClick = onVerify) { Text("Verify email") }
+        Text("A lost phone is revoked from Profile → Devices after you sign in on a replacement.", color = Color(0xFFB7C0CC))
     }
 }
 
@@ -532,6 +715,10 @@ fun HomeScreen(
     onActiveIncident: () -> Unit = onSettings,
     onAllowLocation: () -> Unit,
     onAllowNotifications: () -> Unit,
+    onFixVolume: () -> Unit = onProtect,
+    onFixSafeWord: () -> Unit = onProtect,
+    onFixGuardian: () -> Unit = onGuardians,
+    onFixDevice: () -> Unit = onProfile,
     viewModel: HomeViewModel = hiltViewModel(),
 ) {
     val health by viewModel.health.collectAsStateWithLifecycle()
@@ -540,9 +727,24 @@ fun HomeScreen(
     val practice by viewModel.practice.collectAsStateWithLifecycle()
     val context = androidx.compose.ui.platform.LocalContext.current
     androidx.compose.runtime.LaunchedEffect(Unit) { viewModel.refresh() }
+    androidx.compose.runtime.LaunchedEffect(practice) {
+        while (practice) {
+            kotlinx.coroutines.delay(1_000)
+            viewModel.refresh()
+        }
+    }
     Scaffold(bottomBar = { BottomNav(onHome = {}, onProtect = onProtect, onGuardians = onGuardians, onActivity = onHistory, onProfile = onProfile, selected = "home") }) { padding ->
         Column(Modifier.fillMaxSize().padding(padding).padding(20.dp).verticalScroll(rememberScrollState())) {
-            if (practice) Text("TEST MODE", color = Color(0xFF111111), modifier = Modifier.fillMaxWidth().padding(8.dp))
+            if (practice) {
+                Surface(color = Color(0xFFF5C451), modifier = Modifier.fillMaxWidth()) {
+                    val minutes = viewModel.remainingMs / 60_000
+                    val seconds = (viewModel.remainingMs % 60_000) / 1_000
+                    Column(Modifier.padding(12.dp)) {
+                        Text("TEST MODE", color = Color(0xFF111111), fontWeight = FontWeight.Bold, fontSize = 18.sp)
+                        Text("%02d:%02d remaining".format(minutes, seconds), color = Color(0xFF111111))
+                    }
+                }
+            }
             Text(health.level.name.replace('_', ' '), fontSize = 34.sp, fontWeight = FontWeight.Bold)
             Text(if (health.level == ProtectionLevel.PROTECTED) "Guardian is ready." else "Manual SOS is available. Some protection is not ready.")
             if (viewModel.role == "RESPONDER") {
@@ -557,7 +759,7 @@ fun HomeScreen(
             health.checks.forEach { check ->
                 val mark = when (check.status) {
                     CheckStatus.PASS -> "Ready"
-                    CheckStatus.FAIL -> "Fix"
+                    CheckStatus.FAIL -> "Fix >"
                     CheckStatus.UNAVAILABLE -> "Later"
                 }
                 Row(Modifier.fillMaxWidth().padding(vertical = 6.dp), horizontalArrangement = Arrangement.SpaceBetween) {
@@ -565,8 +767,19 @@ fun HomeScreen(
                         Text(check.label, fontWeight = FontWeight.SemiBold)
                         Text(check.detail, color = Color(0xFFB7C0CC))
                     }
-                    if (check.status == CheckStatus.FAIL && (check.id == "location" || check.id == "notifications")) {
-                        TextButton(onClick = { if (check.id == "location") onAllowLocation() else onAllowNotifications() }) { Text(mark) }
+                    if (check.status == CheckStatus.FAIL) {
+                        TextButton(onClick = {
+                            when (check.id) {
+                                "location" -> onAllowLocation()
+                                "notifications" -> onAllowNotifications()
+                                "volume" -> onFixVolume()
+                                "safeword" -> onFixSafeWord()
+                                "guardian" -> onFixGuardian()
+                                "device" -> onFixDevice()
+                                "internet" -> context.startActivity(android.content.Intent(android.provider.Settings.ACTION_WIRELESS_SETTINGS))
+                                else -> onProtect()
+                            }
+                        }) { Text(mark) }
                     } else {
                         Text(mark)
                     }
@@ -604,13 +817,62 @@ fun HistoryScreen(
     onProfile: () -> Unit = onSettings,
     viewModel: HistoryViewModel = hiltViewModel(),
 ) {
-    val items by viewModel.items.collectAsStateWithLifecycle()
+    val rows by viewModel.items.collectAsStateWithLifecycle()
+    var selected by remember { mutableStateOf<HistoryRow?>(null) }
+    var selectedJourney by remember { mutableStateOf<za.co.guardian.data.JourneyWire?>(null) }
     androidx.compose.runtime.LaunchedEffect(Unit) { viewModel.refresh() }
     Scaffold(bottomBar = { BottomNav(onHome = onHome, onProtect = onProtect, onGuardians = onGuardians, onActivity = {}, onProfile = onProfile, selected = "activity") }) { padding ->
-        Column(Modifier.fillMaxSize().padding(padding).padding(20.dp)) {
-            Text("Activity", fontSize = 32.sp, fontWeight = FontWeight.SemiBold)
-            if (items.isEmpty()) Text("No SOS events on this phone yet.", modifier = Modifier.padding(top = 12.dp))
-            items.forEach { Text(it, modifier = Modifier.padding(top = 12.dp), fontSize = 18.sp) }
+        if (selected != null) {
+            Column(Modifier.fillMaxSize().padding(padding).padding(20.dp).verticalScroll(rememberScrollState())) {
+                TextButton(onClick = { selected = null }) { Text("Back") }
+                Text(if (selected!!.isTest) "Test history" else "Incident detail", fontSize = 28.sp, fontWeight = FontWeight.SemiBold)
+                Text("When ${selected!!.whenLabel}")
+                Text("Trigger ${selected!!.title}")
+                Text("Status ${selected!!.detail}")
+                Text("Local ID ${selected!!.id}")
+                Text("Operator response and evidence are on the monitoring hub for a synced incident.")
+            }
+        } else if (selectedJourney != null) {
+            Column(Modifier.fillMaxSize().padding(padding).padding(20.dp).verticalScroll(rememberScrollState())) {
+                TextButton(onClick = { selectedJourney = null }) { Text("Back") }
+                Text("Journey history", fontSize = 28.sp, fontWeight = FontWeight.SemiBold)
+                Text("Destination ${selectedJourney!!.destinationLabel.ifBlank { "saved journey" }}")
+                Text("Status ${selectedJourney!!.status}")
+                Text("Expected ${selectedJourney!!.expectedArrivalAt ?: "not set"}")
+            }
+        } else {
+            LazyColumn(Modifier.fillMaxSize().padding(padding).padding(20.dp)) {
+                item { Text("Activity", fontSize = 32.sp, fontWeight = FontWeight.SemiBold) }
+                item { Text("Incident history", fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 16.dp)) }
+                val incidents = rows.filter { !it.isTest }
+                if (incidents.isEmpty()) item { Text("No SOS events on this phone yet.", modifier = Modifier.padding(top = 8.dp)) }
+                items(incidents, key = { it.id }) { row ->
+                    TextButton(onClick = { selected = row }, modifier = Modifier.fillMaxWidth()) {
+                        Column(Modifier.fillMaxWidth()) {
+                            Text(row.title, fontWeight = FontWeight.SemiBold)
+                            Text("${row.whenLabel} · ${row.detail}")
+                        }
+                    }
+                }
+                item { Text("Journey history", fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 16.dp)) }
+                if (viewModel.journeys.isEmpty()) item { Text("No journeys on this account yet.", modifier = Modifier.padding(top = 8.dp)) }
+                items(viewModel.journeys, key = { it.id }) { journey ->
+                    TextButton(onClick = { selectedJourney = journey }, modifier = Modifier.fillMaxWidth()) {
+                        Text("${journey.destinationLabel.ifBlank { "Journey" }} · ${journey.status}")
+                    }
+                }
+                item { Text("Test history", fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 16.dp)) }
+                val tests = rows.filter { it.isTest }
+                if (tests.isEmpty()) item { Text("No test incidents on this phone yet.", modifier = Modifier.padding(top = 8.dp)) }
+                items(tests, key = { it.id }) { row ->
+                    TextButton(onClick = { selected = row }, modifier = Modifier.fillMaxWidth()) {
+                        Column(Modifier.fillMaxWidth()) {
+                            Text(row.title, fontWeight = FontWeight.SemiBold)
+                            Text("${row.whenLabel} · ${row.detail}")
+                        }
+                    }
+                }
+            }
         }
     }
 }
@@ -622,48 +884,20 @@ fun SettingsScreen(
     onSignedOut: () -> Unit,
     onGuardians: () -> Unit = onHistory,
     onProfile: () -> Unit = onSignedOut,
+    onVolume: () -> Unit = {},
+    onSafeWord: () -> Unit = {},
+    onJourney: () -> Unit = {},
+    onDuress: () -> Unit = {},
     viewModel: SettingsViewModel = hiltViewModel(),
 ) {
-    val context = androidx.compose.ui.platform.LocalContext.current
-    var safeWord by remember { mutableStateOf("") }
-    var destination by remember { mutableStateOf("") }
-    var minutes by remember { mutableStateOf("30") }
-    var decoyPin by remember { mutableStateOf("") }
-    var releasePin by remember { mutableStateOf("") }
-    var showVolumeDisclosure by remember { mutableStateOf(false) }
     var pendingMic by remember { mutableStateOf<String?>(null) }
     val audioPermission = androidx.activity.compose.rememberLauncherForActivityResult(
         androidx.activity.result.contract.ActivityResultContracts.RequestPermission(),
     ) { granted ->
-        when (pendingMic) {
-            "share" -> viewModel.updateShareAudio(granted)
-            "sample" -> if (granted) viewModel.recordSafeWordSample()
-            "listen" -> if (granted && viewModel.prepareSafeWord()) {
-                androidx.core.content.ContextCompat.startForegroundService(
-                    context,
-                    android.content.Intent(context, za.co.guardian.service.SafeWordService::class.java),
-                )
-            }
-        }
+        if (pendingMic == "share") viewModel.updateShareAudio(granted)
         pendingMic = null
     }
     androidx.compose.runtime.LaunchedEffect(Unit) { viewModel.refresh() }
-    if (showVolumeDisclosure) {
-        androidx.compose.material3.AlertDialog(
-            onDismissRequest = { showVolumeDisclosure = false },
-            title = { Text("Volume button SOS") },
-            text = {
-                Text("Guardian needs an accessibility service to notice the volume pattern you choose. It does not read the screen, does not block the volume buttons, and is not an accessibility tool. Android will show that Guardian is on. Play policy requires this disclosure before you enable it.")
-            },
-            confirmButton = {
-                TextButton(onClick = {
-                    showVolumeDisclosure = false
-                    context.startActivity(android.content.Intent(android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS))
-                }) { Text("Open settings") }
-            },
-            dismissButton = { TextButton(onClick = { showVolumeDisclosure = false }) { Text("Not now") } },
-        )
-    }
     Scaffold(bottomBar = { BottomNav(onHome = onHome, onProtect = {}, onGuardians = onGuardians, onActivity = onHistory, onProfile = onProfile, selected = "protect") }) { padding ->
         Column(Modifier.fillMaxSize().padding(padding).padding(20.dp).verticalScroll(rememberScrollState())) {
             Text("Protect", fontSize = 32.sp, fontWeight = FontWeight.SemiBold)
@@ -674,27 +908,13 @@ fun SettingsScreen(
             )
             Button(onClick = viewModel::startTest, modifier = Modifier.fillMaxWidth()) { Text("Start 10 minute test") }
             Spacer(Modifier.height(12.dp))
-            Button(onClick = { showVolumeDisclosure = true }, modifier = Modifier.fillMaxWidth()) { Text("Enable volume SOS") }
-            Button(onClick = viewModel::cycleVolumePattern, modifier = Modifier.fillMaxWidth()) { Text("Change volume pattern") }
-            Button(onClick = viewModel::cycleFreezePattern, modifier = Modifier.fillMaxWidth()) { Text("Change freeze volume pattern") }
-            OutlinedTextField(decoyPin, { decoyPin = it }, label = { Text("Decoy PIN (enters freeze screen)") }, modifier = Modifier.fillMaxWidth())
-            OutlinedTextField(releasePin, { releasePin = it }, label = { Text("Secret PIN to leave the freeze") }, modifier = Modifier.fillMaxWidth())
-            Button(onClick = { viewModel.saveFreezePins(decoyPin, releasePin); decoyPin = ""; releasePin = "" }, modifier = Modifier.fillMaxWidth()) { Text("Save freeze PINs") }
-            Text("Coercion protection: entering the decoy PIN or the freeze volume pattern holds this app on one frozen screen. Long-press the clock and enter the secret PIN to unlock. A reboot clears the freeze.", modifier = Modifier.padding(vertical = 8.dp))
-            Button(onClick = viewModel::cycleVolumeWindow, modifier = Modifier.fillMaxWidth()) { Text("Change volume timing window") }
-            Button(onClick = viewModel::toggleVolumeVibration, modifier = Modifier.fillMaxWidth()) { Text("Toggle volume vibration confirmation") }
-            Button(onClick = viewModel::startVolumeTest, modifier = Modifier.fillMaxWidth()) { Text("Test volume button for 30 seconds") }
-            OutlinedTextField(safeWord, { safeWord = it }, label = { Text("Safe word") }, modifier = Modifier.fillMaxWidth().padding(top = 12.dp))
-            Button(onClick = { viewModel.saveSafeWord(safeWord) }, modifier = Modifier.fillMaxWidth()) { Text("Save safe word on this phone") }
-            Button(onClick = {
-                pendingMic = "sample"
-                audioPermission.launch(android.Manifest.permission.RECORD_AUDIO)
-            }, modifier = Modifier.fillMaxWidth()) { Text("Record safe-word sample") }
-            Button(onClick = {
-                pendingMic = "listen"
-                audioPermission.launch(android.Manifest.permission.RECORD_AUDIO)
-            }, modifier = Modifier.fillMaxWidth()) { Text("Enable safe-word protection") }
-            Text("Detection runs on this phone from samples you record. Guardian does not upload those samples. The microphone indicator stays on while listening.", modifier = Modifier.padding(vertical = 8.dp))
+            Text("Mode ${viewModel.protectionMode.replace('_', ' ')}", fontWeight = FontWeight.SemiBold)
+            ModeCards(viewModel.protectionMode, viewModel::setMode)
+            Button(onClick = onVolume, modifier = Modifier.fillMaxWidth()) { Text("Volume SOS") }
+            Button(onClick = onSafeWord, modifier = Modifier.fillMaxWidth()) { Text("Safe word") }
+            Button(onClick = onJourney, modifier = Modifier.fillMaxWidth()) { Text("Active journey") }
+            Button(onClick = onDuress, modifier = Modifier.fillMaxWidth()) { Text("Duress & coercion") }
+            Button(onClick = viewModel::toggleFallWatch, modifier = Modifier.fillMaxWidth()) { Text("Toggle impact detection") }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 Text("Share short audio during an on-screen SOS")
                 Switch(checked = viewModel.shareAudio, onCheckedChange = { enabled ->
@@ -706,13 +926,6 @@ fun SettingsScreen(
                     }
                 })
             }
-            Button(onClick = viewModel::cycleProtectionMode, modifier = Modifier.fillMaxWidth().padding(top = 12.dp)) { Text("Change protection mode") }
-            Button(onClick = viewModel::toggleFallWatch, modifier = Modifier.fillMaxWidth()) { Text("Toggle impact detection") }
-            OutlinedTextField(destination, { destination = it }, label = { Text("Journey destination") }, modifier = Modifier.fillMaxWidth())
-            OutlinedTextField(minutes, { minutes = it }, label = { Text("Minutes") }, modifier = Modifier.fillMaxWidth())
-            Button(onClick = { viewModel.startJourney(destination, minutes) }, modifier = Modifier.fillMaxWidth()) { Text("Start journey, ride, meeting, or high-risk watch") }
-            Button(onClick = { viewModel.extendJourney("15") }, modifier = Modifier.fillMaxWidth()) { Text("Extend journey 15 minutes") }
-            Button(onClick = viewModel::completeJourney, modifier = Modifier.fillMaxWidth()) { Text("Mark arrived / end journey") }
             viewModel.status?.let { Text(it, modifier = Modifier.padding(top = 8.dp)) }
         }
     }
@@ -742,7 +955,10 @@ fun GuardiansScreen(
             OutlinedTextField(inviteToken, { inviteToken = it }, label = { Text("Invitation token to accept") }, modifier = Modifier.fillMaxWidth().padding(top = 12.dp))
             Button(onClick = { viewModel.acceptInvitation(inviteToken) }, modifier = Modifier.fillMaxWidth()) { Text("Accept invitation on this account") }
             viewModel.guardians.forEach { row ->
-                Text("${row.displayName} · ${row.invitationStatus}", modifier = Modifier.padding(top = 8.dp))
+                Text("${row.displayName} · ${row.relationship} · priority ${row.priority} · ${row.invitationStatus}", modifier = Modifier.padding(top = 8.dp))
+                if (!row.phone.isNullOrBlank()) Text(row.phone, color = Color(0xFFB7C0CC))
+                if (row.lastAcknowledgedAt != null) Text("Last acknowledged ${row.lastAcknowledgedAt}")
+                Button(onClick = { viewModel.removeGuardian(row.id) }, modifier = Modifier.fillMaxWidth()) { Text("Remove ${row.displayName}") }
             }
             if (viewModel.guardians.isEmpty()) Text("No guardians saved yet.", modifier = Modifier.padding(top = 12.dp))
             viewModel.status?.let { Text(it, modifier = Modifier.padding(top = 8.dp)) }
@@ -757,35 +973,22 @@ fun ProfileScreen(
     onGuardians: () -> Unit,
     onActivity: () -> Unit,
     onSignedOut: () -> Unit,
+    onEmergencyProfile: () -> Unit = {},
+    onDevices: () -> Unit = {},
+    onPrivacy: () -> Unit = {},
+    onHelp: () -> Unit = {},
     viewModel: SettingsViewModel = hiltViewModel(),
 ) {
-    var blood by remember { mutableStateOf("") }
-    var allergies by remember { mutableStateOf("") }
-    var medications by remember { mutableStateOf("") }
-    var profileNotes by remember { mutableStateOf("") }
-    var cancelPin by remember { mutableStateOf("") }
-    var duressPin by remember { mutableStateOf("") }
     androidx.compose.runtime.LaunchedEffect(Unit) { viewModel.refresh() }
     Scaffold(bottomBar = { BottomNav(onHome = onHome, onProtect = onProtect, onGuardians = onGuardians, onActivity = onActivity, onProfile = {}, selected = "profile") }) { padding ->
         Column(Modifier.fillMaxSize().padding(padding).padding(20.dp).verticalScroll(rememberScrollState())) {
             Text("Profile", fontSize = 32.sp, fontWeight = FontWeight.SemiBold)
-            OutlinedTextField(blood, { blood = it }, label = { Text("Blood type") }, modifier = Modifier.fillMaxWidth().padding(top = 12.dp))
-            OutlinedTextField(allergies, { allergies = it }, label = { Text("Allergies") }, modifier = Modifier.fillMaxWidth())
-            OutlinedTextField(medications, { medications = it }, label = { Text("Medications") }, modifier = Modifier.fillMaxWidth())
-            OutlinedTextField(profileNotes, { profileNotes = it }, label = { Text("Emergency notes") }, modifier = Modifier.fillMaxWidth())
-            Button(onClick = { viewModel.saveProfile(blood, allergies, medications, profileNotes) }, modifier = Modifier.fillMaxWidth()) { Text("Save emergency profile") }
-            OutlinedTextField(cancelPin, { cancelPin = it }, label = { Text("Cancel PIN") }, modifier = Modifier.fillMaxWidth())
-            OutlinedTextField(duressPin, { duressPin = it }, label = { Text("Duress PIN") }, modifier = Modifier.fillMaxWidth())
-            Button(onClick = { viewModel.savePins(cancelPin, duressPin); cancelPin = ""; duressPin = "" }, modifier = Modifier.fillMaxWidth()) { Text("Save PINs") }
-            Text("Devices on this account. Revoke a lost phone. Sign-out stops listening unless an emergency is already open.", modifier = Modifier.padding(vertical = 8.dp))
-            viewModel.devices.forEach { device ->
-                val state = if (device.revokedAt != null) "revoked" else if (device.fcmToken != null) "push ready" else "no push token"
-                Text("${device.model ?: "Phone"} · ${device.osVersion} · $state", modifier = Modifier.padding(top = 8.dp))
-                if (device.revokedAt == null) {
-                    Button(onClick = { viewModel.revokeDevice(device.id) }, modifier = Modifier.fillMaxWidth()) { Text("Revoke this device") }
-                }
-            }
-            Button(onClick = viewModel::checkConnection, modifier = Modifier.fillMaxWidth().padding(top = 12.dp)) { Text("Check connection") }
+            Text("Blood type ${viewModel.profile?.bloodType ?: "not loaded"}", modifier = Modifier.padding(top = 12.dp))
+            Button(onClick = onEmergencyProfile, modifier = Modifier.fillMaxWidth()) { Text("Emergency profile") }
+            Button(onClick = onDevices, modifier = Modifier.fillMaxWidth()) { Text("My devices") }
+            Button(onClick = onPrivacy, modifier = Modifier.fillMaxWidth()) { Text("Account & privacy") }
+            Button(onClick = onHelp, modifier = Modifier.fillMaxWidth()) { Text("Help & support") }
+            Button(onClick = viewModel::checkConnection, modifier = Modifier.fillMaxWidth()) { Text("Check connection") }
             viewModel.status?.let { Text(it, modifier = Modifier.padding(top = 8.dp)) }
             Spacer(Modifier.height(20.dp))
             Button(onClick = { viewModel.signOut(onSignedOut) }, modifier = Modifier.fillMaxWidth()) { Text("Sign out") }
@@ -819,7 +1022,15 @@ fun ActiveIncidentScreen(onBack: () -> Unit, viewModel: SettingsViewModel = hilt
     androidx.compose.runtime.LaunchedEffect(Unit) { viewModel.refresh() }
     Scaffold { padding ->
         Column(Modifier.fillMaxSize().padding(padding).padding(20.dp).verticalScroll(rememberScrollState())) {
-            Text("Active incident", fontSize = 32.sp, fontWeight = FontWeight.SemiBold)
+            Text(if (viewModel.incidentActive) "SOS ACTIVE" else "Active incident", fontSize = 32.sp, fontWeight = FontWeight.SemiBold)
+            Text("SOS sent                 ✓")
+            Text("Monitoring acknowledged  — waiting")
+            Text("Guardian notified        — server")
+            Text("Last location            ${viewModel.lastLocation}")
+            Text("Battery                  ${viewModel.battery ?: "unknown"}%")
+            Text("Network                  ${viewModel.network}")
+            Text("Evidence                 Recording if you capture it")
+            Text("Responder                Assigned on the hub")
             Text("Photos and video are taken by you, with the camera app visible. They are not captured in the background.", modifier = Modifier.padding(vertical = 8.dp))
             Button(onClick = { cameraPermission.launch(android.Manifest.permission.CAMERA) }, modifier = Modifier.fillMaxWidth()) { Text("Take a photo") }
             Button(onClick = {
@@ -828,8 +1039,8 @@ fun ActiveIncidentScreen(onBack: () -> Unit, viewModel: SettingsViewModel = hilt
                 intent.putExtra(android.provider.MediaStore.EXTRA_VIDEO_QUALITY, 0)
                 videoCapture.launch(intent)
             }, modifier = Modifier.fillMaxWidth()) { Text("Record a short video") }
-            OutlinedTextField(cancelPin, { cancelPin = it }, label = { Text("Cancel PIN") }, modifier = Modifier.fillMaxWidth().padding(top = 12.dp))
-            Button(onClick = { viewModel.cancel(cancelPin) }, modifier = Modifier.fillMaxWidth()) { Text("Cancel emergency with PIN") }
+            PasswordField(cancelPin, { cancelPin = it }, "Cancel PIN", numeric = true)
+            Button(onClick = { viewModel.cancel(cancelPin) }, modifier = Modifier.fillMaxWidth()) { Text("I'm safe / cancel with PIN") }
             Text("The cancel screen always says the emergency is cancelled. A duress PIN keeps monitoring open. Android still shows location and microphone icons.", modifier = Modifier.padding(vertical = 8.dp))
             viewModel.status?.let { Text(it, modifier = Modifier.padding(top = 8.dp)) }
             Button(onClick = onBack, modifier = Modifier.fillMaxWidth()) { Text("Back") }
@@ -847,36 +1058,17 @@ private fun BottomNav(
     selected: String,
 ) {
     NavigationBar {
-        NavigationBarItem(selected = selected == "home", onClick = onHome, icon = { Text("Home") }, label = { Text("Home") })
-        NavigationBarItem(selected = selected == "protect", onClick = onProtect, icon = { Text("Protect") }, label = { Text("Protect") })
-        NavigationBarItem(selected = selected == "guardians", onClick = onGuardians, icon = { Text("Guardians") }, label = { Text("Guardians") })
-        NavigationBarItem(selected = selected == "activity", onClick = onActivity, icon = { Text("Activity") }, label = { Text("Activity") })
-        NavigationBarItem(selected = selected == "profile", onClick = onProfile, icon = { Text("Profile") }, label = { Text("Profile") })
+        NavigationBarItem(selected = selected == "home", onClick = onHome, icon = { Icon(Icons.Filled.Home, contentDescription = "Home") }, label = { Text("Home") })
+        NavigationBarItem(selected = selected == "protect", onClick = onProtect, icon = { Icon(Icons.Filled.Lock, contentDescription = "Protect") }, label = { Text("Protect") })
+        NavigationBarItem(selected = selected == "guardians", onClick = onGuardians, icon = { Icon(Icons.Filled.Person, contentDescription = "Guardians") }, label = { Text("Guardians") })
+        NavigationBarItem(selected = selected == "activity", onClick = onActivity, icon = { Icon(Icons.Filled.DateRange, contentDescription = "Activity") }, label = { Text("Activity") })
+        NavigationBarItem(selected = selected == "profile", onClick = onProfile, icon = { Icon(Icons.Filled.Settings, contentDescription = "Profile") }, label = { Text("Profile") })
     }
 }
 
 @Composable
-fun OnboardingScreen(onDone: () -> Unit, viewModel: SettingsViewModel = hiltViewModel()) {
-    var step by remember { mutableStateOf(0) }
-    val steps = listOf(
-        "Guardian sends a deliberate SOS immediately. Volume, safe word, and the SOS button do not wait for a risk score.",
-        "Guardians are people you name. SMS and push are sent only when those providers are configured. A private room link is created for a live SOS.",
-        "Photos and video are taken by you, with the camera app visible. They are not captured in the background.",
-        "Impact detection shows a notification and waits 20 seconds. A watch signed with the same key can send SOS. This phone is not an iPhone app.",
-    )
-    Scaffold { padding ->
-        Column(Modifier.fillMaxSize().padding(padding).padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Text("Setup ${step + 1} of ${steps.size}", fontSize = 28.sp, fontWeight = FontWeight.SemiBold)
-            Text(steps[step])
-            Button(onClick = {
-                if (step == steps.lastIndex) {
-                    viewModel.finishOnboarding(onDone)
-                } else {
-                    step += 1
-                }
-            }, modifier = Modifier.fillMaxWidth()) { Text(if (step == steps.lastIndex) "Finish setup" else "Continue") }
-        }
-    }
+fun OnboardingScreen(onDone: () -> Unit) {
+    SetupOnboardingScreen(onDone)
 }
 
 @Composable

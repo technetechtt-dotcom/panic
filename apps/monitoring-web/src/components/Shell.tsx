@@ -69,11 +69,13 @@ export function Shell({ children }: { children: ReactNode }) {
         <p className="text-sm uppercase tracking-[0.2em] text-warn">Guardian</p>
         <p className="mt-1 text-sm text-slate-300">{session?.user.displayName}</p>
         <p className="text-xs text-slate-400">{role.replace(/_/g, " ")}</p>
-        <nav className="mt-4 flex flex-wrap gap-2 md:flex-col">
-          <NavItem to="/">Incidents</NavItem>
+        <nav className="mt-4 flex flex-col gap-2 md:flex-col">
+          <NavItem to="/">Dashboard</NavItem>
+          <NavItem to="/incidents">Incidents</NavItem>
           {manage ? <NavItem to="/people">People</NavItem> : null}
           {platform ? <NavItem to="/platform">Platform</NavItem> : null}
           {manage ? <NavItem to="/audit">Audit</NavItem> : null}
+          <NavItem to="/security">Security</NavItem>
         </nav>
         <button type="button" onClick={() => void logout()} className="mt-4 rounded-lg border border-line px-3 py-2 text-sm">
           Sign out

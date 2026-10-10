@@ -17,6 +17,8 @@ import type {
   StoredLocation,
   StoredTimelineEvent,
   TimelineStore,
+  RecoveryRecord,
+  RecoveryStore,
   UserRecord,
   UserStore,
 } from "../domain/ports";
@@ -83,10 +85,63 @@ export class PrismaUserStore implements UserStore {
 
   async insert(user: UserRecord): Promise<void> {
     try {
-      await this.prisma.user.create({ data: user });
+      await this.prisma.user.create({
+        data: {
+          id: user.id,
+          email: user.email,
+          passwordHash: user.passwordHash,
+          displayName: user.displayName,
+          role: user.role,
+          phone: user.phone ?? null,
+          emailVerifiedAt: user.emailVerifiedAt ?? null,
+          createdAt: user.createdAt,
+          updatedAt: user.updatedAt,
+        },
+      });
     } catch (error) {
       rethrow(error);
     }
+  }
+
+  async save(user: UserRecord): Promise<void> {
+    await this.prisma.user.update({
+      where: { id: user.id },
+      data: {
+        passwordHash: user.passwordHash,
+        displayName: user.displayName,
+        phone: user.phone ?? null,
+        emailVerifiedAt: user.emailVerifiedAt ?? null,
+        updatedAt: user.updatedAt,
+      },
+    });
+  }
+}
+
+export class PrismaRecoveryStore implements RecoveryStore {
+  constructor(private readonly prisma: PrismaClient) {}
+
+  async insert(record: RecoveryRecord): Promise<void> {
+    await this.prisma.recoveryToken.create({
+      data: {
+        id: crypto.randomUUID(),
+        userId: record.userId,
+        tokenHash: record.tokenHash,
+        purpose: record.purpose,
+        expiresAt: record.expiresAt,
+        consumedAt: record.consumedAt,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      },
+    });
+  }
+
+  async consume(tokenHash: string, purpose: RecoveryRecord["purpose"], now: Date): Promise<string | null> {
+    const row = await this.prisma.recoveryToken.findFirst({
+      where: { tokenHash, purpose, consumedAt: null, expiresAt: { gt: now } },
+    });
+    if (!row) return null;
+    await this.prisma.recoveryToken.update({ where: { id: row.id }, data: { consumedAt: now, updatedAt: now } });
+    return row.userId;
   }
 }
 
@@ -170,6 +225,9 @@ export class PrismaDeviceStore implements DeviceStore {
         publicKey: device.publicKey ?? null,
         fcmToken: device.fcmToken ?? null,
         revokedAt: device.revokedAt ?? null,
+        lastSeenAt: device.lastSeenAt ?? null,
+        nickname: device.nickname ?? null,
+        pushTokenUpdatedAt: device.pushTokenUpdatedAt ?? null,
         updatedAt: device.updatedAt,
       },
     });
@@ -188,6 +246,9 @@ function toDeviceRecord(row: {
   publicKey: string | null;
   fcmToken?: string | null;
   revokedAt?: Date | null;
+  lastSeenAt?: Date | null;
+  nickname?: string | null;
+  pushTokenUpdatedAt?: Date | null;
   createdAt: Date;
   updatedAt: Date;
 }): DeviceRecord {
@@ -206,6 +267,9 @@ function toDeviceRecord(row: {
     publicKey: row.publicKey,
     fcmToken: row.fcmToken ?? null,
     revokedAt: row.revokedAt ?? null,
+    lastSeenAt: row.lastSeenAt ?? null,
+    nickname: row.nickname ?? null,
+    pushTokenUpdatedAt: row.pushTokenUpdatedAt ?? null,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };

@@ -23,6 +23,7 @@ export interface TrustedContactRecord {
   guardianUserId?: string | null;
   invitationStatus?: string;
   invitationToken?: string | null;
+  lastAcknowledgedAt?: Date | null;
   createdAt: Date;
 }
 
@@ -55,6 +56,7 @@ export interface JourneyStore {
   find(id: string, userId: string): Promise<JourneyRecord | null>;
   save(journey: JourneyRecord): Promise<void>;
   listActive(): Promise<JourneyRecord[]>;
+  listForUser?(userId: string): Promise<JourneyRecord[]>;
 }
 
 export interface RiskStore {
@@ -166,6 +168,11 @@ export class ProtectionService {
     contact.invitationStatus = "ACCEPTED";
     await this.guardians.save(contact);
     return contact;
+  }
+
+  listJourneys(actor: Actor): Promise<JourneyRecord[]> {
+    this.own(actor);
+    return this.journeys.listForUser?.(actor.id) ?? this.journeys.listActive().then((rows) => rows.filter((row) => row.userId === actor.id));
   }
 
   async extendJourney(actor: Actor, id: string, minutes: number): Promise<JourneyRecord> {

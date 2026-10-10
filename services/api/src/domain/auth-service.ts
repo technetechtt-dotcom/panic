@@ -1,13 +1,29 @@
 import type { Role } from "@guardian/shared-types";
 import { AppError } from "./errors";
+import { randomBytes } from "node:crypto";
 import type {
   Clock,
   ConsentStore,
   IdGenerator,
+  RecoveryStore,
   RefreshTokenStore,
   UserRecord,
   UserStore,
 } from "./ports";
+import type { RecoveryRecord } from "./ports";
+
+class MemoryRecovery implements RecoveryStore {
+  private readonly rows = new Map<string, RecoveryRecord>();
+  async insert(record: RecoveryRecord): Promise<void> {
+    this.rows.set(`${record.purpose}:${record.tokenHash}`, record);
+  }
+  async consume(tokenHash: string, purpose: RecoveryRecord["purpose"], now: Date): Promise<string | null> {
+    const row = this.rows.get(`${purpose}:${tokenHash}`);
+    if (!row || row.consumedAt || row.expiresAt.getTime() < now.getTime()) return null;
+    row.consumedAt = now;
+    return row.userId;
+  }
+}
 import { generateTotpSecret, readMfaChallenge, signMfaChallenge, verifyTotp } from "./operations";
 import {
   generateRefreshToken,
@@ -65,12 +81,14 @@ export class AuthService {
       metadata?: Record<string, unknown>;
     }) => Promise<void>,
     private readonly mfa: { store: MfaStore; secret: string } | null = null,
+    private readonly recovery: RecoveryStore = new MemoryRecovery(),
   ) {}
 
   async register(input: {
     email: string;
     password: string;
     displayName: string;
+    phone?: string;
   }): Promise<AuthResult> {
     const email = input.email.trim().toLowerCase();
     const existing = await this.users.findByEmail(email);
@@ -84,6 +102,7 @@ export class AuthService {
       passwordHash: await this.passwords.hash(input.password),
       displayName: input.displayName.trim(),
       role: "USER",
+      phone: input.phone?.trim() || null,
       createdAt: now,
       updatedAt: now,
     };
@@ -97,7 +116,70 @@ export class AuthService {
       createdAt: now,
     });
     await this.audit({ actorId: user.id, action: "auth.register", entityId: user.id });
+    await this.issueEmailToken(user.id);
     return this.issue(user, this.ids.uuid());
+  }
+
+  async requestPasswordReset(email: string): Promise<{ accepted: true; emailSent: boolean; devToken?: string }> {
+    const user = await this.users.findByEmail(email.trim().toLowerCase());
+    const emailSent = Boolean(process.env.SMTP_URL?.trim());
+    if (!user) return { accepted: true, emailSent };
+    const token = randomBytes(24).toString("base64url");
+    await this.recovery.insert({
+      tokenHash: hashToken(token),
+      userId: user.id,
+      purpose: "PASSWORD_RESET",
+      expiresAt: new Date(this.clock.now().getTime() + 30 * 60 * 1000),
+      consumedAt: null,
+    });
+    await this.audit({ actorId: user.id, action: "auth.password_reset_requested", entityId: user.id });
+    return process.env.NODE_ENV === "production"
+      ? { accepted: true, emailSent }
+      : { accepted: true, emailSent, devToken: token };
+  }
+
+  async resetPassword(token: string, password: string): Promise<void> {
+    const userId = await this.recovery.consume(hashToken(token), "PASSWORD_RESET", this.clock.now());
+    if (!userId) throw new AppError("INVALID_RESET", 400, "That reset link is not valid or has expired.");
+    const user = await this.users.findById(userId);
+    if (!user) throw new AppError("INVALID_RESET", 400, "That reset link is not valid or has expired.");
+    user.passwordHash = await this.passwords.hash(password);
+    user.updatedAt = this.clock.now();
+    await this.users.save?.(user);
+    await this.audit({ actorId: user.id, action: "auth.password_reset", entityId: user.id });
+  }
+
+  async requestEmailVerification(userId: string): Promise<{ emailSent: boolean; devToken?: string }> {
+    const token = await this.issueEmailToken(userId);
+    const emailSent = Boolean(process.env.SMTP_URL?.trim());
+    return process.env.NODE_ENV === "production" ? { emailSent } : { emailSent, devToken: token };
+  }
+
+  async verifyEmail(token: string): Promise<void> {
+    const userId = await this.recovery.consume(hashToken(token), "EMAIL_VERIFY", this.clock.now());
+    if (!userId) throw new AppError("INVALID_VERIFY", 400, "That verification link is not valid or has expired.");
+    const user = await this.users.findById(userId);
+    if (!user) throw new AppError("INVALID_VERIFY", 400, "That verification link is not valid or has expired.");
+    user.emailVerifiedAt = this.clock.now();
+    user.updatedAt = this.clock.now();
+    await this.users.save?.(user);
+    await this.audit({ actorId: user.id, action: "auth.email_verified", entityId: user.id });
+  }
+
+  private async issueEmailToken(userId: string): Promise<string> {
+    const token = randomBytes(24).toString("base64url");
+    try {
+      await this.recovery.insert({
+        tokenHash: hashToken(token),
+        userId,
+        purpose: "EMAIL_VERIFY",
+        expiresAt: new Date(this.clock.now().getTime() + 24 * 60 * 60 * 1000),
+        consumedAt: null,
+      });
+    } catch {
+      // Registration still succeeds if the recovery table is unavailable.
+    }
+    return token;
   }
 
   async login(input: { email: string; password: string }): Promise<LoginResult> {

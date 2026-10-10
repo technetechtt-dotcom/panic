@@ -46,24 +46,41 @@ enum ContactStatus {
 }
 
 model User {
-  id           String          @id @db.Uuid
-  email        String          @unique
-  passwordHash String
-  displayName  String
-  role         Role            @default(USER)
-  createdAt    DateTime        @default(now())
-  updatedAt    DateTime        @updatedAt
-  devices      Device[]
-  incidents    Incident[]
-  refreshTokens RefreshToken[]
-  consents     ConsentRecord[]
-  auditEvents  AuditEvent[]    @relation("AuditActor")
-  safetyPin    SafetyPin?
-  guardians    TrustedContact[]
-  journeys     ProtectionSession[]
-  profile      EmergencyProfile?
-  mfa          OperatorMfa?
-  assignments  ResponderAssignment[]
+  id              String          @id @db.Uuid
+  email           String          @unique
+  passwordHash    String
+  displayName     String
+  role            Role            @default(USER)
+  phone           String?
+  emailVerifiedAt DateTime?
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  devices         Device[]
+  incidents       Incident[]
+  refreshTokens   RefreshToken[]
+  consents        ConsentRecord[]
+  auditEvents     AuditEvent[]    @relation("AuditActor")
+  safetyPin       SafetyPin?
+  guardians       TrustedContact[]
+  journeys        ProtectionSession[]
+  profile         EmergencyProfile?
+  mfa             OperatorMfa?
+  assignments     ResponderAssignment[]
+  recoveries      RecoveryToken[]
+}
+
+model RecoveryToken {
+  id          String    @id @db.Uuid
+  userId      String    @db.Uuid
+  tokenHash   String    @unique
+  purpose     String
+  expiresAt   DateTime
+  consumedAt  DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, purpose])
 }
 
 model RefreshToken {
@@ -108,6 +125,9 @@ model Device {
   emergencyTokenHash String?
   fcmToken           String?
   revokedAt          DateTime?
+  lastSeenAt         DateTime?
+  nickname           String?
+  pushTokenUpdatedAt DateTime?
   createdAt          DateTime   @default(now())
   updatedAt          DateTime   @updatedAt
   user               User       @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -279,6 +299,10 @@ model TrustedContact {
   guardianUserId     String?  @db.Uuid
   invitationStatus   String   @default("ACCEPTED")
   invitationToken    String?  @unique
+  verifiedAt         DateTime?
+  lastNotifiedAt     DateTime?
+  lastAcknowledgedAt DateTime?
+  active             Boolean  @default(true)
   createdAt          DateTime @default(now())
   updatedAt          DateTime @updatedAt
   user               User     @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -358,14 +382,34 @@ model OperatorMfa {
 }
 
 model NotificationDelivery {
-  id          String   @id @db.Uuid
-  incidentId  String   @db.Uuid
-  channel     String
-  destination String
-  status      String
-  detail      String
-  createdAt   DateTime @default(now())
-  incident    Incident @relation(fields: [incidentId], references: [id], onDelete: Cascade)
+  id                String    @id @db.Uuid
+  incidentId        String    @db.Uuid
+  channel           String
+  destination       String
+  status            String
+  detail            String
+  providerMessageId String?
+  attemptNumber     Int       @default(1)
+  queuedAt          DateTime?
+  sentAt            DateTime?
+  deliveredAt       DateTime?
+  failedAt          DateTime?
+  failureCode       String?
+  openedAt          DateTime?
+  acknowledgedAt    DateTime?
+  createdAt         DateTime  @default(now())
+  incident          Incident  @relation(fields: [incidentId], references: [id], onDelete: Cascade)
+
+  @@index([incidentId, createdAt])
+}
+
+model EvidenceAccessLog {
+  id         String   @id @db.Uuid
+  incidentId String   @db.Uuid
+  evidenceId String
+  actorId    String?  @db.Uuid
+  action     String
+  createdAt  DateTime @default(now())
 
   @@index([incidentId, createdAt])
 }
@@ -384,15 +428,35 @@ model IncidentRoom {
 }
 
 model ResponderAssignment {
-  id          String   @id @db.Uuid
-  incidentId  String   @db.Uuid
-  responderId String   @db.Uuid
+  id          String    @id @db.Uuid
+  incidentId  String    @db.Uuid
+  responderId String    @db.Uuid
   status      String
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-  incident    Incident @relation(fields: [incidentId], references: [id], onDelete: Cascade)
-  responder   User     @relation(fields: [responderId], references: [id])
+  assignedAt  DateTime?
+  acceptedAt  DateTime?
+  enRouteAt   DateTime?
+  arrivedAt   DateTime?
+  locatedAt   DateTime?
+  declinedAt  DateTime?
+  completedAt DateTime?
+  assignedBy  String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  incident    Incident  @relation(fields: [incidentId], references: [id], onDelete: Cascade)
+  responder   User      @relation(fields: [responderId], references: [id])
 
   @@unique([incidentId, responderId])
-  @@index([responderId])
+}
+
+model ResponderProfile {
+  id           String   @id @db.Uuid
+  userId       String   @unique @db.Uuid
+  team         String?
+  region       String?
+  capabilities String?
+  vehicle      String?
+  phone        String?
+  availability String   @default("AVAILABLE")
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
 }

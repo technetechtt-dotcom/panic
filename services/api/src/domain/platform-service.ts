@@ -155,25 +155,31 @@ export class PlatformService {
     this.operator(actor);
     const row = await this.prisma.evidenceChunk.findFirst({ where: { incidentId, id: chunkId } });
     if (!row) throw new AppError("NOT_FOUND", 404, "That evidence was not found.");
-    if (row.storageKey) {
-      const opened = await this.vault.get(row.storageKey);
-      if (!opened) throw new AppError("NOT_FOUND", 404, "The evidence file is not in the vault.");
-      await this.prisma.auditEvent.create({
-        data: {
-          id: this.ids.uuid(),
-          actorId: actor.id,
-          action: "evidence.read",
-          entityType: "EvidenceChunk",
-          entityId: row.id,
-          correlationId: incidentId,
-          requestId: null,
-          metadata: { incidentId, contentType: row.contentType },
-          createdAt: this.clock.now(),
-        },
-      }).catch(() => undefined);
-      return { bytes: opened, contentType: row.contentType };
-    }
-    return { bytes: Buffer.from(row.payload), contentType: row.contentType };
+    const bytes = row.storageKey ? await this.vault.get(row.storageKey) : Buffer.from(row.payload);
+    if (!bytes) throw new AppError("NOT_FOUND", 404, "The evidence file is not in the vault.");
+    await this.prisma.auditEvent.create({
+      data: {
+        id: this.ids.uuid(),
+        actorId: actor.id,
+        action: "evidence.read",
+        entityType: "EvidenceChunk",
+        entityId: row.id,
+        correlationId: incidentId,
+        requestId: null,
+        metadata: { incidentId, contentType: row.contentType },
+        createdAt: this.clock.now(),
+      },
+    }).catch(() => undefined);
+    await this.prisma.evidenceAccessLog.create({
+      data: {
+        id: this.ids.uuid(),
+        incidentId,
+        evidenceId: row.id,
+        actorId: actor.id,
+        action: "read",
+      },
+    }).catch(() => undefined);
+    return { bytes, contentType: row.contentType };
   }
 
   async listResponders(actor: Actor) {
@@ -183,17 +189,29 @@ export class PlatformService {
       select: { id: true, displayName: true, email: true },
       take: 100,
     });
+    const profiles = await this.prisma.responderProfile.findMany({
+      where: { userId: { in: rows.map((row) => row.id) } },
+    }).catch(() => []);
+    const profileByUser = new Map(profiles.map((row) => [row.userId, row]));
     const busy = await this.prisma.responderAssignment.findMany({
       where: { status: { in: ["ASSIGNED", "RESPONDING"] } },
       select: { responderId: true, incidentId: true },
     });
     const busyIds = new Set(busy.map((row) => row.responderId));
-    return rows.map((row) => ({
-      id: row.id,
-      displayName: row.displayName,
-      email: row.email,
-      status: busyIds.has(row.id) ? "BUSY" : "AVAILABLE",
-    }));
+    return rows.map((row) => {
+      const profile = profileByUser.get(row.id);
+      return {
+        id: row.id,
+        displayName: row.displayName,
+        email: row.email,
+        status: busyIds.has(row.id) ? "BUSY" : profile?.availability ?? "AVAILABLE",
+        team: profile?.team ?? null,
+        region: profile?.region ?? null,
+        capabilities: profile?.capabilities ?? null,
+        vehicle: profile?.vehicle ?? null,
+        phone: profile?.phone ?? null,
+      };
+    });
   }
 
   async claimIncident(actor: Actor, incidentId: string, requestId: string | null) {
@@ -473,6 +491,14 @@ export class PlatformService {
       fcmConfigured: fcmHealth() === "CONFIGURED",
       apnsConfigured: apnsHealth() === "CONFIGURED",
       s3Configured: s3Configured(),
+      redis: process.env.REDIS_URL?.trim() ? "configured" : "not configured",
+      websocket: "socket.io process attached",
+      environment: process.env.NODE_ENV ?? "development",
+      release: process.env.npm_package_version ?? "unknown",
+      gitCommit: process.env.GIT_COMMIT ?? process.env.SOURCE_VERSION ?? "unknown",
+      evidenceQueue: "in-process",
+      notificationBacklog: "in-process",
+      lastBackup: "not recorded by this process",
     };
   }
 

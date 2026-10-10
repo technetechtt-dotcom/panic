@@ -21,6 +21,9 @@ export const registerSchema = z
     password: z.string().min(12).max(128),
     displayName: z.string().trim().min(1).max(80),
     acceptedSafetyConsent: z.literal(true),
+    acceptedTerms: z.boolean().optional(),
+    acceptedPrivacy: z.boolean().optional(),
+    phone: z.string().trim().max(20).optional(),
   })
   .strict();
 
@@ -30,6 +33,17 @@ export const loginSchema = z
     password: z.string().min(1).max(128),
   })
   .strict();
+
+export const passwordForgotSchema = z.object({ email: z.string().trim().email().max(254) }).strict();
+
+export const passwordResetSchema = z
+  .object({
+    token: z.string().trim().min(20).max(200),
+    password: z.string().min(12).max(128),
+  })
+  .strict();
+
+export const emailVerifySchema = z.object({ token: z.string().trim().min(20).max(200) }).strict();
 
 export const refreshSchema = z
   .object({

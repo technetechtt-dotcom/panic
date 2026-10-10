@@ -68,6 +68,14 @@ export function RoomPage() {
               I have this incident
             </button>
           )}
+          {current.location?.latitude != null && current.location.longitude != null ? (
+            <a
+              className="mt-3 block text-sm underline"
+              href={`https://www.openstreetmap.org/?mlat=${current.location.latitude}&mlon=${current.location.longitude}#map=16/${current.location.latitude}/${current.location.longitude}`}
+            >
+              Open navigation to last confirmed point
+            </a>
+          ) : null}
         </section>
       ) : null}
     </main>

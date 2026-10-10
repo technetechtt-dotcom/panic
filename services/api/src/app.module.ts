@@ -36,6 +36,7 @@ import {
   PrismaHeartbeatStore,
   PrismaIncidentStore,
   PrismaLocationStore,
+  PrismaRecoveryStore,
   PrismaRefreshTokenStore,
   PrismaTimelineStore,
   PrismaUserStore,
@@ -146,6 +147,7 @@ import { UsersController } from "./modules/users/users.controller";
             });
           },
           { store: new PrismaMfaStore(prisma), secret: config.jwtSecret },
+          new PrismaRecoveryStore(prisma),
         ),
       inject: [USER_STORE, REFRESH_STORE, CONSENT_STORE, PASSWORD_HASHER, ACCESS_TOKENS, IDS, CLOCK, APP_CONFIG, AUDIT_STORE, PrismaService],
     },

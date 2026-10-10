@@ -18,16 +18,31 @@ import za.co.guardian.data.PhoneSignals
 import za.co.guardian.data.SettingsStore
 import za.co.guardian.data.TokenStore
 import za.co.guardian.ui.ActiveIncidentScreen
+import za.co.guardian.ui.DevicesPage
+import za.co.guardian.ui.DuressPage
+import za.co.guardian.ui.EmergencyProfilePage
+import za.co.guardian.ui.ForgotPasswordScreen
 import za.co.guardian.ui.GuardianTheme
 import za.co.guardian.ui.GuardiansScreen
-import za.co.guardian.ui.OnboardingScreen
 import za.co.guardian.ui.HistoryScreen
 import za.co.guardian.ui.HomeScreen
+import za.co.guardian.ui.JourneyPage
+import za.co.guardian.ui.LegalPage
 import za.co.guardian.ui.LoginScreen
+import za.co.guardian.ui.OnboardingScreen
+import za.co.guardian.ui.PrivacyPage
 import za.co.guardian.ui.ProfileScreen
 import za.co.guardian.ui.RegisterScreen
+import za.co.guardian.ui.ResetPasswordScreen
+import za.co.guardian.ui.SafeWordPage
 import za.co.guardian.ui.SettingsScreen
+import za.co.guardian.ui.VerifyEmailScreen
+import za.co.guardian.ui.VolumeSosPage
 import za.co.guardian.ui.WelcomeScreen
+import za.co.guardian.ui.helpCopy
+import za.co.guardian.ui.privacyCopy
+import za.co.guardian.ui.safetyCopy
+import za.co.guardian.ui.termsCopy
 import javax.inject.Inject
 
 @AndroidEntryPoint
@@ -57,16 +72,56 @@ class MainActivity : ComponentActivity() {
         setContent {
             GuardianTheme {
                 val nav = rememberNavController()
-                NavHost(nav, startDestination = if (signedIn) "home" else "welcome") {
+                val start = when {
+                    !signedIn -> "welcome"
+                    !settings.onboarded() -> "onboarding"
+                    settings.incidentActive() -> "active"
+                    else -> "home"
+                }
+                fun afterAuth() {
+                    signedIn = true
+                    val dest = if (settings.onboarded()) "home" else "onboarding"
+                    nav.navigate(dest) { popUpTo("welcome") { inclusive = true } }
+                }
+                fun signOut() {
+                    signedIn = false
+                    nav.navigate("welcome") { popUpTo(0) { inclusive = true } }
+                }
+                NavHost(nav, startDestination = start) {
                     composable("welcome") {
-                        WelcomeScreen(onRegister = { nav.navigate("register") }, onLogin = { nav.navigate("login") })
+                        WelcomeScreen(
+                            onRegister = { nav.navigate("register") },
+                            onLogin = { nav.navigate("login") },
+                            onPrivacy = { nav.navigate("legal/privacy") },
+                            onTerms = { nav.navigate("legal/terms") },
+                            onHelp = { nav.navigate("legal/help") },
+                            onSafety = { nav.navigate("legal/safety") },
+                        )
                     }
+                    composable("legal/privacy") { LegalPage("Privacy Policy", privacyCopy()) { nav.popBackStack() } }
+                    composable("legal/terms") { LegalPage("Terms of Use", termsCopy()) { nav.popBackStack() } }
+                    composable("legal/help") { LegalPage("How Guardian Works", helpCopy()) { nav.popBackStack() } }
+                    composable("legal/safety") { LegalPage("Safety Disclaimer", safetyCopy()) { nav.popBackStack() } }
                     composable("register") {
-                        RegisterScreen(onDone = { signedIn = true; nav.navigate("onboarding") { popUpTo("welcome") { inclusive = true } } }, onBack = { nav.popBackStack() })
+                        RegisterScreen(
+                            onDone = { afterAuth() },
+                            onBack = { nav.popBackStack() },
+                            onTerms = { nav.navigate("legal/terms") },
+                            onPrivacy = { nav.navigate("legal/privacy") },
+                        )
                     }
                     composable("login") {
-                        LoginScreen(onDone = { signedIn = true; nav.navigate("home") { popUpTo("welcome") { inclusive = true } } }, onBack = { nav.popBackStack() })
+                        LoginScreen(
+                            onDone = { afterAuth() },
+                            onBack = { nav.popBackStack() },
+                            onForgot = { nav.navigate("forgot") },
+                            onReset = { nav.navigate("reset") },
+                            onVerify = { nav.navigate("verify") },
+                        )
                     }
+                    composable("forgot") { ForgotPasswordScreen(onBack = { nav.popBackStack() }) }
+                    composable("reset") { ResetPasswordScreen(onDone = { nav.navigate("login") }, onBack = { nav.popBackStack() }) }
+                    composable("verify") { VerifyEmailScreen(onBack = { nav.popBackStack() }) }
                     composable("onboarding") {
                         OnboardingScreen(onDone = { nav.navigate("home") { popUpTo("onboarding") { inclusive = true } } })
                     }
@@ -82,6 +137,10 @@ class MainActivity : ComponentActivity() {
                             onAllowNotifications = {
                                 if (Build.VERSION.SDK_INT >= 33) notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
                             },
+                            onFixVolume = { nav.navigate("volume") },
+                            onFixSafeWord = { nav.navigate("safeword") },
+                            onFixGuardian = { nav.navigate("guardians") },
+                            onFixDevice = { nav.navigate("devices") },
                         )
                     }
                     composable("activity") {
@@ -99,12 +158,20 @@ class MainActivity : ComponentActivity() {
                             onHistory = { nav.navigate("activity") },
                             onGuardians = { nav.navigate("guardians") },
                             onProfile = { nav.navigate("profile") },
-                            onSignedOut = {
-                                signedIn = false
-                                nav.navigate("welcome") { popUpTo(0) { inclusive = true } }
-                            },
+                            onSignedOut = { signOut() },
+                            onVolume = { nav.navigate("volume") },
+                            onSafeWord = { nav.navigate("safeword") },
+                            onJourney = { nav.navigate("journey") },
+                            onDuress = { nav.navigate("duress") },
                         )
                     }
+                    composable("volume") { VolumeSosPage(onBack = { nav.popBackStack() }) }
+                    composable("safeword") { SafeWordPage(onBack = { nav.popBackStack() }) }
+                    composable("journey") { JourneyPage(onBack = { nav.popBackStack() }) }
+                    composable("duress") { DuressPage(onBack = { nav.popBackStack() }) }
+                    composable("emergency-profile") { EmergencyProfilePage(onBack = { nav.popBackStack() }) }
+                    composable("devices") { DevicesPage(onBack = { nav.popBackStack() }) }
+                    composable("privacy") { PrivacyPage(onBack = { nav.popBackStack() }, onSignedOut = { signOut() }) }
                     composable("guardians") {
                         GuardiansScreen(
                             onHome = { nav.popBackStack("home", false) },
@@ -119,10 +186,11 @@ class MainActivity : ComponentActivity() {
                             onProtect = { nav.navigate("protect") },
                             onGuardians = { nav.navigate("guardians") },
                             onActivity = { nav.navigate("activity") },
-                            onSignedOut = {
-                                signedIn = false
-                                nav.navigate("welcome") { popUpTo(0) { inclusive = true } }
-                            },
+                            onSignedOut = { signOut() },
+                            onEmergencyProfile = { nav.navigate("emergency-profile") },
+                            onDevices = { nav.navigate("devices") },
+                            onPrivacy = { nav.navigate("privacy") },
+                            onHelp = { nav.navigate("legal/help") },
                         )
                     }
                     composable("active") {

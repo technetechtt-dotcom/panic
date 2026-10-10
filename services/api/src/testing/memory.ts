@@ -18,6 +18,8 @@ import type {
   StoredLocation,
   StoredTimelineEvent,
   TimelineStore,
+  RecoveryRecord,
+  RecoveryStore,
   UserRecord,
   UserStore,
 } from "../domain/ports";
@@ -50,6 +52,25 @@ export class MemoryUsers implements UserStore {
   async insert(user: UserRecord): Promise<void> {
     if ([...this.rows.values()].some((row) => row.email === user.email)) throw new UniqueConflictError();
     this.rows.set(user.id, user);
+  }
+
+  async save(user: UserRecord): Promise<void> {
+    this.rows.set(user.id, user);
+  }
+}
+
+export class MemoryRecovery implements RecoveryStore {
+  readonly rows = new Map<string, RecoveryRecord>();
+
+  async insert(record: RecoveryRecord): Promise<void> {
+    this.rows.set(`${record.purpose}:${record.tokenHash}`, record);
+  }
+
+  async consume(tokenHash: string, purpose: RecoveryRecord["purpose"], now: Date): Promise<string | null> {
+    const row = this.rows.get(`${purpose}:${tokenHash}`);
+    if (!row || row.consumedAt || row.expiresAt.getTime() < now.getTime()) return null;
+    row.consumedAt = now;
+    return row.userId;
   }
 }
 

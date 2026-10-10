@@ -1,6 +1,14 @@
 import { Body, Controller, HttpCode, Inject, Post, Req, Res } from "@nestjs/common";
 import type { Response } from "express";
-import { loginSchema, mfaCodeSchema, refreshSchema, registerSchema } from "@guardian/shared-validation";
+import {
+  emailVerifySchema,
+  loginSchema,
+  mfaCodeSchema,
+  passwordForgotSchema,
+  passwordResetSchema,
+  refreshSchema,
+  registerSchema,
+} from "@guardian/shared-validation";
 import type { AppConfig } from "../../config";
 import { Public, type RequestWithUser } from "../../common/guards";
 import { parseBody } from "../../common/http";
@@ -92,6 +100,37 @@ export class AuthController {
       httpOnly: true,
     });
     return { data: { signedOut: true } };
+  }
+
+  @Public()
+  @Post("password/forgot")
+  @HttpCode(200)
+  async forgot(@Body() body: unknown) {
+    return { data: await this.auth.requestPasswordReset(parseBody(passwordForgotSchema, body).email) };
+  }
+
+  @Public()
+  @Post("password/reset")
+  @HttpCode(200)
+  async reset(@Body() body: unknown) {
+    const input = parseBody(passwordResetSchema, body);
+    await this.auth.resetPassword(input.token, input.password);
+    return { data: { reset: true } };
+  }
+
+  @Public()
+  @Post("email/verify")
+  @HttpCode(200)
+  async verifyEmail(@Body() body: unknown) {
+    await this.auth.verifyEmail(parseBody(emailVerifySchema, body).token);
+    return { data: { verified: true } };
+  }
+
+  @Post("email/resend")
+  @HttpCode(200)
+  async resend(@Req() request: RequestWithUser) {
+    const user = request.user!;
+    return { data: await this.auth.requestEmailVerification(user.id) };
   }
 
   private enforceLimit(key: string, limit = this.config.nodeEnv === "production" ? 10 : 100): void {

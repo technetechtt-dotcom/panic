@@ -49,6 +49,12 @@ export class ProtectionController {
     return this.protection.startJourney(actorFrom(request), parseBody(journeySchema, body)).then((data) => ({ data }));
   }
 
+  @Get("journeys")
+  @RequirePermissions(Permission.ProtectionManageOwn)
+  journeys(@Req() request: RequestWithUser) {
+    return this.protection.listJourneys(actorFrom(request)).then((data) => ({ data }));
+  }
+
   @Post("journeys/:id/check-in")
   @HttpCode(200)
   @RequirePermissions(Permission.ProtectionManageOwn)

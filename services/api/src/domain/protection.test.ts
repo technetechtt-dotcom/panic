@@ -180,6 +180,7 @@ class MemoryJourneys implements JourneyStore {
   }
   async save(journey: JourneyRecord) { this.rows.set(journey.id, journey); }
   async listActive() { return [...this.rows.values()].filter((row) => row.status !== "COMPLETED"); }
+  async listForUser(userId: string) { return [...this.rows.values()].filter((row) => row.userId === userId); }
 }
 
 class MemoryRisks implements RiskStore {

@@ -15,6 +15,14 @@ interface PlatformStatus {
   vault: string;
   requests: number;
   serverErrors: number;
+  redis?: string;
+  websocket?: string;
+  environment?: string;
+  release?: string;
+  gitCommit?: string;
+  evidenceQueue?: string;
+  notificationBacklog?: string;
+  lastBackup?: string;
 }
 
 export function PlatformPage() {
@@ -43,7 +51,16 @@ export function PlatformPage() {
           <Tile label="Local evidence vault" value={row?.vault ?? "—"} />
           <Tile label="HTTP requests" value={row ? String(row.requests) : "—"} />
           <Tile label="Server errors" value={row ? String(row.serverErrors) : "—"} />
+          <Tile label="Redis" value={row?.redis ?? "unknown"} />
+          <Tile label="WebSocket" value={row?.websocket ?? "unknown"} />
+          <Tile label="Environment" value={row?.environment ?? "unknown"} />
+          <Tile label="Release" value={row?.release ?? "unknown"} />
+          <Tile label="Git commit" value={row?.gitCommit ?? "unknown"} />
+          <Tile label="Evidence queue" value={row?.evidenceQueue ?? "unknown"} />
+          <Tile label="Notification backlog" value={row?.notificationBacklog ?? "unknown"} />
+          <Tile label="Last backup" value={row?.lastBackup ?? "unknown"} />
         </section>
+        <p className="mt-4 text-sm text-slate-400">Configured means the secret is present. It does not mean SMS, FCM, APNs, or object storage completed a live send or write.</p>
         <section className="mt-8 max-w-3xl space-y-3 text-sm text-slate-300">
           <h2 className="text-xl font-semibold text-white">What is running</h2>
           <p>Deliberate SOS does not wait for Safety Fusion. Fusion can open a concern or high-risk incident from a missed check-in on the server.</p>

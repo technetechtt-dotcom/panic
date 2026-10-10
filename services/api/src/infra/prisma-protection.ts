@@ -68,6 +68,7 @@ function toGuardian(row: {
   guardianUserId: string | null;
   invitationStatus: string;
   invitationToken: string | null;
+  lastAcknowledgedAt?: Date | null;
   createdAt: Date;
 }): TrustedContactRecord {
   return {
@@ -85,6 +86,7 @@ function toGuardian(row: {
     guardianUserId: row.guardianUserId,
     invitationStatus: row.invitationStatus,
     invitationToken: row.invitationToken,
+    lastAcknowledgedAt: row.lastAcknowledgedAt ?? null,
     createdAt: row.createdAt,
   };
 }
@@ -116,6 +118,11 @@ export class PrismaJourneyStore implements JourneyStore {
 
   async listActive(): Promise<JourneyRecord[]> {
     const rows = await this.prisma.protectionSession.findMany({ where: { status: { in: ["ACTIVE", "CONCERN"] } } });
+    return rows.map(toJourney);
+  }
+
+  async listForUser(userId: string): Promise<JourneyRecord[]> {
+    const rows = await this.prisma.protectionSession.findMany({ where: { userId }, orderBy: { createdAt: "desc" }, take: 50 });
     return rows.map(toJourney);
   }
 }

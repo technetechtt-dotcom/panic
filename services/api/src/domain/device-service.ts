@@ -26,16 +26,18 @@ export class DeviceService {
       }
       if (input.fcmToken && input.fcmToken !== existing.fcmToken) {
         existing.fcmToken = input.fcmToken;
+        existing.pushTokenUpdatedAt = now;
         dirty = true;
       }
       if (existing.revokedAt) {
         existing.revokedAt = null;
         dirty = true;
       }
+      existing.lastSeenAt = now;
       if (dirty) {
         existing.updatedAt = now;
-        await this.devices.save(existing);
       }
+      await this.devices.save(existing);
       return existing;
     }
     const device: DeviceRecord = {
@@ -50,6 +52,8 @@ export class DeviceService {
       publicKey: input.publicKey ?? null,
       fcmToken: input.fcmToken ?? null,
       revokedAt: null,
+      lastSeenAt: now,
+      pushTokenUpdatedAt: input.fcmToken ? now : null,
       createdAt: now,
       updatedAt: now,
     };

@@ -37,6 +37,9 @@ data class RegisterBody(
     val password: String,
     val displayName: String,
     val acceptedSafetyConsent: Boolean,
+    val acceptedTerms: Boolean = true,
+    val acceptedPrivacy: Boolean = true,
+    @OptIn(ExperimentalSerializationApi::class) @EncodeDefault(EncodeDefault.Mode.NEVER) val phone: String? = null,
 )
 
 @Serializable
@@ -222,8 +225,35 @@ interface GuardianApi {
     @POST("journeys/{id}/complete")
     suspend fun completeJourney(@Path("id") id: String): JourneyEnvelope
 
+    @GET("journeys")
+    suspend fun journeys(): JourneyListEnvelope
+
+    @GET("users/me/profile")
+    suspend fun profile(): ProfileEnvelope
+
     @POST("users/me/profile")
     suspend fun saveProfile(@Body body: ProfileBody)
+
+    @GET("users/me/export")
+    suspend fun exportAccount(): ExportEnvelope
+
+    @POST("users/me/erase")
+    suspend fun eraseAccount(@Body body: EraseBody)
+
+    @POST("auth/password/forgot")
+    suspend fun forgotPassword(@Body body: ForgotBody): ForgotEnvelope
+
+    @POST("auth/password/reset")
+    suspend fun resetPassword(@Body body: ResetBody)
+
+    @POST("auth/email/verify")
+    suspend fun verifyEmail(@Body body: VerifyBody)
+
+    @POST("auth/email/resend")
+    suspend fun resendEmail(): ForgotEnvelope
+
+    @DELETE("guardians/{id}")
+    suspend fun removeGuardian(@Path("id") id: String)
 
     @POST("protection/signals")
     suspend fun signals(@Body body: SignalBody)
@@ -262,6 +292,9 @@ data class GuardianWire(
     val invitationToken: String? = null,
     val phone: String? = null,
     val email: String? = null,
+    val relationship: String = "FRIEND",
+    val priority: Int = 1,
+    val lastAcknowledgedAt: String? = null,
 )
 
 @Serializable
@@ -277,6 +310,8 @@ data class DeviceListItem(
     val osVersion: String = "",
     val revokedAt: String? = null,
     val fcmToken: String? = null,
+    val lastSeenAt: String? = null,
+    val nickname: String? = null,
 )
 
 @Serializable
@@ -305,10 +340,51 @@ data class ProfileBody(
 data class SignalBody(val signals: List<String>)
 
 @Serializable
-data class JourneyWire(val id: String, val status: String)
+data class JourneyWire(
+    val id: String,
+    val status: String,
+    val destinationLabel: String = "",
+    val expectedArrivalAt: String? = null,
+    val checkInIntervalSeconds: Int = 300,
+)
 
 @Serializable
 data class JourneyEnvelope(val data: JourneyWire)
+
+@Serializable
+data class JourneyListEnvelope(val data: List<JourneyWire>)
+
+@Serializable
+data class ProfileWire(
+    val bloodType: String? = null,
+    val allergies: String? = null,
+    val medications: String? = null,
+    val notes: String? = null,
+)
+
+@Serializable
+data class ProfileEnvelope(val data: ProfileWire)
+
+@Serializable
+data class ExportEnvelope(val data: kotlinx.serialization.json.JsonObject)
+
+@Serializable
+data class EraseBody(val password: String)
+
+@Serializable
+data class ForgotBody(val email: String)
+
+@Serializable
+data class ForgotEnvelope(val data: ForgotWire)
+
+@Serializable
+data class ForgotWire(val accepted: Boolean = true, val emailSent: Boolean = false, val devToken: String? = null)
+
+@Serializable
+data class ResetBody(val token: String, val password: String)
+
+@Serializable
+data class VerifyBody(val token: String)
 
 @Serializable
 data class PinBody(val cancelPin: String, val duressPin: String)
