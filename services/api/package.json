@@ -5,7 +5,7 @@
   "scripts": {
     "prebuild": "npm run build -w @guardian/shared-types && npm run build -w @guardian/shared-validation",
     "build": "tsc -p tsconfig.build.json",
-    "pretest": "npm run build -w @guardian/shared-types && npm run build -w @guardian/shared-validation",
+    "pretest": "npm run build -w @guardian/shared-types && npm run build -w @guardian/shared-validation && prisma generate",
     "dev": "node --env-file=../../.env --import tsx --watch src/main.ts",
     "dev:postgres": "node scripts/dev-postgres.mjs",
     "start": "node dist/main.js",
