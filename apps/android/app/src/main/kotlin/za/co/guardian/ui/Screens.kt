@@ -310,6 +310,8 @@ class SettingsViewModel @Inject constructor(
         private set
     var protectionMode by mutableStateOf(settings.protectionMode())
         private set
+    var fallWatch by mutableStateOf(settings.fallWatch())
+        private set
     var battery by mutableStateOf<Int?>(null)
         private set
     var network by mutableStateOf("UNKNOWN")
@@ -344,6 +346,7 @@ class SettingsViewModel @Inject constructor(
         volumeVibrate = settings.vibrateOnTrigger()
         volumeConnected = settings.volumeConnected()
         protectionMode = settings.protectionMode()
+        fallWatch = settings.fallWatch()
         val device = signals.deviceState()
         battery = device.batteryLevel
         network = device.networkType
@@ -587,9 +590,14 @@ class SettingsViewModel @Inject constructor(
         settings.setProtectionMode(next)
         status = "Mode is $next. Ride and drive use a wider corridor. Meeting and high-risk check in sooner."
     }
-    fun toggleFallWatch() {
+    fun toggleFallWatch(activityRecognitionGranted: Boolean = true) {
         val enabled = !settings.fallWatch()
+        if (enabled && android.os.Build.VERSION.SDK_INT >= 29 && !activityRecognitionGranted) {
+            status = "Impact detection needs activity recognition permission."
+            return
+        }
         settings.setFallWatch(enabled)
+        fallWatch = enabled
         val intent = android.content.Intent(context, za.co.guardian.service.FallWatchService::class.java)
         if (enabled) {
             androidx.core.content.ContextCompat.startForegroundService(context, intent)
@@ -954,12 +962,16 @@ fun SettingsScreen(
     viewModel: SettingsViewModel = hiltViewModel(),
 ) {
     var pendingMic by remember { mutableStateOf<String?>(null) }
+    val protectContext = androidx.compose.ui.platform.LocalContext.current
     val audioPermission = androidx.activity.compose.rememberLauncherForActivityResult(
         androidx.activity.result.contract.ActivityResultContracts.RequestPermission(),
     ) { granted ->
         if (pendingMic == "share") viewModel.updateShareAudio(granted)
         pendingMic = null
     }
+    val activityPermission = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.RequestPermission(),
+    ) { granted -> viewModel.toggleFallWatch(granted) }
     androidx.compose.runtime.LaunchedEffect(Unit) { viewModel.refresh() }
     Scaffold(bottomBar = { BottomNav(onHome = onHome, onProtect = {}, onGuardians = onGuardians, onActivity = onHistory, onProfile = onProfile, selected = "protect") }) { padding ->
         Column(Modifier.fillMaxSize().padding(padding).padding(20.dp).verticalScroll(rememberScrollState())) {
@@ -977,7 +989,23 @@ fun SettingsScreen(
             Button(onClick = onSafeWord, modifier = Modifier.fillMaxWidth()) { Text("Safe word") }
             Button(onClick = onJourney, modifier = Modifier.fillMaxWidth()) { Text("Active journey") }
             Button(onClick = onDuress, modifier = Modifier.fillMaxWidth()) { Text("Duress & coercion") }
-            Button(onClick = viewModel::toggleFallWatch, modifier = Modifier.fillMaxWidth()) { Text("Toggle impact detection") }
+            Button(
+                onClick = {
+                    val turningOn = !viewModel.fallWatch
+                    if (turningOn && android.os.Build.VERSION.SDK_INT >= 29) {
+                        val granted = androidx.core.content.ContextCompat.checkSelfPermission(
+                            protectContext,
+                            android.Manifest.permission.ACTIVITY_RECOGNITION,
+                        ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+                        if (!granted) {
+                            activityPermission.launch(android.Manifest.permission.ACTIVITY_RECOGNITION)
+                            return@Button
+                        }
+                    }
+                    viewModel.toggleFallWatch(true)
+                },
+                modifier = Modifier.fillMaxWidth(),
+            ) { Text("Toggle impact detection") }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 Text("Share short audio during an on-screen SOS")
                 Switch(checked = viewModel.shareAudio, onCheckedChange = { enabled ->
