@@ -1,3 +1,4 @@
+import { hostname } from "node:os";
 import { randomUUID } from "node:crypto";
 import { Module } from "@nestjs/common";
 import { APP_GUARD } from "@nestjs/core";
@@ -25,9 +26,11 @@ import { DeviceService } from "./domain/device-service";
 import { IncidentService } from "./domain/incident-service";
 import { evidenceVaultKey, FileEvidenceVault } from "./domain/evidence-vault";
 import { FusionBridge } from "./domain/fusion-bridge";
+import { OutboxService } from "./domain/outbox";
 import { PlatformService, PrismaMfaStore } from "./domain/platform-service";
 import { ProtectionService } from "./domain/protection-service";
 import type { AuditStore, Clock, IdGenerator } from "./domain/ports";
+import { SchedulerLockService } from "./domain/scheduler-lock";
 import { JwtAccessTokens, ScryptPasswordHasher } from "./domain/security";
 import {
   PrismaAuditStore,
@@ -249,10 +252,32 @@ import { WebhooksController } from "./modules/webhooks/webhooks.controller";
       inject: [PrismaService, INCIDENT_STORE, TIMELINE_STORE, AUDIT_STORE, RealtimeGateway, PASSWORD_HASHER, IDS, CLOCK, FusionBridge, FileEvidenceVault],
     },
     {
+      provide: OutboxService,
+      useFactory: (prisma: PrismaService, ids: IdGenerator, clock: Clock) => new OutboxService(prisma, ids, clock),
+      inject: [PrismaService, IDS, CLOCK],
+    },
+    {
+      provide: SchedulerLockService,
+      useFactory: (prisma: PrismaService, redis: RedisService) =>
+        new SchedulerLockService(prisma, redis.client, `${hostname()}:${process.pid}`),
+      inject: [PrismaService, RedisService],
+    },
+    {
       provide: PlatformService,
-      useFactory: (prisma: PrismaService, incidents: IncidentService, protection: ProtectionService, users, devices, passwords, ids, clock, config: AppConfig, vault: FileEvidenceVault) =>
-        new PlatformService(prisma, incidents, protection, users, devices, passwords, ids, clock, config, vault),
-      inject: [PrismaService, IncidentService, ProtectionService, USER_STORE, DEVICE_STORE, PASSWORD_HASHER, IDS, CLOCK, APP_CONFIG, FileEvidenceVault],
+      useFactory: (
+        prisma: PrismaService,
+        incidents: IncidentService,
+        protection: ProtectionService,
+        users,
+        devices,
+        passwords,
+        ids,
+        clock,
+        config: AppConfig,
+        vault: FileEvidenceVault,
+        outbox: OutboxService,
+      ) => new PlatformService(prisma, incidents, protection, users, devices, passwords, ids, clock, config, vault, outbox),
+      inject: [PrismaService, IncidentService, ProtectionService, USER_STORE, DEVICE_STORE, PASSWORD_HASHER, IDS, CLOCK, APP_CONFIG, FileEvidenceVault, OutboxService],
     },
     ContactSweep,
     { provide: APP_GUARD, useClass: AuthGuard },

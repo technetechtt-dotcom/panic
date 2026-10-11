@@ -368,10 +368,22 @@ class SettingsViewModel @Inject constructor(
                     liveContact = incident.contactStatus.ifBlank { "unknown" }
                     liveHeartbeat = incident.lastHeartbeatAt ?: "none"
                     liveClaim = if (incident.claimedBy.isNullOrBlank()) "Unclaimed" else "Operator claimed"
-                    liveDeliveries = if (live.deliveries.isEmpty()) "No guardian delivery yet"
-                    else live.deliveries.joinToString("\n") { "${it.channel} · ${it.status} · ${it.destination}" }
+                    liveDeliveries = buildString {
+                        if (live.deliveries.isEmpty() && live.guardians.isEmpty()) append("No guardian delivery yet")
+                        live.deliveries.forEach { appendLine("${it.channel} · ${it.status} · ${it.destination}") }
+                        live.guardians.forEach {
+                            appendLine(
+                                "${it.displayName} · ${if (it.acknowledged) "acknowledged" else "waiting"}" +
+                                    (it.lastAcknowledgedAt?.let { at -> " · $at" } ?: ""),
+                            )
+                        }
+                    }.trim().ifBlank { "No guardian delivery yet" }
                     liveResponders = if (live.responders.isEmpty()) "No responder assigned"
-                    else live.responders.joinToString("\n") { "Responder ${it.status.lowercase().replace('_', ' ')}" }
+                    else live.responders.joinToString("\n") { row ->
+                        val distance = row.distanceMeters?.let { "${it}m" } ?: "distance unknown"
+                        val eta = row.etaSeconds?.let { "${it / 60} min ETA" } ?: "ETA unknown"
+                        "Responder ${row.status.lowercase().replace('_', ' ')} · $distance · $eta"
+                    }
                     if (incident.lastLatitude != null && incident.lastLongitude != null) {
                         lastLocation = "${"%.5f".format(incident.lastLatitude)}, ${"%.5f".format(incident.lastLongitude)}"
                     }
@@ -1028,13 +1040,20 @@ fun GuardiansScreen(
     onProtect: () -> Unit,
     onActivity: () -> Unit,
     onProfile: () -> Unit,
+    initialInviteToken: String = "",
     viewModel: SettingsViewModel = hiltViewModel(),
 ) {
     var guardian by remember { mutableStateOf("") }
     var guardianPhone by remember { mutableStateOf("") }
     var guardianEmail by remember { mutableStateOf("") }
-    var inviteToken by remember { mutableStateOf("") }
+    var inviteToken by remember(initialInviteToken) { mutableStateOf(initialInviteToken) }
     androidx.compose.runtime.LaunchedEffect(Unit) { viewModel.refresh() }
+    androidx.compose.runtime.LaunchedEffect(initialInviteToken) {
+        if (initialInviteToken.isNotBlank()) {
+            inviteToken = initialInviteToken
+            viewModel.acceptInvitation(initialInviteToken)
+        }
+    }
     Scaffold(bottomBar = { BottomNav(onHome = onHome, onProtect = onProtect, onGuardians = {}, onActivity = onActivity, onProfile = onProfile, selected = "guardians") }) { padding ->
         Column(Modifier.fillMaxSize().padding(padding).padding(20.dp).verticalScroll(rememberScrollState())) {
             Text("Guardians", fontSize = 32.sp, fontWeight = FontWeight.SemiBold)

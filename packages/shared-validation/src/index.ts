@@ -234,6 +234,21 @@ export const responderStatusSchema = z
   })
   .strict();
 
+export const responderLocationSchema = z
+  .object({
+    latitude: z.number().min(-90).max(90),
+    longitude: z.number().min(-180).max(180),
+    speedMps: z.number().min(0).max(80).optional(),
+  })
+  .strict();
+
+export const operatorHandoverSchema = z
+  .object({
+    note: z.string().trim().min(1).max(2000),
+    handoverToId: z.string().uuid().optional(),
+  })
+  .strict();
+
 export const mfaCodeSchema = z
   .object({
     code: z.string().regex(/^\d{6}$/),

@@ -88,8 +88,13 @@ fun ForgotPasswordScreen(onBack: () -> Unit, viewModel: AuthViewModel = hiltView
 }
 
 @Composable
-fun ResetPasswordScreen(onDone: () -> Unit, onBack: () -> Unit, viewModel: AuthViewModel = hiltViewModel()) {
-    var token by remember { mutableStateOf("") }
+fun ResetPasswordScreen(
+    onDone: () -> Unit,
+    onBack: () -> Unit,
+    initialToken: String = "",
+    viewModel: AuthViewModel = hiltViewModel(),
+) {
+    var token by remember(initialToken) { mutableStateOf(initialToken) }
     var password by remember { mutableStateOf("") }
     var confirm by remember { mutableStateOf("") }
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp)) {
@@ -108,9 +113,16 @@ fun ResetPasswordScreen(onDone: () -> Unit, onBack: () -> Unit, viewModel: AuthV
 }
 
 @Composable
-fun VerifyEmailScreen(onBack: () -> Unit, viewModel: AuthViewModel = hiltViewModel()) {
-    var token by remember { mutableStateOf("") }
+fun VerifyEmailScreen(
+    onBack: () -> Unit,
+    initialToken: String = "",
+    viewModel: AuthViewModel = hiltViewModel(),
+) {
+    var token by remember(initialToken) { mutableStateOf(initialToken) }
     var done by remember { mutableStateOf(false) }
+    androidx.compose.runtime.LaunchedEffect(initialToken) {
+        if (initialToken.isNotBlank()) viewModel.verify(initialToken) { done = true }
+    }
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp)) {
         TextButton(onClick = onBack) { Text("Back") }
         Text("Verify email", fontSize = 32.sp, fontWeight = FontWeight.SemiBold)

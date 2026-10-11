@@ -43,10 +43,27 @@
 
         <activity
             android:name=".MainActivity"
-            android:exported="true">
+            android:exported="true"
+            android:launchMode="singleTop">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="guardian" android:host="verify" />
+                <data android:scheme="guardian" android:host="reset" />
+                <data android:scheme="guardian" android:host="invite" />
+            </intent-filter>
+            <intent-filter android:autoVerify="false">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="https" android:host="links.guardian.app" android:pathPrefix="/v/" />
+                <data android:scheme="https" android:host="links.guardian.app" android:pathPrefix="/r/" />
+                <data android:scheme="https" android:host="links.guardian.app" android:pathPrefix="/i/" />
             </intent-filter>
         </activity>
 

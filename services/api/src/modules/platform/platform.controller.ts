@@ -3,9 +3,11 @@ import {
   eraseAccountSchema,
   fusionSignalSchema,
   mfaCodeSchema,
+  operatorHandoverSchema,
   positionSchema,
   profileSchema,
   responderAssignSchema,
+  responderLocationSchema,
   responderStatusSchema,
   roleChangeSchema,
 } from "@guardian/shared-validation";
@@ -177,6 +179,51 @@ export class PlatformController {
     return this.platform
       .claimIncident(actorFrom(request), id, requestContext.getStore()?.requestId ?? null)
       .then((data) => ({ data }));
+  }
+
+  @Post("incidents/:id/responder-location")
+  @HttpCode(200)
+  @RequirePermissions(Permission.IncidentRespond)
+  responderLocation(@Param("id") id: string, @Body() body: unknown, @Req() request: RequestWithUser) {
+    const input = parseBody(responderLocationSchema, body);
+    return this.platform
+      .updateResponderLocation(actorFrom(request), id, input.latitude, input.longitude, input.speedMps)
+      .then((data) => ({ data }));
+  }
+
+  @Post("deliveries/:id/ack")
+  @HttpCode(200)
+  @RequirePermissions(Permission.UserReadSelf)
+  ackDelivery(@Param("id") id: string, @Req() request: RequestWithUser) {
+    return this.platform.acknowledgeDelivery(actorFrom(request), id).then((data) => ({ data }));
+  }
+
+  @Post("operators/shifts/start")
+  @HttpCode(200)
+  @RequirePermissions(Permission.IncidentAcknowledge)
+  startShift(@Req() request: RequestWithUser) {
+    return this.platform.startShift(actorFrom(request)).then((data) => ({ data }));
+  }
+
+  @Post("operators/shifts/ready")
+  @HttpCode(200)
+  @RequirePermissions(Permission.IncidentAcknowledge)
+  readyShift(@Req() request: RequestWithUser) {
+    return this.platform.markShiftReady(actorFrom(request)).then((data) => ({ data }));
+  }
+
+  @Post("operators/shifts/handover")
+  @HttpCode(200)
+  @RequirePermissions(Permission.IncidentAcknowledge)
+  handover(@Body() body: unknown, @Req() request: RequestWithUser) {
+    const input = parseBody(operatorHandoverSchema, body);
+    return this.platform.handoverShift(actorFrom(request), input.note, input.handoverToId).then((data) => ({ data }));
+  }
+
+  @Get("operators/shifts/current")
+  @RequirePermissions(Permission.IncidentAcknowledge)
+  currentShift(@Req() request: RequestWithUser) {
+    return this.platform.currentShift(actorFrom(request)).then((data) => ({ data }));
   }
 }
 

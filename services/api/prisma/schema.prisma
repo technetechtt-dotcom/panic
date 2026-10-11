@@ -428,22 +428,26 @@ model IncidentRoom {
 }
 
 model ResponderAssignment {
-  id          String    @id @db.Uuid
-  incidentId  String    @db.Uuid
-  responderId String    @db.Uuid
-  status      String
-  assignedAt  DateTime?
-  acceptedAt  DateTime?
-  enRouteAt   DateTime?
-  arrivedAt   DateTime?
-  locatedAt   DateTime?
-  declinedAt  DateTime?
-  completedAt DateTime?
-  assignedBy  String?
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
-  incident    Incident  @relation(fields: [incidentId], references: [id], onDelete: Cascade)
-  responder   User      @relation(fields: [responderId], references: [id])
+  id              String    @id @db.Uuid
+  incidentId      String    @db.Uuid
+  responderId     String    @db.Uuid
+  status          String
+  assignedAt      DateTime?
+  acceptedAt      DateTime?
+  enRouteAt       DateTime?
+  arrivedAt       DateTime?
+  locatedAt       DateTime?
+  declinedAt      DateTime?
+  completedAt     DateTime?
+  assignedBy      String?
+  lastLatitude    Float?
+  lastLongitude   Float?
+  lastLocationAt  DateTime?
+  speedMps        Float?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  incident        Incident  @relation(fields: [incidentId], references: [id], onDelete: Cascade)
+  responder       User      @relation(fields: [responderId], references: [id])
 
   @@unique([incidentId, responderId])
 }
@@ -459,4 +463,61 @@ model ResponderProfile {
   availability String   @default("AVAILABLE")
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
+}
+
+model OutboxEvent {
+  id            String    @id @db.Uuid
+  type          String
+  aggregateType String
+  aggregateId   String
+  payload       Json
+  status        String    @default("PENDING")
+  attempts      Int       @default(0)
+  maxAttempts   Int       @default(8)
+  nextAttemptAt DateTime  @default(now())
+  lastError     String?
+  lockedBy      String?
+  lockedAt      DateTime?
+  sentAt        DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  @@index([status, nextAttemptAt])
+  @@index([aggregateType, aggregateId])
+}
+
+model OutboxDeadLetter {
+  id            String   @id @db.Uuid
+  outboxEventId String   @unique @db.Uuid
+  type          String
+  aggregateType String
+  aggregateId   String
+  payload       Json
+  attempts      Int
+  lastError     String
+  failedAt      DateTime @default(now())
+  createdAt     DateTime @default(now())
+}
+
+model SchedulerLock {
+  name        String   @id
+  lockedBy    String
+  lockedUntil DateTime
+  updatedAt   DateTime @updatedAt
+}
+
+model OperatorShift {
+  id           String    @id @db.Uuid
+  operatorId   String    @db.Uuid
+  status       String
+  startedAt    DateTime
+  readyAt      DateTime?
+  handoverNote String?
+  handoverToId String?   @db.Uuid
+  endedAt      DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  @@index([operatorId, status])
+  @@index([status])
 }

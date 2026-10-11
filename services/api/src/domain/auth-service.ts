@@ -46,6 +46,19 @@ export interface AccessTokenIssuer {
 
 const MFA_ROLES: Role[] = ["ADMIN", "SUPERVISOR", "MONITOR_OPERATOR", "RESPONDER"];
 
+function deepLinks(kind: "verify" | "reset" | "invite", token: string): { deepLink: string; appLink: string } {
+  const httpsBase = (process.env.DEEP_LINK_BASE ?? "https://links.guardian.app").replace(/\/$/, "");
+  const path = kind === "verify" ? "v" : kind === "reset" ? "r" : "i";
+  return {
+    deepLink: `${httpsBase}/${path}/${encodeURIComponent(token)}`,
+    appLink: `guardian://${kind}?token=${encodeURIComponent(token)}`,
+  };
+}
+
+export function invitationDeepLinks(token: string): { deepLink: string; appLink: string } {
+  return deepLinks("invite", token);
+}
+
 export type LoginResult =
   | AuthResult
   | { mfaRequired: true; mfaToken: string }
@@ -120,7 +133,7 @@ export class AuthService {
     return this.issue(user, this.ids.uuid());
   }
 
-  async requestPasswordReset(email: string): Promise<{ accepted: true; emailSent: boolean; devToken?: string }> {
+  async requestPasswordReset(email: string): Promise<{ accepted: true; emailSent: boolean; deepLink?: string; appLink?: string; devToken?: string }> {
     const user = await this.users.findByEmail(email.trim().toLowerCase());
     const emailSent = Boolean(process.env.SMTP_URL?.trim());
     if (!user) return { accepted: true, emailSent };
@@ -133,9 +146,10 @@ export class AuthService {
       consumedAt: null,
     });
     await this.audit({ actorId: user.id, action: "auth.password_reset_requested", entityId: user.id });
+    const links = deepLinks("reset", token);
     return process.env.NODE_ENV === "production"
-      ? { accepted: true, emailSent }
-      : { accepted: true, emailSent, devToken: token };
+      ? { accepted: true, emailSent, ...links }
+      : { accepted: true, emailSent, ...links, devToken: token };
   }
 
   async resetPassword(token: string, password: string): Promise<void> {
@@ -149,10 +163,11 @@ export class AuthService {
     await this.audit({ actorId: user.id, action: "auth.password_reset", entityId: user.id });
   }
 
-  async requestEmailVerification(userId: string): Promise<{ emailSent: boolean; devToken?: string }> {
+  async requestEmailVerification(userId: string): Promise<{ emailSent: boolean; deepLink?: string; appLink?: string; devToken?: string }> {
     const token = await this.issueEmailToken(userId);
     const emailSent = Boolean(process.env.SMTP_URL?.trim());
-    return process.env.NODE_ENV === "production" ? { emailSent } : { emailSent, devToken: token };
+    const links = deepLinks("verify", token);
+    return process.env.NODE_ENV === "production" ? { emailSent, ...links } : { emailSent, ...links, devToken: token };
   }
 
   async verifyEmail(token: string): Promise<void> {

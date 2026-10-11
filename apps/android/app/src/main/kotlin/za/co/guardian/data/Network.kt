@@ -350,18 +350,34 @@ data class DeliveryWire(
     val status: String,
     val detail: String = "",
     val destination: String = "",
+    val acknowledgedAt: String? = null,
+)
+
+@Serializable
+data class GuardianLiveWire(
+    val id: String,
+    val displayName: String,
+    val lastAcknowledgedAt: String? = null,
+    val lastNotifiedAt: String? = null,
+    val acknowledged: Boolean = false,
 )
 
 @Serializable
 data class ResponderWire(
     val responderId: String,
     val status: String,
+    val latitude: Double? = null,
+    val longitude: Double? = null,
+    val locationAt: String? = null,
+    val distanceMeters: Int? = null,
+    val etaSeconds: Int? = null,
 )
 
 @Serializable
 data class LiveIncidentWire(
     val incident: IncidentWire,
     val deliveries: List<DeliveryWire> = emptyList(),
+    val guardians: List<GuardianLiveWire> = emptyList(),
     val responders: List<ResponderWire> = emptyList(),
 )
 

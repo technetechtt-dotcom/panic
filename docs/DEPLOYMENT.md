@@ -58,4 +58,29 @@ The dashboard dev server proxies `/api` and `/socket.io` to port 3000. Set `VITE
 
 ## Backup
 
-The Postgres volume is `guardian_postgres`. Evidence files are on `guardian_evidence`. A dump is `node --env-file=.env services/api/scripts/backup-restore.mjs`. There is no automatic backup schedule.
+The Postgres volume is `guardian_postgres`. Evidence files are on `guardian_evidence`.
+
+Local dump:
+
+```powershell
+node --env-file=.env services/api/scripts/backup-restore.mjs
+```
+
+Off-host dump (S3-compatible when `BACKUP_S3_*` is set):
+
+```powershell
+node --env-file=.env services/api/scripts/backup-offhost.mjs
+```
+
+Restore verification against a **throwaway** database only:
+
+```powershell
+$env:BACKUP_VERIFY_DATABASE_URL="postgresql://guardian:change-me@127.0.0.1:5432/guardian_restore_verify"
+node --env-file=.env services/api/scripts/backup-restore-verify.mjs data/backups/guardian-....sql
+```
+
+Schedule off-host backups outside the API process (cron/systemd/cloud scheduler). The API platform status reads `LAST_BACKUP_AT` when the operator sets it after a successful off-host run. This workspace does not claim a managed multi-region DR exercise.
+
+## Load / failover
+
+Two API replicas share Postgres, Redis, the evidence volume, the outbox table, and `SchedulerLock` / Redis leases so only one replica runs contact/journey/outbox sweeps at a time. Automated coverage lives in `services/api/src/domain/load-failover.test.ts` and outbox unit tests. Intentionally killing a live replica during production incidents is an operations drill, not something CI performs against a handset farm.

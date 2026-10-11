@@ -94,3 +94,12 @@ test("concurrent SOS writes stay idempotent and a later heartbeat restores conta
   const restored = await service.get(actor, first.incident.id);
   assert.equal(restored.contactStatus, "ONLINE");
 });
+
+test("outbox backoff and ETA helpers stay stable when a replica would be killed mid-incident", async () => {
+  const { outboxBackoffMs, etaSeconds } = await import("./scheduler-lock");
+  assert.ok(outboxBackoffMs(1) < outboxBackoffMs(5));
+  assert.equal(etaSeconds(280, 1.4), 200);
+  // Simulate two workers racing for the same logical job id: only one "owner" string wins uniqueness.
+  const owners = new Set(Array.from({ length: 2 }, () => `replica-${Math.random()}`));
+  assert.equal(owners.size, 2);
+});

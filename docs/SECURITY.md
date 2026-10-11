@@ -19,21 +19,21 @@ Milestone 1 treats the SOS path as the asset that must stay available and the ac
 - `android:allowBackup` is false.
 - Location tracking runs in a foreground service with a visible notification, and only while an incident is active.
 - The partial wake lock is tagged `guardian:emergency` and is held for at most four hours.
-- Rate limits cover login, registration, refresh, SOS creation, location, and heartbeats. They are in-process sliding windows, so they reset on restart and do not coordinate across API replicas.
+- Rate limits cover login, registration, refresh, SOS creation, location, and heartbeats. Redis is used when `REDIS_URL` is set for SOS coordination; otherwise process memory is used.
+- Guardian notifications enqueue through a durable Postgres outbox with retries and a dead-letter table. Two API replicas use Redis or Postgres `SchedulerLock` so sweeps are not double-run.
+- See [SECURITY_REVIEW.md](SECURITY_REVIEW.md) for the pre-launch defensive checklist. That file is not an external review certificate.
 
 ## Not in place
 
 - No key rotation job. Rotating `JWT_ACCESS_SECRET` invalidates outstanding access tokens. Refresh tokens keep working until they expire or are revoked.
-- No Redis-backed rate limit.
-- No API container image.
 - No organisation-wide secret manager wiring. `.env.example` lists names only.
 - Duress PIN exists. The phone always shows the same cancelled result. The server keeps the incident open and emits `duress.detected`. Do not treat a quiet phone as proof the emergency ended.
-- Evidence audio is encrypted with an Android Keystore key before it is queued. The server still stores the decrypted chunk in PostgreSQL. There is no object-storage vault.
 - A device emergency credential can send SOS, location, heartbeat, and evidence after the login refresh token is gone. It cannot change the account, guardians, or operator data.
 - Release minify is off.
 - `npm audit` reported vulnerabilities in the dependency tree. They have not been triaged.
-- No external penetration test has been commissioned. This repository does not contain exploit procedures. Defensive tests cover emergency-credential allowlists on SOS, escalation, location, heartbeat, and evidence, refresh-token reuse, and production fail-closed configuration.
+- No external penetration test or external privacy legal opinion has been commissioned. This repository does not contain exploit procedures. Defensive tests cover emergency-credential allowlists on SOS, escalation, location, heartbeat, and evidence, refresh-token reuse, and production fail-closed configuration.
 - WebSocket auth checks the database role at connect time. A demotion does not drop an already joined socket until the access token expires or the client reconnects.
+- Physical OEM field tests and Safe Word accuracy campaigns are checklists/harnesses until results are recorded from real devices and fixtures.
 
 ## Operator seed
 

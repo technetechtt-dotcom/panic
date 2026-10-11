@@ -15,9 +15,25 @@ android {
         applicationId = "za.co.guardian.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = providers.gradleProperty("versionCode").orNull?.toIntOrNull()
+            ?: System.getenv("GUARDIAN_VERSION_CODE")?.toIntOrNull()
+            ?: 1
+        versionName = providers.gradleProperty("versionName").orNull
+            ?: System.getenv("GUARDIAN_VERSION_NAME")
+            ?: "0.1.0"
         buildConfigField("boolean", "FIREBASE_CONFIGURED", file("google-services.json").exists().toString())
+    }
+
+    signingConfigs {
+        create("release") {
+            val storePath = System.getenv("GUARDIAN_UPLOAD_STORE_FILE")
+            if (!storePath.isNullOrBlank()) {
+                storeFile = file(storePath)
+                storePassword = System.getenv("GUARDIAN_UPLOAD_STORE_PASSWORD")
+                keyAlias = System.getenv("GUARDIAN_UPLOAD_KEY_ALIAS")
+                keyPassword = System.getenv("GUARDIAN_UPLOAD_KEY_PASSWORD")
+            }
+        }
     }
 
     buildTypes {
@@ -39,6 +55,9 @@ android {
                 throw GradleException("Production release builds require an HTTPS API URL. Found: $releaseApi")
             }
             buildConfigField("String", "API_BASE_URL", "\"$releaseApi\"")
+            if (System.getenv("GUARDIAN_UPLOAD_STORE_FILE")?.isNotBlank() == true) {
+                signingConfig = signingConfigs.getByName("release")
+            }
         }
     }
 
@@ -107,13 +126,38 @@ fun requireProductionReleaseConfig() {
     }
 }
 
+fun requireSignedBundleConfig() {
+    requireProductionReleaseConfig()
+    val required = listOf(
+        "GUARDIAN_UPLOAD_STORE_FILE",
+        "GUARDIAN_UPLOAD_STORE_PASSWORD",
+        "GUARDIAN_UPLOAD_KEY_ALIAS",
+        "GUARDIAN_UPLOAD_KEY_PASSWORD",
+        "GUARDIAN_VERSION_CODE",
+        "GUARDIAN_VERSION_NAME",
+    )
+    val missing = required.filter { System.getenv(it).isNullOrBlank() }
+    if (missing.isNotEmpty()) {
+        throw GradleException("Signed AAB requires env: ${missing.joinToString(", ")}")
+    }
+    val store = file(System.getenv("GUARDIAN_UPLOAD_STORE_FILE")!!)
+    if (!store.exists()) throw GradleException("Upload keystore was not found at ${store.path}")
+}
+
 tasks.register("checkReleaseConfig") {
     doLast { requireProductionReleaseConfig() }
+}
+
+tasks.register("checkSignedBundleConfig") {
+    doLast { requireSignedBundleConfig() }
 }
 
 afterEvaluate {
     tasks.matching { it.name == "assembleRelease" || it.name == "bundleRelease" }.configureEach {
         dependsOn("checkReleaseConfig")
+    }
+    tasks.matching { it.name == "bundleRelease" }.configureEach {
+        dependsOn("checkSignedBundleConfig")
     }
 }
 

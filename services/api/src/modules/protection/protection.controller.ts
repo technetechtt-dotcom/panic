@@ -10,6 +10,7 @@ import {
 } from "@guardian/shared-validation";
 import { RequirePermissions, type RequestWithUser } from "../../common/guards";
 import { parseBody, requestContext } from "../../common/http";
+import { invitationDeepLinks } from "../../domain/auth-service";
 import { ProtectionService } from "../../domain/protection-service";
 import type { Actor } from "../../domain/ports";
 import { Permission } from "../../domain/rbac";
@@ -21,7 +22,9 @@ export class ProtectionController {
   @Post("guardians")
   @RequirePermissions(Permission.ProtectionManageOwn)
   addGuardian(@Body() body: unknown, @Req() request: RequestWithUser) {
-    return this.protection.addGuardian(actorFrom(request), parseBody(guardianSchema, body), requestContext.getStore()?.requestId ?? null).then((data) => ({ data }));
+    return this.protection.addGuardian(actorFrom(request), parseBody(guardianSchema, body), requestContext.getStore()?.requestId ?? null).then((data) => ({
+      data: data.invitationToken ? { ...data, ...invitationDeepLinks(data.invitationToken) } : data,
+    }));
   }
 
   @Get("guardians")

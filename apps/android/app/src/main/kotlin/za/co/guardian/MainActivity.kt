@@ -1,6 +1,7 @@
 package za.co.guardian
 
 import android.Manifest
+import android.content.Intent
 import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
@@ -9,9 +10,11 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
+import androidx.navigation.navArgument
 import dagger.hilt.android.AndroidEntryPoint
 import za.co.guardian.data.EmergencyServiceController
 import za.co.guardian.data.PhoneSignals
@@ -53,8 +56,15 @@ class MainActivity : ComponentActivity() {
     @Inject lateinit var controller: EmergencyServiceController
 
     private var signedIn by mutableStateOf(false)
+    private var pendingDeepLink by mutableStateOf(parseGuardianDeepLink(intent))
     private val locationPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
     private val notificationPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        pendingDeepLink = parseGuardianDeepLink(intent)
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -86,6 +96,16 @@ class MainActivity : ComponentActivity() {
                 fun signOut() {
                     signedIn = false
                     nav.navigate("welcome") { popUpTo(0) { inclusive = true } }
+                }
+                androidx.compose.runtime.LaunchedEffect(pendingDeepLink, signedIn) {
+                    val link = pendingDeepLink ?: return@LaunchedEffect
+                    when (link.destination) {
+                        "verify" -> nav.navigate("verify/${android.net.Uri.encode(link.token)}")
+                        "reset" -> nav.navigate("reset/${android.net.Uri.encode(link.token)}")
+                        "invite" -> if (signedIn) nav.navigate("invite/${android.net.Uri.encode(link.token)}")
+                            else nav.navigate("login")
+                    }
+                    pendingDeepLink = null
                 }
                 NavHost(nav, startDestination = start) {
                     composable("welcome") {
@@ -121,7 +141,38 @@ class MainActivity : ComponentActivity() {
                     }
                     composable("forgot") { ForgotPasswordScreen(onBack = { nav.popBackStack() }) }
                     composable("reset") { ResetPasswordScreen(onDone = { nav.navigate("login") }, onBack = { nav.popBackStack() }) }
+                    composable(
+                        "reset/{token}",
+                        arguments = listOf(navArgument("token") { type = NavType.StringType }),
+                    ) { entry ->
+                        ResetPasswordScreen(
+                            initialToken = android.net.Uri.decode(entry.arguments?.getString("token").orEmpty()),
+                            onDone = { nav.navigate("login") },
+                            onBack = { nav.popBackStack() },
+                        )
+                    }
                     composable("verify") { VerifyEmailScreen(onBack = { nav.popBackStack() }) }
+                    composable(
+                        "verify/{token}",
+                        arguments = listOf(navArgument("token") { type = NavType.StringType }),
+                    ) { entry ->
+                        VerifyEmailScreen(
+                            initialToken = android.net.Uri.decode(entry.arguments?.getString("token").orEmpty()),
+                            onBack = { nav.popBackStack() },
+                        )
+                    }
+                    composable(
+                        "invite/{token}",
+                        arguments = listOf(navArgument("token") { type = NavType.StringType }),
+                    ) { entry ->
+                        GuardiansScreen(
+                            onHome = { nav.popBackStack("home", false) },
+                            onProtect = { nav.navigate("protect") },
+                            onActivity = { nav.navigate("activity") },
+                            onProfile = { nav.navigate("profile") },
+                            initialInviteToken = android.net.Uri.decode(entry.arguments?.getString("token").orEmpty()),
+                        )
+                    }
                     composable("onboarding") {
                         OnboardingScreen(onDone = { nav.navigate("home") { popUpTo("onboarding") { inclusive = true } } })
                     }

@@ -87,7 +87,20 @@ jobs:
           if [ -n "${{ secrets.GOOGLE_SERVICES_JSON }}" ] && [ -n "${{ secrets.RELEASE_API_BASE_URL }}" ]; then
             printf '%s' "${{ secrets.GOOGLE_SERVICES_JSON }}" > app/google-services.json
             ./gradlew :app:checkReleaseConfig :app:assembleRelease --no-daemon -PreleaseApiBaseUrl="${{ secrets.RELEASE_API_BASE_URL }}"
-            exit $?
+            status=$?
+            if [ "$status" -ne 0 ]; then exit $status; fi
+            if [ -n "${{ secrets.GUARDIAN_UPLOAD_STORE_BASE64 }}" ] && [ -n "${{ secrets.GUARDIAN_UPLOAD_STORE_PASSWORD }}" ] && [ -n "${{ secrets.GUARDIAN_UPLOAD_KEY_ALIAS }}" ] && [ -n "${{ secrets.GUARDIAN_UPLOAD_KEY_PASSWORD }}" ]; then
+              echo "${{ secrets.GUARDIAN_UPLOAD_STORE_BASE64 }}" | base64 -d > /tmp/guardian-upload.jks
+              export GUARDIAN_UPLOAD_STORE_FILE=/tmp/guardian-upload.jks
+              export GUARDIAN_UPLOAD_STORE_PASSWORD="${{ secrets.GUARDIAN_UPLOAD_STORE_PASSWORD }}"
+              export GUARDIAN_UPLOAD_KEY_ALIAS="${{ secrets.GUARDIAN_UPLOAD_KEY_ALIAS }}"
+              export GUARDIAN_UPLOAD_KEY_PASSWORD="${{ secrets.GUARDIAN_UPLOAD_KEY_PASSWORD }}"
+              export GUARDIAN_VERSION_CODE="${{ github.run_number }}"
+              export GUARDIAN_VERSION_NAME="0.1.${{ github.run_number }}"
+              ./gradlew :app:checkSignedBundleConfig :app:bundleRelease --no-daemon -PreleaseApiBaseUrl="${{ secrets.RELEASE_API_BASE_URL }}" -PversionCode="${{ github.run_number }}" -PversionName="0.1.${{ github.run_number }}"
+              exit $?
+            fi
+            exit 0
           fi
           ./gradlew :app:checkReleaseConfig --no-daemon
           status=$?
