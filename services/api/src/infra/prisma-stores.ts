@@ -208,14 +208,17 @@ export class PrismaDeviceStore implements DeviceStore {
   async setEmergencyHash(deviceId: string, userId: string, hash: string): Promise<boolean> {
     const updated = await this.prisma.device.updateMany({
       where: { id: deviceId, userId },
-      data: { emergencyTokenHash: hash },
+      data: { emergencyTokenHash: hash.trim() ? hash : null },
     });
     return updated.count === 1;
   }
 
-  async findUserIdByEmergencyHash(hash: string): Promise<string | null> {
-    const row = await this.prisma.device.findFirst({ where: { emergencyTokenHash: hash }, select: { userId: true } });
-    return row?.userId ?? null;
+  async findEmergencyBinding(hash: string): Promise<{ userId: string; deviceId: string } | null> {
+    const row = await this.prisma.device.findFirst({
+      where: { emergencyTokenHash: hash, revokedAt: null },
+      select: { userId: true, id: true },
+    });
+    return row ? { userId: row.userId, deviceId: row.id } : null;
   }
 
   async save(device: DeviceRecord): Promise<void> {

@@ -182,5 +182,5 @@ export class PlatformController {
 
 function actorFrom(request: RequestWithUser): Actor {
   const user = request.user!;
-  return { id: user.id, role: user.role, displayName: user.displayName };
+  return { id: user.id, role: user.role, displayName: user.displayName, emergencyDeviceId: request.emergencyDeviceId ?? null };
 }

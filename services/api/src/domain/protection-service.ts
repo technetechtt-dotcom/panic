@@ -6,6 +6,7 @@ import type { PasswordHasher } from "./security";
 import type { FileEvidenceVault } from "./evidence-vault";
 import type { FusionBridge } from "./fusion-bridge";
 import { fusionEvaluate, routeDeviates } from "./operations";
+import { geocodeDestination } from "./geocode";
 import { ACTIVE_STATES, type Actor, type AuditStore, type Clock, type IdGenerator, type IncidentStore, type RealtimePublisher, type TimelineStore } from "./ports";
 
 export interface TrustedContactRecord {
@@ -186,6 +187,13 @@ export class ProtectionService {
     this.own(actor);
     const now = this.clock.now();
     const mode = input.mode ?? "WALK";
+    let destinationLatitude = input.destinationLatitude ?? null;
+    let destinationLongitude = input.destinationLongitude ?? null;
+    if (destinationLatitude == null || destinationLongitude == null) {
+      const geo = await geocodeDestination(input.destinationLabel);
+      destinationLatitude = geo?.latitude ?? null;
+      destinationLongitude = geo?.longitude ?? null;
+    }
     const journey: JourneyRecord = {
       id: this.ids.uuid(),
       userId: actor.id,
@@ -197,8 +205,8 @@ export class ProtectionService {
       mode,
       originLatitude: input.originLatitude ?? null,
       originLongitude: input.originLongitude ?? null,
-      destinationLatitude: input.destinationLatitude ?? null,
-      destinationLongitude: input.destinationLongitude ?? null,
+      destinationLatitude,
+      destinationLongitude,
       corridorMeters: input.corridorMeters ?? (mode === "MEETING" ? 200 : mode === "RIDE" || mode === "DRIVE" ? 800 : mode === "HIGH_RISK" ? 250 : 400),
     };
     await this.journeys.insert(journey);

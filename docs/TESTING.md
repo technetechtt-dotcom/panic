@@ -52,7 +52,11 @@ Android `:core` tests: deliberate trigger, capsule size, queue retry, network cl
 
 Android `:app` tests: practice SOS stays pending with a clear message, and SOS while signed out does not pretend to send.
 
-Monitoring tests: a short password is not submitted, and a test incident renders `TEST INCIDENT` beside copy that says counts exclude tests.
+Monitoring tests: a short password is not submitted, a test incident renders `TEST INCIDENT` beside copy that says counts exclude tests, and the incident page shows the responder state workflow against a mocked API.
+
+Room unit tests apply the v1→v4 SQL on an in-memory SQLite database and keep a seeded incident row. They are not a physical-phone Room migration.
+
+PostgreSQL integration, when `GUARDIAN_PG_TEST=1`, checks migrated columns and a dump/reload of a probe table. That is not a multi-region failover drill.
 
 ## Not covered by automation
 
@@ -61,4 +65,5 @@ Monitoring tests: a short password is not submitted, and a test incident renders
 - Process death, Doze, and OEM battery killing on a physical phone. The checklist is [DEVICE_TESTS.md](DEVICE_TESTS.md). CI locks the sensor-start policy and does not run that checklist.
 - GPS unavailable and safe-word false matches on a physical phone. Evidence upload, guardian notification records, and the on-device safe-word matcher have unit coverage. A delivery row stays `SKIPPED` until SMS or push credentials exist.
 - CI audits production dependencies at critical severity. The Vitest runner's tinypool advisory is development-only and is not in the API image.
-- The monitoring screens against a live API. Use the browser against a seeded operator after `docker compose` is up. Component tests mock `fetch`.
+- The monitoring screens against a live API. Use the browser against a seeded operator after `docker compose` is up. Component and workflow tests mock `fetch`.
+- OEM farms, iOS/watch binaries, an external penetration test, and a POPIA legal opinion. Those are outside this repository.

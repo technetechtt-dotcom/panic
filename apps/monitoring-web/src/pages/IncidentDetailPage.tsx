@@ -26,14 +26,17 @@ export function IncidentDetailPage() {
   const incident = useQuery({
     queryKey: ["incident", id],
     queryFn: () => api<Incident>(`/api/v1/incidents/${id}`, token),
+    refetchInterval: 4_000,
   });
   const timeline = useQuery({
     queryKey: ["timeline", id],
     queryFn: () => api<TimelineEntry[]>(`/api/v1/incidents/${id}/timeline`, token),
+    refetchInterval: 4_000,
   });
   const locations = useQuery({
     queryKey: ["locations", id],
     queryFn: () => api<LocationPoint[]>(`/api/v1/incidents/${id}/locations`, token),
+    refetchInterval: 4_000,
   });
   const brief = useQuery({
     queryKey: ["brief", id],
@@ -58,6 +61,7 @@ export function IncidentDetailPage() {
   const heartbeats = useQuery({
     queryKey: ["heartbeats", id],
     queryFn: () => api<Heartbeat[]>(`/api/v1/incidents/${id}/heartbeats`, token),
+    refetchInterval: 4_000,
   });
 
   const deliveries = useQuery({
@@ -322,18 +326,32 @@ export function IncidentDetailPage() {
                   Dispatch responder
                 </button>
               ) : (
-                <button
-                  type="button"
-                  onClick={() => {
-                    void api(`/api/v1/incidents/${id}/responder-status`, token, {
-                      method: "POST",
-                      body: JSON.stringify({ status: "USER_LOCATED" }),
-                    }).then(() => queryClient.invalidateQueries()).catch((caught: unknown) => setError(caught instanceof Error ? caught.message : "Update failed."));
-                  }}
-                  className="rounded-lg border border-line px-4 py-3 font-semibold"
-                >
-                  Report person located
-                </button>
+                <>
+                  {(
+                    [
+                      ["ACCEPTED", "Accept assignment"],
+                      ["EN_ROUTE", "En route"],
+                      ["ON_SCENE", "On scene"],
+                      ["USER_LOCATED", "Report person located"],
+                      ["COMPLETED", "Complete assignment"],
+                      ["DECLINED", "Decline assignment"],
+                    ] as const
+                  ).map(([status, label]) => (
+                    <button
+                      key={status}
+                      type="button"
+                      onClick={() => {
+                        void api(`/api/v1/incidents/${id}/responder-status`, token, {
+                          method: "POST",
+                          body: JSON.stringify({ status }),
+                        }).then(() => queryClient.invalidateQueries()).catch((caught: unknown) => setError(caught instanceof Error ? caught.message : "Update failed."));
+                      }}
+                      className="rounded-lg border border-line px-4 py-3 font-semibold"
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </>
               )}
             </div>
           </section>

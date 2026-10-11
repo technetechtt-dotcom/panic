@@ -1,6 +1,6 @@
 # Guardian iOS client
 
-This folder is a Swift source client for the same SOS API the Android app uses. It was not compiled, signed, or run on a device. This workspace is Windows, and there is no Xcode project or App Store build here.
+This folder is a Swift source client for the same SOS API the Android app uses. It was not compiled, signed, or run on a device. This workspace is Windows, and there is no Xcode project or App Store build here. iOS is not a launch requirement for Guardian. The production client is Android.
 
 A real iPhone app still has to request permissions in the open, keep the microphone and location indicators visible, and follow the same emergency-credential limits as Android. This source does not bypass those rules.
 

@@ -31,11 +31,11 @@ Fusion scores the same explainable rules as the phone. A missed check-in or a hi
 
 ## Milestone 5 — partial
 
-The hub shows a rules brief and a search corridor around the last confirmed point. The brief cannot cancel an incident, accuse a person, or dispatch by itself. An operator can assign a responder account. The responder uses the same hub and only sees assigned incidents. There is no separate responder store binary.
+The hub shows a rules brief and a search corridor around the last confirmed point. The brief cannot cancel an incident, accuse a person, or dispatch by itself. An operator can assign a responder account. The responder uses the same hub or the Android responder buttons and can move ASSIGNED → ACCEPTED → EN_ROUTE → ON_SCENE → USER_LOCATED → COMPLETED, or DECLINE. There is no separate responder store binary.
 
 ## Still not a production claim
 
-iOS source in `apps/ios` has not been compiled. Operator MFA is enforced only after that operator enrolls. Redis rate limits are used when Redis is up, and the process falls back to memory when it is not. PostgreSQL integration coverage runs when `GUARDIAN_PG_TEST=1`. The production compose file can run two API processes behind one database and Redis; that is not a tested multi-region deployment. Backup is `pg_dump` via `services/api/scripts/backup-restore.mjs`. Observability is a request counter at `/api/v1/health/metrics`. Account export and erasure remove profile and guardian contact data and keep incident rows. No penetration test engagement has been run. No model is connected.
+iOS source in `apps/ios` has not been compiled and is not a launch requirement. Operator MFA is enforced only after that operator enrolls. Redis rate limits are used when Redis is up, and the process falls back to memory when it is not. PostgreSQL integration coverage runs when `GUARDIAN_PG_TEST=1`. The production compose file runs `api` and `api-replica` behind nginx; that is not a tested multi-region deployment. Backup is `pg_dump` via `services/api/scripts/backup-restore.mjs`. Observability is `/api/v1/health`, `/ready`, and Prometheus text at `/metrics`. Account export and erasure remove profile and guardian contact data and keep incident rows. No penetration test engagement has been run. No model is connected. Launch remains Android-first.
 
 ## Product rules that stay in force
 

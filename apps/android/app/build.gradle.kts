@@ -17,6 +17,7 @@ android {
         targetSdk = 35
         versionCode = 1
         versionName = "0.1.0"
+        buildConfigField("boolean", "FIREBASE_CONFIGURED", file("google-services.json").exists().toString())
     }
 
     buildTypes {
@@ -90,6 +91,30 @@ dependencies {
     implementation("com.google.firebase:firebase-messaging:24.1.0")
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.9.0")
+    testImplementation("org.xerial:sqlite-jdbc:3.47.1.0")
+}
+
+fun requireProductionReleaseConfig() {
+    val releaseApi = providers.gradleProperty("releaseApiBaseUrl").orNull
+        ?: throw GradleException("Release builds require -PreleaseApiBaseUrl=https://your-production-host/api/v1/")
+    if (!releaseApi.startsWith("https://") || releaseApi.contains("guardian.local") || releaseApi.contains("example.com") || releaseApi.contains("127.0.0.1")) {
+        throw GradleException("Release API URL is not a real production HTTPS host.")
+    }
+    val googleServices = file("google-services.json")
+    val text = if (googleServices.exists()) googleServices.readText() else ""
+    if (!googleServices.exists() || !text.contains("\"mobilesdk_app_id\"") || text.contains("YOUR_") || text.contains("placeholder")) {
+        throw GradleException("Release builds require a real google-services.json from the Firebase console.")
+    }
+}
+
+tasks.register("checkReleaseConfig") {
+    doLast { requireProductionReleaseConfig() }
+}
+
+afterEvaluate {
+    tasks.matching { it.name == "assembleRelease" || it.name == "bundleRelease" }.configureEach {
+        dependsOn("checkReleaseConfig")
+    }
 }
 
 ksp {

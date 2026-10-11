@@ -228,7 +228,7 @@ export const responderAssignSchema = z
 
 export const responderStatusSchema = z
   .object({
-    status: z.enum(["RESPONDING", "USER_LOCATED"]),
+    status: z.enum(["ACCEPTED", "EN_ROUTE", "ON_SCENE", "RESPONDING", "USER_LOCATED", "COMPLETED", "DECLINED"]),
   })
   .strict();
 

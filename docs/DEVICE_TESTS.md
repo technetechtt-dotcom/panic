@@ -21,6 +21,19 @@ Record the phone model, Android version, whether the screen was locked, and whet
 | FCM with google-services.json present | The device row stores an FCM token after sign-in. |
 | FCM without google-services.json | No token is uploaded. The hub reports FCM as not configured or degraded. |
 
+## OEM matrix (not run here)
+
+Record pass/fail on each handset before treating a build as ready. This table is a checklist. It is not a claim that the devices were tested in this workspace.
+
+| OEM | Model | Android | SOS open | Volume SOS | Doze upload | Battery exemption | Notes |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Google |  |  |  |  |  |  |  |
+| Samsung |  |  |  |  |  |  | |
+| Xiaomi |  |  |  |  |  |  | |
+| Huawei / Honor |  |  |  |  |  |  | |
+| Oppo / OnePlus |  |  |  |  |  |  | |
+| Motorola |  |  |  |  |  |  | |
+
 These checks were not run in this change. A CI debug APK is not a physical-device result.
 
 A failure on a locked screen, Doze, or an OEM battery killer is a product result, not a reason to start the microphone from the background.

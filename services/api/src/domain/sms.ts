@@ -10,6 +10,7 @@ export interface SmsSendResult {
   delivered: boolean;
   simulated: boolean;
   reason: string;
+  providerMessageId?: string;
 }
 
 export type ProviderHealth = "NOT_CONFIGURED" | "CONFIGURED" | "HEALTHY" | "DEGRADED" | "FAILED" | "NOT_IMPLEMENTED";
@@ -46,16 +47,20 @@ export class TwilioSmsProvider implements EmergencySmsProvider {
     if (!sid || !token || !from || !message.to) {
       return { delivered: false, simulated: true, reason: "SMS is not configured, so this message was not transmitted." };
     }
+    const fields = new URLSearchParams({ To: message.to, From: from, Body: message.body });
+    const callback = this.env.PUBLIC_API_URL?.trim();
+    if (callback) fields.set("StatusCallback", `${callback.replace(/\/$/, "")}/api/v1/webhooks/twilio/sms`);
     const response = await fetch(`https://api.twilio.com/2010-04-01/Accounts/${sid}/Messages.json`, {
       method: "POST",
       headers: {
         Authorization: `Basic ${Buffer.from(`${sid}:${token}`).toString("base64")}`,
         "Content-Type": "application/x-www-form-urlencoded",
       },
-      body: new URLSearchParams({ To: message.to, From: from, Body: message.body }),
+      body: fields,
     }).catch(() => null);
     if (!response?.ok) return { delivered: false, simulated: false, reason: "The SMS provider rejected the message." };
-    return { delivered: true, simulated: false, reason: "SMS sent." };
+    const payload = (await response.json().catch(() => ({}))) as { sid?: string };
+    return { delivered: true, simulated: false, reason: "SMS accepted by Twilio.", providerMessageId: payload.sid };
   }
 }
 
@@ -80,27 +85,53 @@ export async function sendApns(token: string, title: string, body: string, env: 
     return { delivered: false, simulated: true, reason: "APNs is not configured, so no Apple push was sent." };
   }
   try {
+    const { connect } = await import("node:http2");
     const key = await importPKCS8(env.APNS_KEY_P8!.trim().replace(/\\n/g, "\n"), "ES256");
     const jwt = await new SignJWT({})
       .setProtectedHeader({ alg: "ES256", kid: env.APNS_KEY_ID!.trim() })
       .setIssuer(env.APNS_TEAM_ID!.trim())
       .setIssuedAt()
+      .setExpirationTime("50m")
       .sign(key);
     const host = env.APNS_PRODUCTION === "true" ? "api.push.apple.com" : "api.sandbox.push.apple.com";
     const topic = env.APNS_BUNDLE_ID?.trim() || "za.co.guardian.app";
-    const response = await fetch(`https://${host}/3/device/${token}`, {
-      method: "POST",
-      headers: {
+    const payload = JSON.stringify({ aps: { alert: { title, body }, sound: "default" } });
+    const client = connect(`https://${host}`);
+    const result = await new Promise<SmsSendResult>((resolve) => {
+      const request = client.request({
+        ":method": "POST",
+        ":path": `/3/device/${token}`,
         authorization: `bearer ${jwt}`,
         "apns-topic": topic,
         "apns-push-type": "alert",
         "apns-priority": "10",
         "content-type": "application/json",
-      },
-      body: JSON.stringify({ aps: { alert: { title, body }, sound: "default" } }),
-    }).catch(() => null);
-    if (!response?.ok) return { delivered: false, simulated: false, reason: "APNs rejected the push." };
-    return { delivered: true, simulated: false, reason: "Apple push sent." };
+      });
+      let status = 0;
+      let apnsId = "";
+      let chunks = "";
+      request.on("response", (headers) => {
+        status = Number(headers[":status"] ?? 0);
+        apnsId = String(headers["apns-id"] ?? "");
+      });
+      request.on("data", (chunk) => {
+        chunks += chunk.toString();
+      });
+      request.on("end", () => {
+        client.close();
+        if (status >= 200 && status < 300) {
+          resolve({ delivered: true, simulated: false, reason: "Apple push sent over HTTP/2.", providerMessageId: apnsId || undefined });
+          return;
+        }
+        resolve({ delivered: false, simulated: false, reason: chunks || `APNs rejected the push (${status || "no status"}).` });
+      });
+      request.on("error", (error) => {
+        client.close();
+        resolve({ delivered: false, simulated: false, reason: error.message });
+      });
+      request.end(payload);
+    });
+    return result;
   } catch (error) {
     return { delivered: false, simulated: false, reason: error instanceof Error ? error.message : "APNs signing failed." };
   }
@@ -133,7 +164,8 @@ export async function sendFcm(token: string, title: string, body: string, env: N
       }),
     }).catch(() => null);
     if (!response?.ok) return { delivered: false, simulated: false, reason: "FCM rejected the push." };
-    return { delivered: true, simulated: false, reason: "Push sent." };
+    const payload = (await response.json().catch(() => ({}))) as { name?: string };
+    return { delivered: true, simulated: false, reason: "Push sent.", providerMessageId: payload.name };
   } catch (error) {
     return { delivered: false, simulated: false, reason: error instanceof Error ? error.message : "FCM signing failed." };
   }

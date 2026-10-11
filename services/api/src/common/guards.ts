@@ -17,7 +17,12 @@ export const IS_PUBLIC = "isPublic";
 export const RequirePermissions = (...permissions: PermissionName[]) => SetMetadata(PERMISSIONS_KEY, permissions);
 export const Public = () => SetMetadata(IS_PUBLIC, true);
 
-export type RequestWithUser = Request & { user?: UserRecord; requestId?: string; emergencyOnly?: boolean };
+export type RequestWithUser = Request & {
+  user?: UserRecord;
+  requestId?: string;
+  emergencyOnly?: boolean;
+  emergencyDeviceId?: string;
+};
 
 @Injectable()
 export class AuthGuard implements CanActivate {
@@ -38,12 +43,13 @@ export class AuthGuard implements CanActivate {
     const request = context.switchToHttp().getRequest<RequestWithUser>();
     const header = request.header("authorization") ?? "";
     if (header.startsWith("Emergency ")) {
-      const userId = await this.devices.findUserIdByEmergencyHash(sha256(header.slice("Emergency ".length).trim()));
-      if (!userId) throw new AppError("UNAUTHENTICATED", 401, "Sign in required.");
-      const user = await this.users.findById(userId);
+      const binding = await this.devices.findEmergencyBinding(sha256(header.slice("Emergency ".length).trim()));
+      if (!binding) throw new AppError("UNAUTHENTICATED", 401, "Sign in required.");
+      const user = await this.users.findById(binding.userId);
       if (!user) throw new AppError("UNAUTHENTICATED", 401, "Sign in required.");
       request.user = user;
       request.emergencyOnly = true;
+      request.emergencyDeviceId = binding.deviceId;
       return true;
     }
     const token = header.startsWith("Bearer ") ? header.slice(7).trim() : "";

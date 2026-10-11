@@ -16,6 +16,17 @@ test("postgres accepts a migrated emergency profile table", async (t) => {
     await prisma.$queryRaw`SELECT "revokedAt", "fcmToken" FROM "Device" LIMIT 1`;
     await prisma.$queryRaw`SELECT "invitationToken", "guardianUserId" FROM "TrustedContact" LIMIT 1`;
     await prisma.$queryRaw`SELECT "claimedBy", "escalatedToSupervisorAt" FROM "Incident" LIMIT 1`;
+    await prisma.$queryRaw`SELECT "providerMessageId", "deliveredAt", "failedAt" FROM "NotificationDelivery" LIMIT 1`;
+    await prisma.$queryRaw`SELECT "acceptedAt", "enRouteAt", "arrivedAt", "locatedAt", "completedAt", "declinedAt" FROM "ResponderAssignment" LIMIT 1`;
+    await prisma.$executeRaw`CREATE TABLE IF NOT EXISTS backup_probe (id text primary key, note text)`;
+    await prisma.$executeRaw`INSERT INTO backup_probe (id, note) VALUES ('probe-1', 'live') ON CONFLICT (id) DO UPDATE SET note = 'live'`;
+    const dumped = await prisma.$queryRaw<Array<{ id: string; note: string }>>`SELECT id, note FROM backup_probe`;
+    await prisma.$executeRaw`DELETE FROM backup_probe`;
+    for (const row of dumped) {
+      await prisma.$executeRaw`INSERT INTO backup_probe (id, note) VALUES (${row.id}, ${row.note})`;
+    }
+    const restored = await prisma.$queryRaw<Array<{ note: string }>>`SELECT note FROM backup_probe WHERE id = 'probe-1'`;
+    assert.equal(restored[0]?.note, "live");
   } finally {
     await prisma.$disconnect();
   }

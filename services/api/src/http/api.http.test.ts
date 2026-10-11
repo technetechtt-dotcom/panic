@@ -186,6 +186,16 @@ test("authentication, SOS idempotency, and operator actions", async () => {
       .set("Authorization", `Bearer ${token}`);
     assert.equal(timeline.status, 200);
     assert.ok(timeline.body.data.some((entry: { type: string }) => entry.type === "incident.acknowledged"));
+
+    const pushDenied = await request(server).post("/api/v1/webhooks/push/receipt").send({ providerMessageId: "msg-1" });
+    assert.equal(pushDenied.status, 401);
+    const twilio = await request(server).post("/api/v1/webhooks/twilio/sms").send({ MessageSid: "SM1", MessageStatus: "delivered" });
+    assert.equal(twilio.status, 204);
+    const ready = await request(server).get("/api/v1/health/ready");
+    assert.ok([200, 503].includes(ready.status));
+    const metrics = await request(server).get("/api/v1/health/metrics");
+    assert.equal(metrics.status, 200);
+    assert.match(metrics.text, /guardian_http_requests_total/);
   } finally {
     await app.close();
   }

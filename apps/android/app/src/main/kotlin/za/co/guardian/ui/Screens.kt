@@ -134,14 +134,16 @@ class HomeViewModel @Inject constructor(
         return "That password was not accepted."
     }
 
-    fun reportLocated(incidentId: String) {
+    fun reportLocated(incidentId: String) = updateAssignment(incidentId, "USER_LOCATED", "Location report sent. This does not close the incident.")
+
+    fun updateAssignment(incidentId: String, status: String, success: String) {
         val client = api ?: return
         viewModelScope.launch {
             try {
-                client.responderStatus(incidentId, za.co.guardian.data.ResponderStatusBody("USER_LOCATED"))
-                messageState.value = "Location report sent. This does not close the incident."
+                client.responderStatus(incidentId, za.co.guardian.data.ResponderStatusBody(status))
+                messageState.value = success
             } catch (_: Exception) {
-                messageState.value = "The location report was not sent."
+                messageState.value = "The responder update was not sent."
             }
         }
     }
@@ -271,6 +273,7 @@ class SettingsViewModel @Inject constructor(
     private val vault: za.co.guardian.data.EvidenceVault,
     private val database: za.co.guardian.data.GuardianDatabase,
     private val signals: za.co.guardian.data.PhoneSignals,
+    private val api: za.co.guardian.data.GuardianApi,
     @dagger.hilt.android.qualifiers.ApplicationContext private val context: android.content.Context,
 ) : ViewModel() {
     var testRemaining by mutableStateOf(settings.remainingMs())
@@ -313,6 +316,14 @@ class SettingsViewModel @Inject constructor(
         private set
     var lastLocation by mutableStateOf("No confirmed location yet")
         private set
+    var liveState by mutableStateOf("LOCAL")
+        private set
+    var liveHeartbeat by mutableStateOf("none")
+        private set
+    var liveContact by mutableStateOf("unknown")
+        private set
+    var liveClaim by mutableStateOf("Unclaimed")
+        private set
 
     fun refresh() {
         testRemaining = settings.remainingMs()
@@ -338,6 +349,21 @@ class SettingsViewModel @Inject constructor(
             runCatching { devices = protection.listDevices() }
             runCatching { profile = protection.loadProfile() }
             runCatching { journeys = protection.listJourneys() }
+            val open = database.incidents().list().firstOrNull { it.serverId != null && it.state != "RESOLVED" && it.state != "ARCHIVED" }
+            val serverId = open?.serverId
+            if (serverId != null) {
+                runCatching {
+                    val live = api.incident(serverId).data
+                    liveState = live.state
+                    liveContact = live.contactStatus.ifBlank { "unknown" }
+                    liveHeartbeat = live.lastHeartbeatAt ?: "none"
+                    liveClaim = if (live.claimedBy.isNullOrBlank()) "Unclaimed" else "Operator claimed"
+                    if (live.lastLatitude != null && live.lastLongitude != null) {
+                        lastLocation = "${"%.5f".format(live.lastLatitude)}, ${"%.5f".format(live.lastLongitude)}"
+                    }
+                    if (live.lastBattery != null) battery = live.lastBattery.toInt()
+                }
+            }
         }
     }
 
@@ -752,7 +778,12 @@ fun HomeScreen(
                 if (viewModel.assignments.isEmpty()) Text("No assigned incidents are on this phone yet.")
                 viewModel.assignments.forEach { (id, label) ->
                     Text(label, modifier = Modifier.padding(top = 8.dp))
+                    Button(onClick = { viewModel.updateAssignment(id, "ACCEPTED", "Assignment accepted.") }, modifier = Modifier.fillMaxWidth()) { Text("Accept assignment") }
+                    Button(onClick = { viewModel.updateAssignment(id, "EN_ROUTE", "Marked en route.") }, modifier = Modifier.fillMaxWidth()) { Text("En route") }
+                    Button(onClick = { viewModel.updateAssignment(id, "ON_SCENE", "Marked on scene.") }, modifier = Modifier.fillMaxWidth()) { Text("On scene") }
                     Button(onClick = { viewModel.reportLocated(id) }, modifier = Modifier.fillMaxWidth()) { Text("Report person located") }
+                    Button(onClick = { viewModel.updateAssignment(id, "COMPLETED", "Assignment completed.") }, modifier = Modifier.fillMaxWidth()) { Text("Complete assignment") }
+                    Button(onClick = { viewModel.updateAssignment(id, "DECLINED", "Assignment declined.") }, modifier = Modifier.fillMaxWidth()) { Text("Decline assignment") }
                 }
             }
             Spacer(Modifier.height(16.dp))
@@ -1022,15 +1053,23 @@ fun ActiveIncidentScreen(onBack: () -> Unit, viewModel: SettingsViewModel = hilt
     androidx.compose.runtime.LaunchedEffect(Unit) { viewModel.refresh() }
     Scaffold { padding ->
         Column(Modifier.fillMaxSize().padding(padding).padding(20.dp).verticalScroll(rememberScrollState())) {
+            androidx.compose.runtime.LaunchedEffect(Unit) {
+                while (true) {
+                    viewModel.refresh()
+                    kotlinx.coroutines.delay(4_000)
+                }
+            }
             Text(if (viewModel.incidentActive) "SOS ACTIVE" else "Active incident", fontSize = 32.sp, fontWeight = FontWeight.SemiBold)
+            Text("State                    ${viewModel.liveState}")
             Text("SOS sent                 ✓")
-            Text("Monitoring acknowledged  — waiting")
-            Text("Guardian notified        — server")
+            Text("Monitoring               ${viewModel.liveClaim}")
+            Text("Contact                  ${viewModel.liveContact}")
+            Text("Last heartbeat           ${viewModel.liveHeartbeat}")
             Text("Last location            ${viewModel.lastLocation}")
             Text("Battery                  ${viewModel.battery ?: "unknown"}%")
             Text("Network                  ${viewModel.network}")
             Text("Evidence                 Recording if you capture it")
-            Text("Responder                Assigned on the hub")
+            Text("This page refreshes from the server every 4 seconds while the incident is open.")
             Text("Photos and video are taken by you, with the camera app visible. They are not captured in the background.", modifier = Modifier.padding(vertical = 8.dp))
             Button(onClick = { cameraPermission.launch(android.Manifest.permission.CAMERA) }, modifier = Modifier.fillMaxWidth()) { Text("Take a photo") }
             Button(onClick = {

@@ -28,3 +28,15 @@ Account email and display name, device details, distress and location during an 
 ## Still required outside this repo
 
 A lawyer still has to decide the responsible party, the section 18 notice, operator agreements, retention periods, and whether a monitoring service in South Africa needs a further filing. Those decisions are not encoded here.
+
+## Operational review checklist
+
+This checklist is for the operator of a deployment. Completing it is not a POPIA certification.
+
+- [ ] Name the responsible party and the information officer in the operator runbook, not only in this repo.
+- [ ] Confirm the in-app consent text matches the notice a lawyer approved.
+- [ ] Confirm export and erase are reachable by the person using the phone.
+- [ ] Confirm test incidents stay out of live counts.
+- [ ] Confirm evidence is not copied into chat or tickets.
+- [ ] Confirm a breach write-up path exists for a supervisor.
+- [ ] Confirm retention and deletion of resolved incidents is a written policy, not only a code default.

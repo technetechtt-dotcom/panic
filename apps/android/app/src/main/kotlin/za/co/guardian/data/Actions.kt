@@ -340,6 +340,7 @@ class ProtectionActions @Inject constructor(
     private val api: GuardianApi,
     private val database: GuardianDatabase,
     private val settings: SettingsStore,
+    private val signals: PhoneSignals,
 ) {
     suspend fun addGuardian(name: String, phone: String = "", email: String = ""): String {
         if (name.isBlank()) return "Enter a guardian's name."
@@ -429,7 +430,18 @@ class ProtectionActions @Inject constructor(
         val stamp = java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'")
             .withZone(java.time.ZoneOffset.UTC)
             .format(arrival)
-        val journey = api.startJourney(JourneyBody(label.trim(), stamp, interval, mode)).data
+        val (fresh, lastKnown) = signals.freshAndLastKnown()
+        val origin = fresh ?: lastKnown
+        val journey = api.startJourney(
+            JourneyBody(
+                destinationLabel = label.trim(),
+                expectedArrivalAt = stamp,
+                checkInIntervalSeconds = interval,
+                mode = mode,
+                originLatitude = origin?.latitude,
+                originLongitude = origin?.longitude,
+            ),
+        ).data
         settings.setProtectionMode(mode)
         settings.setJourneyId(journey.id)
         return "${mode.lowercase().replace('_', ' ')} watch is ${journey.status.lowercase()}. A missed check-in raises concern on the server. It does not replace the SOS button."

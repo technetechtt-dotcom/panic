@@ -108,7 +108,7 @@ export class MemoryConsents implements ConsentStore {
 
 export class MemoryDevices implements DeviceStore {
   readonly rows = new Map<string, DeviceRecord>();
-  readonly emergencyHashes = new Map<string, string>();
+  readonly emergencyHashes = new Map<string, { userId: string; deviceId: string }>();
 
   async insert(device: DeviceRecord): Promise<void> {
     const clash = [...this.rows.values()].find(
@@ -140,12 +140,19 @@ export class MemoryDevices implements DeviceStore {
   async setEmergencyHash(deviceId: string, userId: string, hash: string): Promise<boolean> {
     const device = this.rows.get(deviceId);
     if (!device || device.userId !== userId) return false;
-    this.emergencyHashes.set(hash, userId);
+    for (const [existing, bound] of this.emergencyHashes) {
+      if (bound.deviceId === deviceId) this.emergencyHashes.delete(existing);
+    }
+    if (hash.trim()) this.emergencyHashes.set(hash, { userId, deviceId });
     return true;
   }
 
-  async findUserIdByEmergencyHash(hash: string): Promise<string | null> {
-    return this.emergencyHashes.get(hash) ?? null;
+  async findEmergencyBinding(hash: string): Promise<{ userId: string; deviceId: string } | null> {
+    const bound = this.emergencyHashes.get(hash);
+    if (!bound) return null;
+    const device = this.rows.get(bound.deviceId);
+    if (!device || device.revokedAt) return null;
+    return bound;
   }
 }
 

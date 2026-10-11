@@ -241,17 +241,16 @@ object DatabaseModule {
     @Singleton
     fun database(@ApplicationContext context: Context): GuardianDatabase =
         Room.databaseBuilder(context, GuardianDatabase::class.java, "guardian.db")
-            .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
+            .addMigrations(*GuardianMigrations.all)
             .build()
 }
 
-private val MIGRATION_1_2 = object : Migration(1, 2) {
-    override fun migrate(db: SupportSQLiteDatabase) {
-        db.execSQL("ALTER TABLE incidents ADD COLUMN triggerType TEXT NOT NULL DEFAULT 'MANUAL_SOS'")
-        db.execSQL("ALTER TABLE locations ADD COLUMN localTriggerId TEXT NOT NULL DEFAULT ''")
-        db.execSQL("ALTER TABLE heartbeat_outbox ADD COLUMN localTriggerId TEXT NOT NULL DEFAULT ''")
-        db.execSQL(
-            """
+object GuardianMigrations {
+    val sql1to2 = listOf(
+        "ALTER TABLE incidents ADD COLUMN triggerType TEXT NOT NULL DEFAULT 'MANUAL_SOS'",
+        "ALTER TABLE locations ADD COLUMN localTriggerId TEXT NOT NULL DEFAULT ''",
+        "ALTER TABLE heartbeat_outbox ADD COLUMN localTriggerId TEXT NOT NULL DEFAULT ''",
+        """
             CREATE TABLE IF NOT EXISTS escalation_outbox (
                 triggerId TEXT NOT NULL PRIMARY KEY,
                 localIncidentTriggerId TEXT NOT NULL,
@@ -259,15 +258,10 @@ private val MIGRATION_1_2 = object : Migration(1, 2) {
                 createdAtEpochMs INTEGER NOT NULL,
                 sent INTEGER NOT NULL
             )
-            """.trimIndent(),
-        )
-    }
-}
-
-private val MIGRATION_2_3 = object : Migration(2, 3) {
-    override fun migrate(db: SupportSQLiteDatabase) {
-        db.execSQL(
-            """
+        """.trimIndent(),
+    )
+    val sql2to3 = listOf(
+        """
             CREATE TABLE IF NOT EXISTS evidence_outbox (
                 evidenceId TEXT NOT NULL PRIMARY KEY,
                 incidentLocalId TEXT NOT NULL,
@@ -281,15 +275,22 @@ private val MIGRATION_2_3 = object : Migration(2, 3) {
                 retryCount INTEGER NOT NULL,
                 size INTEGER NOT NULL
             )
-            """.trimIndent(),
-        )
-    }
-}
+        """.trimIndent(),
+    )
+    val sql3to4 = listOf(
+        "ALTER TABLE escalation_outbox ADD COLUMN stage TEXT NOT NULL DEFAULT 'EVIDENCE'",
+    )
 
-private val MIGRATION_3_4 = object : Migration(3, 4) {
-    override fun migrate(db: SupportSQLiteDatabase) {
-        db.execSQL("ALTER TABLE escalation_outbox ADD COLUMN stage TEXT NOT NULL DEFAULT 'EVIDENCE'")
+    val MIGRATION_1_2 = object : Migration(1, 2) {
+        override fun migrate(db: SupportSQLiteDatabase) = sql1to2.forEach(db::execSQL)
     }
+    val MIGRATION_2_3 = object : Migration(2, 3) {
+        override fun migrate(db: SupportSQLiteDatabase) = sql2to3.forEach(db::execSQL)
+    }
+    val MIGRATION_3_4 = object : Migration(3, 4) {
+        override fun migrate(db: SupportSQLiteDatabase) = sql3to4.forEach(db::execSQL)
+    }
+    val all = arrayOf(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
 }
 
 class RoomEscalationStore(private val dao: EscalationDao) : za.co.guardian.core.EscalationLocalStore {

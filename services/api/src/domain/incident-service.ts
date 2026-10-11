@@ -70,9 +70,15 @@ export class IncidentService {
     const existing = await this.incidents.findByTriggerId(input.triggerId);
     if (existing) return this.replay(actor, existing, requestHash);
 
+    if (actor.emergencyDeviceId && actor.emergencyDeviceId !== input.deviceId) {
+      throw new AppError("FORBIDDEN", 403, "This emergency credential is bound to a different phone.");
+    }
     const device = await this.devices.findByIdForUser(input.deviceId, actor.id);
     if (!device) {
       throw new AppError("DEVICE_NOT_FOUND", 404, "Register this device before sending an SOS.");
+    }
+    if (actor.emergencyDeviceId && actor.emergencyDeviceId !== device.id) {
+      throw new AppError("FORBIDDEN", 403, "This emergency credential is bound to a different phone.");
     }
     if (!serverOriginated) this.assertDeviceProof(device, input);
 

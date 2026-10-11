@@ -3,7 +3,7 @@
 Production-shaped containers live in `services/api/Dockerfile`, `apps/monitoring-web/Dockerfile`, and `infrastructure/docker/docker-compose.prod.yml`. From the repository root:
 
 ```powershell
-docker compose --env-file .env -f infrastructure/docker/docker-compose.prod.yml up --build --scale api=2
+docker compose --env-file .env -f infrastructure/docker/docker-compose.prod.yml up --build
 ```
 
 The API container runs `prisma migrate deploy` before it listens. Compose sets `DATABASE_URL` to the Postgres service, so a localhost URL in `.env` does not override it. Both API processes share Postgres, Redis, and the `guardian_evidence` volume. WebSocket fan-out uses the Redis adapter. The hub is published on port 8080 and proxies `/api` and `/socket.io` to the API. Set `EVIDENCE_VAULT_KEY`, Twilio, FCM, and S3 variables only when those providers are real. A missing provider records that the message or object was not sent. Without S3, evidence stays on the shared volume as AES-GCM files. With S3, a replica that does not have the local file reads the sealed object back.

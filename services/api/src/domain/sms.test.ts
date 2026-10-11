@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { evidenceVaultKey } from "./evidence-vault";
-import { apnsHealth, fcmHealth, sendFcm, smsHealth } from "./sms";
+import { apnsHealth, fcmHealth, sendApns, sendFcm, smsHealth } from "./sms";
 
 test("FCM HTTP v1 is required and a legacy server key is degraded", async () => {
   assert.equal(smsHealth({}), "NOT_CONFIGURED");
@@ -20,6 +20,9 @@ test("FCM HTTP v1 is required and a legacy server key is degraded", async () => 
   const result = await sendFcm("token", "Guardian", "help", { FCM_SERVER_KEY: "legacy" });
   assert.equal(result.delivered, false);
   assert.match(result.reason, /HTTP v1|Legacy FCM|not configured|FCM/i);
+  const apple = await sendApns("device-token", "Guardian", "help", { APNS_KEY_ID: "ABC", APNS_TEAM_ID: "TEAM" });
+  assert.equal(apple.delivered, false);
+  assert.match(apple.reason, /APNS_KEY_P8|not implemented/i);
 });
 
 test("production evidence vault key cannot fall back to the JWT secret", () => {

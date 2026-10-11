@@ -32,6 +32,7 @@ Milestone 1 treats the SOS path as the asset that must stay available and the ac
 - A device emergency credential can send SOS, location, heartbeat, and evidence after the login refresh token is gone. It cannot change the account, guardians, or operator data.
 - Release minify is off.
 - `npm audit` reported vulnerabilities in the dependency tree. They have not been triaged.
+- No external penetration test has been commissioned. This repository does not contain exploit procedures. Defensive tests cover emergency-credential allowlists, refresh-token reuse, and production fail-closed configuration.
 - WebSocket auth checks the database role at connect time. A demotion does not drop an already joined socket until the access token expires or the client reconnects.
 
 ## Operator seed

@@ -65,50 +65,81 @@ fun phraseQualityWarning(phrase: String): String {
     return "This phrase is better than a single short word."
 }
 
-const val KEYWORD_FRAMES = 8
-const val FEATURES_PER_FRAME = 8
+const val KEYWORD_FRAMES = 16
+const val MFCC_COUNT = 13
+const val FEATURES_PER_FRAME = MFCC_COUNT + 2
 const val KEYWORD_FEATURE_SIZE = KEYWORD_FRAMES * FEATURES_PER_FRAME
+private const val MEL_FILTERS = 26
 
-private fun frameFeatures(samples: ShortArray, start: Int, end: Int, sampleRate: Int): FloatArray {
-    val count = end - start
-    if (count <= 0) return FloatArray(FEATURES_PER_FRAME)
+private fun hzToMel(hz: Double): Double = 2595.0 * kotlin.math.ln(1.0 + hz / 700.0)
+private fun melToHz(mel: Double): Double = 700.0 * (kotlin.math.exp(mel / 2595.0) - 1.0)
+
+private fun frameMfcc(samples: ShortArray, start: Int, end: Int, sampleRate: Int): FloatArray {
+    val count = (end - start).coerceAtLeast(1)
+    val windowed = DoubleArray(count) { index ->
+        val sample = samples[start + index] / 32768.0
+        val ham = 0.54 - 0.46 * kotlin.math.cos(2.0 * Math.PI * index / (count - 1).coerceAtLeast(1))
+        sample * ham
+    }
     var energy = 0.0
     var crossings = 0
-    for (index in start until end) {
-        val sample = samples[index].toInt()
-        energy += sample.toDouble() * sample
-        if (index > start && (samples[index - 1].toInt() >= 0) != (sample >= 0)) crossings += 1
+    for (index in windowed.indices) {
+        energy += windowed[index] * windowed[index]
+        if (index > 0 && (windowed[index - 1] >= 0.0) != (windowed[index] >= 0.0)) crossings += 1
     }
-    val bands = FloatArray(FEATURES_PER_FRAME)
-    bands[0] = kotlin.math.sqrt(energy / count).toFloat() / 32768f
-    bands[1] = crossings.toFloat() / count
-    val frequencies = doubleArrayOf(200.0, 400.0, 800.0, 1200.0, 2000.0, 3000.0)
-    for (band in frequencies.indices) {
-        val omega = 2.0 * Math.PI * frequencies[band] / sampleRate
-        val coefficient = 2.0 * kotlin.math.cos(omega)
-        var previous = 0.0
-        var prior = 0.0
-        for (index in start until end) {
-            val sample = samples[index]
-            val next = sample / 32768.0 + coefficient * previous - prior
-            prior = previous
-            previous = next
+    val nfft = Integer.highestOneBit(count * 2 - 1).coerceAtLeast(256)
+    val spectrum = DoubleArray(nfft / 2 + 1)
+    for (bin in spectrum.indices) {
+        var re = 0.0
+        var im = 0.0
+        val omega = 2.0 * Math.PI * bin / nfft
+        for (index in windowed.indices) {
+            re += windowed[index] * kotlin.math.cos(omega * index)
+            im -= windowed[index] * kotlin.math.sin(omega * index)
         }
-        val power = previous * previous + prior * prior - coefficient * previous * prior
-        bands[band + 2] = kotlin.math.sqrt(power.coerceAtLeast(0.0)).toFloat()
+        spectrum[bin] = re * re + im * im
     }
-    return bands
+    val maxHz = sampleRate / 2.0
+    val minMel = hzToMel(0.0)
+    val maxMel = hzToMel(maxHz)
+    val filter = DoubleArray(MEL_FILTERS)
+    for (m in 0 until MEL_FILTERS) {
+        val left = melToHz(minMel + (maxMel - minMel) * m / (MEL_FILTERS + 1))
+        val center = melToHz(minMel + (maxMel - minMel) * (m + 1) / (MEL_FILTERS + 1))
+        val right = melToHz(minMel + (maxMel - minMel) * (m + 2) / (MEL_FILTERS + 1))
+        var sum = 0.0
+        for (bin in spectrum.indices) {
+            val hz = bin * maxHz / (spectrum.size - 1)
+            val weight = when {
+                hz < left || hz > right -> 0.0
+                hz <= center -> (hz - left) / (center - left).coerceAtLeast(1.0)
+                else -> (right - hz) / (right - center).coerceAtLeast(1.0)
+            }
+            sum += spectrum[bin] * weight
+        }
+        filter[m] = kotlin.math.ln((sum + 1e-10))
+    }
+    val features = FloatArray(FEATURES_PER_FRAME)
+    features[0] = kotlin.math.sqrt(energy / count).toFloat()
+    features[1] = (crossings.toFloat() / count)
+    for (c in 0 until MFCC_COUNT) {
+        var sum = 0.0
+        for (m in filter.indices) {
+            sum += filter[m] * kotlin.math.cos(Math.PI * c * (m + 0.5) / MEL_FILTERS)
+        }
+        features[c + 2] = sum.toFloat()
+    }
+    return features
 }
 
 fun pcmFeatures(samples: ShortArray, sampleRate: Int = 16_000): FloatArray {
     if (samples.isEmpty()) return FloatArray(KEYWORD_FEATURE_SIZE)
-    val total = samples.size
     val result = FloatArray(KEYWORD_FEATURE_SIZE)
-    val frameSize = (total / KEYWORD_FRAMES).coerceAtLeast(1)
+    val frameSize = (samples.size / KEYWORD_FRAMES).coerceAtLeast(1)
     for (frame in 0 until KEYWORD_FRAMES) {
         val start = frame * frameSize
-        val end = if (frame == KEYWORD_FRAMES - 1) total else (start + frameSize).coerceAtMost(total)
-        val f = frameFeatures(samples, start, end, sampleRate)
+        val end = if (frame == KEYWORD_FRAMES - 1) samples.size else (start + frameSize).coerceAtMost(samples.size)
+        val f = frameMfcc(samples, start, end, sampleRate)
         System.arraycopy(f, 0, result, frame * FEATURES_PER_FRAME, FEATURES_PER_FRAME)
     }
     return result
@@ -145,8 +176,12 @@ fun frameSimilarity(left: FloatArray, leftOffset: Int, right: FloatArray, rightO
     } else 0f
 
     val zcrDiff = kotlin.math.abs(left[leftOffset + 1] - right[rightOffset + 1])
-    val zcrSim = (1.0f - zcrDiff * 4f).coerceIn(0f, 1f)
-    return (0.75f * specSim + 0.25f * zcrSim).coerceIn(0f, 1f)
+    val zcrSim = (1.0f - zcrDiff * 8f).coerceIn(0f, 1f)
+    val leftEnergy = left[leftOffset]
+    val rightEnergy = right[rightOffset]
+    val energySim = if (leftEnergy <= 0f && rightEnergy <= 0f) 1f
+    else (minOf(leftEnergy, rightEnergy) / maxOf(leftEnergy, rightEnergy).coerceAtLeast(1e-6f)).coerceIn(0f, 1f)
+    return (0.5f * specSim + 0.35f * zcrSim + 0.15f * energySim).coerceIn(0f, 1f)
 }
 
 fun keywordConfidence(live: FloatArray, enrolled: FloatArray): Float {
@@ -159,23 +194,24 @@ fun keywordConfidence(live: FloatArray, enrolled: FloatArray): Float {
         val frameEnergy = live[f * FEATURES_PER_FRAME]
         if (frameEnergy > maxEnergy) maxEnergy = frameEnergy
     }
-    if (maxEnergy < 0.005f) return 0f
-
-    var totalSim = 0f
-    for (f in 0 until KEYWORD_FRAMES) {
-        val liveOffset = f * FEATURES_PER_FRAME
-        var bestFrameSim = 0f
-        for (delta in -1..1) {
-            val enrolledFrame = f + delta
-            if (enrolledFrame in 0 until KEYWORD_FRAMES) {
-                val enrolledOffset = enrolledFrame * FEATURES_PER_FRAME
-                val sim = frameSimilarity(live, liveOffset, enrolled, enrolledOffset)
-                if (sim > bestFrameSim) bestFrameSim = sim
+    if (maxEnergy < 0.004f) return 0f
+    val rows = KEYWORD_FRAMES
+    val cols = KEYWORD_FRAMES
+    val cost = Array(rows) { FloatArray(cols) }
+    for (i in 0 until rows) {
+        for (j in 0 until cols) {
+            val local = 1f - frameSimilarity(live, i * FEATURES_PER_FRAME, enrolled, j * FEATURES_PER_FRAME)
+            val prev = when {
+                i == 0 && j == 0 -> 0f
+                i == 0 -> cost[0][j - 1]
+                j == 0 -> cost[i - 1][0]
+                else -> minOf(cost[i - 1][j], cost[i][j - 1], cost[i - 1][j - 1])
             }
+            cost[i][j] = local + prev
         }
-        totalSim += bestFrameSim
     }
-    return (totalSim / KEYWORD_FRAMES).coerceIn(0f, 1f)
+    val path = cost[rows - 1][cols - 1] / rows.coerceAtLeast(1)
+    return (1f - path).coerceIn(0f, 1f)
 }
 
 fun keywordConfidenceScore(live: FloatArray, enrolled: List<FloatArray>): Float {
@@ -186,8 +222,9 @@ fun keywordConfidenceScore(live: FloatArray, enrolled: List<FloatArray>): Float 
 fun keywordMatches(live: FloatArray, enrolled: List<FloatArray>, sensitivity: Int): Boolean {
     if (enrolled.isEmpty()) return false
     val confidence = keywordConfidenceScore(live, enrolled)
-    val threshold = 0.88f - (sensitivity.coerceIn(0, 100) / 100f) * 0.22f
-    return confidence >= threshold
+    val votes = enrolled.count { keywordConfidence(live, it) >= 0.86f - (sensitivity.coerceIn(0, 100) / 100f) * 0.18f }
+    val threshold = 0.86f - (sensitivity.coerceIn(0, 100) / 100f) * 0.18f
+    return votes >= (enrolled.size + 1) / 2 && confidence >= threshold
 }
 
 fun locationIntervalMs(mode: String): Long = when (mode) {

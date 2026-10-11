@@ -384,6 +384,42 @@ test("failed login does not reveal whether the email exists beyond the shared me
   assert.equal(auditRows.length, 0);
 });
 
+test("an emergency credential is bound to one device", async () => {
+  const memory = createMemory();
+  const userId = randomUUID();
+  const deviceA = randomUUID();
+  const deviceB = randomUUID();
+  memory.devices.rows.set(deviceA, {
+    id: deviceA,
+    userId,
+    devicePublicId: randomUUID(),
+    platform: "ANDROID",
+    manufacturer: null,
+    model: "A",
+    osVersion: "14",
+    appVersion: "0.1.0",
+    createdAt: memory.clock.now(),
+    updatedAt: memory.clock.now(),
+  });
+  memory.devices.rows.set(deviceB, {
+    id: deviceB,
+    userId,
+    devicePublicId: randomUUID(),
+    platform: "ANDROID",
+    manufacturer: null,
+    model: "B",
+    osVersion: "14",
+    appVersion: "0.1.0",
+    createdAt: memory.clock.now(),
+    updatedAt: memory.clock.now(),
+  });
+  await memory.devices.setEmergencyHash(deviceA, userId, "hash-a");
+  const bound = await memory.devices.findEmergencyBinding("hash-a");
+  assert.deepEqual(bound, { userId, deviceId: deviceA });
+  memory.devices.rows.get(deviceA)!.revokedAt = memory.clock.now();
+  assert.equal(await memory.devices.findEmergencyBinding("hash-a"), null);
+});
+
 test("an emergency credential can send SOS data and nothing administrative", () => {
   assert.equal(emergencyRouteAllowed("POST", "/api/v1/incidents"), true);
   assert.equal(emergencyRouteAllowed("POST", "/api/v1/incidents/abc/evidence"), true);

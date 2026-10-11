@@ -28,6 +28,7 @@ class GuardianApp : Application(), Configuration.Provider {
     }
 
     private fun registerFcm() {
+        if (!za.co.guardian.BuildConfig.FIREBASE_CONFIGURED) return
         try {
             if (FirebaseApp.getApps(this).isEmpty()) FirebaseApp.initializeApp(this)
             if (FirebaseApp.getApps(this).isEmpty()) return

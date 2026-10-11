@@ -92,6 +92,7 @@ export class DeviceService {
     device.fcmToken = null;
     device.updatedAt = now;
     await this.devices.save(device);
+    await this.devices.setEmergencyHash(device.id, actor.id, "");
     await this.audit.append({
       id: this.ids.uuid(),
       actorId: actor.id,

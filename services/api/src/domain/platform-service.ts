@@ -58,7 +58,7 @@ export class PlatformService {
           const sms = contact.phone
             ? await this.sms.send({ to: contact.phone, body, incidentId: incident.id })
             : { delivered: false, simulated: true, reason: "This guardian has no phone number." };
-          await this.record(incident.id, "SMS", contact.phone ?? contact.email ?? contact.displayName, sms.delivered ? "SENT" : "SKIPPED", sms.reason);
+          await this.record(incident.id, "SMS", contact.phone ?? contact.email ?? contact.displayName, sms.delivered ? "SENT" : "SKIPPED", sms.reason, sms.providerMessageId);
         }
         await this.record(incident.id, "ROOM", contact.displayName, "SENT", "A private room link was created for this guardian.");
         if (methods.includes("PUSH") && contact.guardianUserId) {
@@ -71,7 +71,7 @@ export class PlatformService {
             const push = apple
               ? await sendApns(phone.fcmToken, "Guardian", `${incident.userDisplayName} needs help.`)
               : await sendFcm(phone.fcmToken, "Guardian", `${incident.userDisplayName} needs help.`);
-            await this.record(incident.id, apple ? "APNS" : "FCM", contact.displayName, push.delivered ? "SENT" : "SKIPPED", push.reason);
+            await this.record(incident.id, apple ? "APNS" : "FCM", contact.displayName, push.delivered ? "SENT" : "SKIPPED", push.reason, push.providerMessageId);
           }
         }
       }
@@ -252,17 +252,48 @@ export class PlatformService {
     const now = this.clock.now();
     await this.prisma.responderAssignment.upsert({
       where: { incidentId_responderId: { incidentId, responderId } },
-      create: { id: this.ids.uuid(), incidentId, responderId, status: "ASSIGNED", createdAt: now, updatedAt: now },
-      update: { status: "ASSIGNED", updatedAt: now },
+      create: {
+        id: this.ids.uuid(),
+        incidentId,
+        responderId,
+        status: "ASSIGNED",
+        assignedAt: now,
+        assignedBy: actor.id,
+        createdAt: now,
+        updatedAt: now,
+      },
+      update: { status: "ASSIGNED", assignedAt: now, assignedBy: actor.id, updatedAt: now },
     });
     return this.incidents.dispatch(actor, incidentId, requestId);
   }
 
-  async responderStatus(actor: Actor, incidentId: string, status: "RESPONDING" | "USER_LOCATED", requestId: string | null) {
+  async responderStatus(
+    actor: Actor,
+    incidentId: string,
+    status: "ACCEPTED" | "EN_ROUTE" | "ON_SCENE" | "RESPONDING" | "USER_LOCATED" | "COMPLETED" | "DECLINED",
+    requestId: string | null,
+  ) {
     const row = await this.prisma.responderAssignment.findFirst({ where: { incidentId, responderId: actor.id } });
     if (!row) throw new AppError("FORBIDDEN", 403, "This incident is not assigned to you.");
-    await this.prisma.responderAssignment.update({ where: { id: row.id }, data: { status, updatedAt: this.clock.now() } });
-    return this.incidents.responderUpdate(actor, incidentId, status, requestId);
+    const now = this.clock.now();
+    const mapped = status === "RESPONDING" ? "EN_ROUTE" : status;
+    await this.prisma.responderAssignment.update({
+      where: { id: row.id },
+      data: {
+        status: mapped,
+        acceptedAt: mapped === "ACCEPTED" ? now : row.acceptedAt,
+        enRouteAt: mapped === "EN_ROUTE" ? now : row.enRouteAt,
+        arrivedAt: mapped === "ON_SCENE" ? now : row.arrivedAt,
+        locatedAt: mapped === "USER_LOCATED" ? now : row.locatedAt,
+        completedAt: mapped === "COMPLETED" ? now : row.completedAt,
+        declinedAt: mapped === "DECLINED" ? now : row.declinedAt,
+        updatedAt: now,
+      },
+    });
+    if (mapped === "USER_LOCATED" || mapped === "EN_ROUTE" || mapped === "ACCEPTED" || mapped === "ON_SCENE") {
+      return this.incidents.responderUpdate(actor, incidentId, mapped === "USER_LOCATED" ? "USER_LOCATED" : "RESPONDING", requestId);
+    }
+    return this.incidents.get(actor, incidentId);
   }
 
   async assigned(actor: Actor) {
@@ -437,9 +468,46 @@ export class PlatformService {
     return { url: `${origin}/room/${token}` };
   }
 
-  private async record(incidentId: string, channel: string, destination: string, status: string, detail: string): Promise<void> {
+  async applyDeliveryReceipt(input: {
+    providerMessageId: string;
+    channel: string;
+    status: "SENT" | "DELIVERED" | "FAILED";
+    detail: string;
+    failureCode?: string;
+  }): Promise<void> {
+    const now = this.clock.now();
+    try {
+      await this.prisma.notificationDelivery.updateMany({
+        where: { providerMessageId: input.providerMessageId, channel: input.channel },
+        data: {
+          status: input.status,
+          detail: input.detail,
+          deliveredAt: input.status === "DELIVERED" ? now : undefined,
+          failedAt: input.status === "FAILED" ? now : undefined,
+          failureCode: input.failureCode,
+          sentAt: input.status === "SENT" ? now : undefined,
+        },
+      });
+    } catch {
+      // A receipt for an unknown message, or a process without Postgres, is not a crash.
+    }
+  }
+
+  private async record(incidentId: string, channel: string, destination: string, status: string, detail: string, providerMessageId?: string): Promise<void> {
+    const now = this.clock.now();
     await this.prisma.notificationDelivery.create({
-      data: { id: this.ids.uuid(), incidentId, channel, destination, status, detail, createdAt: this.clock.now() },
+      data: {
+        id: this.ids.uuid(),
+        incidentId,
+        channel,
+        destination,
+        status,
+        detail,
+        providerMessageId,
+        queuedAt: now,
+        sentAt: status === "SENT" ? now : null,
+        createdAt: now,
+      },
     });
   }
 

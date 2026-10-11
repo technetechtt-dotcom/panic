@@ -110,6 +110,14 @@ data class IncidentWire(
     val isTest: Boolean,
     val duress: Boolean = false,
     val userDisplayName: String = "",
+    val triggerType: String = "",
+    val contactStatus: String = "",
+    val lastHeartbeatAt: String? = null,
+    val lastLatitude: Double? = null,
+    val lastLongitude: Double? = null,
+    val lastAccuracy: Double? = null,
+    val lastBattery: Double? = null,
+    val claimedBy: String? = null,
 )
 
 @Serializable
@@ -326,6 +334,10 @@ data class JourneyBody(
     val expectedArrivalAt: String,
     val checkInIntervalSeconds: Int,
     val mode: String = "WALK",
+    @OptIn(ExperimentalSerializationApi::class) @EncodeDefault(EncodeDefault.Mode.NEVER) val originLatitude: Double? = null,
+    @OptIn(ExperimentalSerializationApi::class) @EncodeDefault(EncodeDefault.Mode.NEVER) val originLongitude: Double? = null,
+    @OptIn(ExperimentalSerializationApi::class) @EncodeDefault(EncodeDefault.Mode.NEVER) val destinationLatitude: Double? = null,
+    @OptIn(ExperimentalSerializationApi::class) @EncodeDefault(EncodeDefault.Mode.NEVER) val destinationLongitude: Double? = null,
 )
 
 @Serializable

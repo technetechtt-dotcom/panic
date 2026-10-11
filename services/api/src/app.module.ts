@@ -59,6 +59,7 @@ import { PlatformController } from "./modules/platform/platform.controller";
 import { ProtectionController } from "./modules/protection/protection.controller";
 import { RealtimeGateway } from "./modules/realtime/realtime.gateway";
 import { UsersController } from "./modules/users/users.controller";
+import { WebhooksController } from "./modules/webhooks/webhooks.controller";
 
 @Module({
   controllers: [
@@ -70,6 +71,7 @@ import { UsersController } from "./modules/users/users.controller";
     PlatformController,
     AuditController,
     HealthController,
+    WebhooksController,
   ],
   providers: [
     PrismaService,

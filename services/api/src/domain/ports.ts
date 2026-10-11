@@ -105,7 +105,7 @@ export interface DeviceStore {
   findByPublicId(userId: string, devicePublicId: string): Promise<DeviceRecord | null>;
   listForUser(userId: string): Promise<DeviceRecord[]>;
   setEmergencyHash(deviceId: string, userId: string, hash: string): Promise<boolean>;
-  findUserIdByEmergencyHash(hash: string): Promise<string | null>;
+  findEmergencyBinding(hash: string): Promise<{ userId: string; deviceId: string } | null>;
 }
 
 export interface IncidentRecord {
@@ -213,6 +213,7 @@ export interface Actor {
   id: string;
   role: Role;
   displayName: string;
+  emergencyDeviceId?: string | null;
 }
 
 export const ACTIVE_STATES = new Set([
