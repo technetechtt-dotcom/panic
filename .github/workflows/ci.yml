@@ -13,7 +13,7 @@ jobs:
         image: postgres:16-alpine
         env:
           POSTGRES_USER: guardian
-          POSTGRES_PASSWORD: guardian
+          POSTGRES_PASSWORD: change-me
           POSTGRES_DB: guardian
         ports:
           - 5432:5432
@@ -24,7 +24,7 @@ jobs:
           --health-retries 20
     env:
       GUARDIAN_PG_TEST: "1"
-      DATABASE_URL: postgresql://guardian:guardian@localhost:5432/guardian
+      DATABASE_URL: postgresql://guardian:change-me@localhost:5432/guardian?schema=public
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -76,12 +76,7 @@ jobs:
         working-directory: apps/android
         run: |
           chmod +x ./gradlew
-          ./gradlew \
-            :core:test \
-            :app:testDebugUnitTest \
-            :app:lintDebug \
-            :app:assembleDebug \
-            --no-daemon
+          ./gradlew :core:test :app:testDebugUnitTest :app:lintDebug :app:assembleDebug --no-daemon
       - name: Release config check
         env:
           ANDROID_HOME: /usr/local/lib/android/sdk
