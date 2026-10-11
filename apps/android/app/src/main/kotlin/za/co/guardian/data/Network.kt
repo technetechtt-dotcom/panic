@@ -224,8 +224,14 @@ interface GuardianApi {
     @POST("guardians/invitations/{token}/accept")
     suspend fun acceptInvitation(@Path("token") token: String): GuardianEnvelope
 
+    @POST("journeys/preview")
+    suspend fun previewJourney(@Body body: JourneyPreviewBody): JourneyPreviewEnvelope
+
     @POST("journeys")
     suspend fun startJourney(@Body body: JourneyBody): JourneyEnvelope
+
+    @GET("incidents/{id}/live")
+    suspend fun liveIncident(@Path("id") id: String): LiveIncidentEnvelope
 
     @POST("journeys/{id}/extend")
     suspend fun extendJourney(@Path("id") id: String, @Body body: JourneyExtendBody): JourneyEnvelope
@@ -327,6 +333,40 @@ data class DeviceListEnvelope(val data: List<DeviceListItem>)
 
 @Serializable
 data class JourneyExtendBody(val minutes: Int)
+
+@Serializable
+data class JourneyPreviewBody(val destinationLabel: String)
+
+@Serializable
+data class JourneyPreviewWire(val label: String, val latitude: Double, val longitude: Double)
+
+@Serializable
+data class JourneyPreviewEnvelope(val data: JourneyPreviewWire?)
+
+@Serializable
+data class DeliveryWire(
+    val id: String,
+    val channel: String,
+    val status: String,
+    val detail: String = "",
+    val destination: String = "",
+)
+
+@Serializable
+data class ResponderWire(
+    val responderId: String,
+    val status: String,
+)
+
+@Serializable
+data class LiveIncidentWire(
+    val incident: IncidentWire,
+    val deliveries: List<DeliveryWire> = emptyList(),
+    val responders: List<ResponderWire> = emptyList(),
+)
+
+@Serializable
+data class LiveIncidentEnvelope(val data: LiveIncidentWire)
 
 @Serializable
 data class JourneyBody(

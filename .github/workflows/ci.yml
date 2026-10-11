@@ -34,6 +34,8 @@ jobs:
           cache-dependency-path: package-lock.json
       - name: Install
         run: npm ci
+      - name: Build workspace packages
+        run: npm run build -w @guardian/shared-types && npm run build -w @guardian/shared-validation
       - name: Migrate
         run: npx prisma migrate deploy --schema services/api/prisma/schema.prisma
       - name: Test API, validation, and dashboard
@@ -52,9 +54,37 @@ jobs:
         with:
           distribution: temurin
           java-version: 21
-      - uses: android-actions/setup-android@v3
-      - name: Install Android SDK packages
-        run: sdkmanager --install "platforms;android-35" "build-tools;35.0.0"
+      - name: Accept licenses and install Android SDK packages
+        env:
+          ANDROID_HOME: /usr/local/lib/android/sdk
+          ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
+        run: |
+          set -euo pipefail
+          if [ -x "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" ]; then
+            SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          else
+            SDKMANAGER="$(ls -d "$ANDROID_HOME"/cmdline-tools/*/bin/sdkmanager | head -n 1)"
+          fi
+          yes | "$SDKMANAGER" --licenses >/dev/null || true
+          "$SDKMANAGER" --install "platforms;android-35" "build-tools;35.0.0"
       - name: Unit tests, lint, and debug APK
+        env:
+          ANDROID_HOME: /usr/local/lib/android/sdk
+          ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
         working-directory: apps/android
         run: chmod +x ./gradlew && ./gradlew :core:test :app:testDebugUnitTest :app:lintDebug :app:assembleDebug --no-daemon
+      - name: Release config check
+        env:
+          ANDROID_HOME: /usr/local/lib/android/sdk
+          ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
+        working-directory: apps/android
+        run: |
+          if [ -n "${{ secrets.GOOGLE_SERVICES_JSON }}" ] && [ -n "${{ secrets.RELEASE_API_BASE_URL }}" ]; then
+            printf '%s' "${{ secrets.GOOGLE_SERVICES_JSON }}" > app/google-services.json
+            ./gradlew :app:checkReleaseConfig :app:assembleRelease --no-daemon -PreleaseApiBaseUrl="${{ secrets.RELEASE_API_BASE_URL }}"
+          else
+            if ./gradlew :app:checkReleaseConfig --no-daemon; then
+              echo "checkReleaseConfig must fail when production configuration is absent."
+              exit 1
+            fi
+          fi

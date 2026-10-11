@@ -150,6 +150,16 @@ test("duress keeps the incident open while a cancel pin resolves it, and evidenc
     }),
     (error: unknown) => error instanceof AppError && error.code === "EVIDENCE_HASH_MISMATCH",
   );
+  await assert.rejects(
+    () => protection.addEvidence({ ...actor, emergencyDeviceId: randomUUID() }, created.incident.id, {
+      clientChunkId: randomUUID(),
+      sequence: 2,
+      sha256: createHash("sha256").update(bytes).digest("hex"),
+      contentType: "audio/pcm",
+      bytesBase64: bytes.toString("base64"),
+    }),
+    (error: unknown) => error instanceof AppError && error.code === "FORBIDDEN",
+  );
 });
 
 class MemoryGuardians implements GuardianStore {

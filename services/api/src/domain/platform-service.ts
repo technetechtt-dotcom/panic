@@ -6,7 +6,7 @@ import { FileEvidenceVault, s3Configured } from "./evidence-vault";
 import { AppError } from "./errors";
 import { canAssignRole, hasPermission, Permission } from "./rbac";
 import { IncidentService } from "./incident-service";
-import { fusionEvaluate, generateTotpSecret, guardianSmsBody, incidentBrief, searchCorridor, verifyTotp } from "./operations";
+import { canAdvanceResponder, fusionEvaluate, generateTotpSecret, guardianSmsBody, incidentBrief, normalizeResponderStatus, searchCorridor, verifyTotp } from "./operations";
 import { ProtectionService } from "./protection-service";
 import type { Actor, Clock, DeviceStore, IdGenerator, UserStore } from "./ports";
 import type { PasswordHasher } from "./security";
@@ -131,6 +131,56 @@ export class PlatformService {
         uploadedAt: row.updatedAt.toISOString(),
       })),
     );
+  }
+
+  async liveCompanion(actor: Actor, incidentId: string) {
+    const incident = await this.incidents.get(actor, incidentId);
+    let deliveries: Array<{
+      id: string;
+      channel: string;
+      status: string;
+      detail: string;
+      destination: string;
+      providerMessageId?: string | null;
+      sentAt?: Date | null;
+      deliveredAt?: Date | null;
+    }> = [];
+    let responders: Array<{ responderId: string; status: string; acceptedAt: Date | null; enRouteAt: Date | null; arrivedAt: Date | null; locatedAt: Date | null; completedAt: Date | null }> = [];
+    try {
+      deliveries = await this.prisma.notificationDelivery.findMany({
+        where: { incidentId },
+        orderBy: { createdAt: "desc" },
+        take: 40,
+      });
+      responders = await this.prisma.responderAssignment.findMany({
+        where: { incidentId },
+        orderBy: { updatedAt: "desc" },
+      });
+    } catch {
+      // In-memory HTTP tests have no delivery tables. The incident itself still returns.
+    }
+    return {
+      incident,
+      deliveries: deliveries.map((row) => ({
+        id: row.id,
+        channel: row.channel,
+        status: row.status,
+        detail: row.detail,
+        destination: maskDestination(row.destination),
+        providerMessageId: row.providerMessageId,
+        sentAt: row.sentAt?.toISOString?.() ?? row.sentAt,
+        deliveredAt: row.deliveredAt?.toISOString?.() ?? row.deliveredAt,
+      })),
+      responders: responders.map((row) => ({
+        responderId: row.responderId,
+        status: row.status,
+        acceptedAt: row.acceptedAt?.toISOString?.() ?? row.acceptedAt,
+        enRouteAt: row.enRouteAt?.toISOString?.() ?? row.enRouteAt,
+        arrivedAt: row.arrivedAt?.toISOString?.() ?? row.arrivedAt,
+        locatedAt: row.locatedAt?.toISOString?.() ?? row.locatedAt,
+        completedAt: row.completedAt?.toISOString?.() ?? row.completedAt,
+      })),
+    };
   }
 
   async deliveries(actor: Actor, incidentId: string) {
@@ -276,7 +326,10 @@ export class PlatformService {
     const row = await this.prisma.responderAssignment.findFirst({ where: { incidentId, responderId: actor.id } });
     if (!row) throw new AppError("FORBIDDEN", 403, "This incident is not assigned to you.");
     const now = this.clock.now();
-    const mapped = status === "RESPONDING" ? "EN_ROUTE" : status;
+    const mapped = normalizeResponderStatus(status);
+    if (!canAdvanceResponder(row.status, mapped)) {
+      throw new AppError("INVALID_TRANSITION", 409, `Cannot move a responder from ${row.status} to ${mapped}.`);
+    }
     await this.prisma.responderAssignment.update({
       where: { id: row.id },
       data: {

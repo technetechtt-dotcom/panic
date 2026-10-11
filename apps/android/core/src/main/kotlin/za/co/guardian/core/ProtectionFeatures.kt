@@ -219,6 +219,23 @@ fun keywordConfidenceScore(live: FloatArray, enrolled: List<FloatArray>): Float 
     return enrolled.maxOfOrNull { keywordConfidence(live, it) } ?: 0f
 }
 
+fun keywordTemplateQuality(features: FloatArray): String {
+    if (features.size < KEYWORD_FEATURE_SIZE) return "That sample was too short."
+    var energy = 0f
+    for (frame in 0 until KEYWORD_FRAMES) energy += features[frame * FEATURES_PER_FRAME]
+    if (energy / KEYWORD_FRAMES < 0.008f) return "That sample was too quiet. Record the phrase again."
+    return ""
+}
+
+fun keywordEnrollmentValid(templates: List<FloatArray>, sensitivity: Int = 50): Boolean {
+    if (templates.size < 2) return false
+    if (templates.any { keywordTemplateQuality(it).isNotBlank() }) return false
+    return templates.indices.all { index ->
+        val others = templates.filterIndexed { other, _ -> other != index }
+        keywordMatches(templates[index], others, sensitivity)
+    }
+}
+
 fun keywordMatches(live: FloatArray, enrolled: List<FloatArray>, sensitivity: Int): Boolean {
     if (enrolled.isEmpty()) return false
     val confidence = keywordConfidenceScore(live, enrolled)

@@ -324,6 +324,12 @@ class SettingsViewModel @Inject constructor(
         private set
     var liveClaim by mutableStateOf("Unclaimed")
         private set
+    var liveDeliveries by mutableStateOf("No guardian delivery yet")
+        private set
+    var liveResponders by mutableStateOf("No responder assigned")
+        private set
+    var journeyPreview by mutableStateOf<za.co.guardian.data.JourneyPreviewWire?>(null)
+        private set
 
     fun refresh() {
         testRemaining = settings.remainingMs()
@@ -353,15 +359,20 @@ class SettingsViewModel @Inject constructor(
             val serverId = open?.serverId
             if (serverId != null) {
                 runCatching {
-                    val live = api.incident(serverId).data
-                    liveState = live.state
-                    liveContact = live.contactStatus.ifBlank { "unknown" }
-                    liveHeartbeat = live.lastHeartbeatAt ?: "none"
-                    liveClaim = if (live.claimedBy.isNullOrBlank()) "Unclaimed" else "Operator claimed"
-                    if (live.lastLatitude != null && live.lastLongitude != null) {
-                        lastLocation = "${"%.5f".format(live.lastLatitude)}, ${"%.5f".format(live.lastLongitude)}"
+                    val live = api.liveIncident(serverId).data
+                    val incident = live.incident
+                    liveState = incident.state
+                    liveContact = incident.contactStatus.ifBlank { "unknown" }
+                    liveHeartbeat = incident.lastHeartbeatAt ?: "none"
+                    liveClaim = if (incident.claimedBy.isNullOrBlank()) "Unclaimed" else "Operator claimed"
+                    liveDeliveries = if (live.deliveries.isEmpty()) "No guardian delivery yet"
+                    else live.deliveries.joinToString("\n") { "${it.channel} · ${it.status} · ${it.destination}" }
+                    liveResponders = if (live.responders.isEmpty()) "No responder assigned"
+                    else live.responders.joinToString("\n") { "Responder ${it.status.lowercase().replace('_', ' ')}" }
+                    if (incident.lastLatitude != null && incident.lastLongitude != null) {
+                        lastLocation = "${"%.5f".format(incident.lastLatitude)}, ${"%.5f".format(incident.lastLongitude)}"
                     }
-                    if (live.lastBattery != null) battery = live.lastBattery.toInt()
+                    if (incident.lastBattery != null) battery = incident.lastBattery.toInt()
                 }
             }
         }
@@ -495,7 +506,13 @@ class SettingsViewModel @Inject constructor(
                 status = "The microphone did not start."
                 return@launch
             }
-            settings.addSafeWordTemplate(za.co.guardian.core.pcmFeatures(samples))
+            val features = za.co.guardian.core.pcmFeatures(samples)
+            val quality = za.co.guardian.core.keywordTemplateQuality(features)
+            if (quality.isNotBlank()) {
+                status = quality
+                return@launch
+            }
+            settings.addSafeWordTemplate(features)
             status = "${settings.safeWordTemplateCount()} samples saved. ${za.co.guardian.core.phraseQualityWarning(settings.safeWord())}"
         }
     }
@@ -503,6 +520,10 @@ class SettingsViewModel @Inject constructor(
     fun prepareSafeWord(): Boolean {
         if (settings.safeWord().trim().length < 4 || settings.safeWordTemplateCount() < 3) {
             status = "Save a phrase and record it 3 times before listening starts."
+            return false
+        }
+        if (!za.co.guardian.core.keywordEnrollmentValid(settings.safeWordTemplates(), settings.safeWordSensitivity())) {
+            status = "The three recordings do not match each other closely enough. Delete the samples and record the same phrase again."
             return false
         }
         settings.safeWordEnabled(true)
@@ -548,7 +569,18 @@ class SettingsViewModel @Inject constructor(
     fun checkIn() = run { protection.checkIn() }
     fun exportAccount() = run { protection.exportAccount() }
     fun eraseAccount(password: String) = run { protection.eraseAccount(password) }
-    fun startJourney(label: String, minutes: String) = run { protection.startJourney(label, minutes.toIntOrNull() ?: 30, settings.protectionMode()) }
+    fun previewJourney(label: String) = run {
+        val preview = protection.previewJourney(label)
+        journeyPreview = preview
+        if (preview == null) "That place could not be confirmed. Check the name, or start only after you know the destination."
+        else "Confirm ${preview.label} at ${"%.5f".format(preview.latitude)}, ${"%.5f".format(preview.longitude)}."
+    }
+
+    fun startJourney(label: String, minutes: String) = run {
+        val preview = journeyPreview
+        if (preview == null) return@run "Look up the destination and confirm it before the journey starts."
+        protection.startJourney(label, minutes.toIntOrNull() ?: 30, settings.protectionMode(), preview.latitude, preview.longitude)
+    }
     fun cycleProtectionMode() {
         val modes = listOf("WALK", "RIDE", "DRIVE", "MEETING", "HIGH_RISK")
         val next = modes[(modes.indexOf(settings.protectionMode()).coerceAtLeast(0) + 1) % modes.size]
@@ -1069,6 +1101,10 @@ fun ActiveIncidentScreen(onBack: () -> Unit, viewModel: SettingsViewModel = hilt
             Text("Battery                  ${viewModel.battery ?: "unknown"}%")
             Text("Network                  ${viewModel.network}")
             Text("Evidence                 Recording if you capture it")
+            Text("Guardian delivery")
+            Text(viewModel.liveDeliveries)
+            Text("Responder")
+            Text(viewModel.liveResponders)
             Text("This page refreshes from the server every 4 seconds while the incident is open.")
             Text("Photos and video are taken by you, with the camera app visible. They are not captured in the background.", modifier = Modifier.padding(vertical = 8.dp))
             Button(onClick = { cameraPermission.launch(android.Manifest.permission.CAMERA) }, modifier = Modifier.fillMaxWidth()) { Text("Take a photo") }

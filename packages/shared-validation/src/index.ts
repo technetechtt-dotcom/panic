@@ -184,6 +184,8 @@ export const invitationTokenSchema = z.object({ token: z.string().uuid() }).stri
 
 export const journeyExtendSchema = z.object({ minutes: z.number().int().min(5).max(12 * 60) }).strict();
 
+export const journeyPreviewSchema = z.object({ destinationLabel: z.string().trim().min(1).max(120) }).strict();
+
 export const journeySchema = z
   .object({
     destinationLabel: z.string().trim().min(1).max(120),

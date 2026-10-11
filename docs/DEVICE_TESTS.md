@@ -34,6 +34,6 @@ Record pass/fail on each handset before treating a build as ready. This table is
 | Oppo / OnePlus |  |  |  |  |  |  | |
 | Motorola |  |  |  |  |  |  | |
 
-These checks were not run in this change. A CI debug APK is not a physical-device result.
+These checks were not run in this change. A CI debug APK is not a physical-device result. This workspace cannot operate an OEM farm, put a phone into Doze, or reboot a handset.
 
 A failure on a locked screen, Doze, or an OEM battery killer is a product result, not a reason to start the microphone from the background.

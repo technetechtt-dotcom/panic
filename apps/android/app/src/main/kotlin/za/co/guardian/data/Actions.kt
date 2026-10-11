@@ -417,7 +417,12 @@ class ProtectionActions @Inject constructor(
         return "Profile and guardian contacts were erased. Incident rows stay so an open emergency is not deleted."
     }
 
-    suspend fun startJourney(label: String, minutes: Int, mode: String): String {
+    suspend fun previewJourney(label: String): JourneyPreviewWire? {
+        if (label.isBlank()) return null
+        return api.previewJourney(JourneyPreviewBody(label.trim())).data
+    }
+
+    suspend fun startJourney(label: String, minutes: Int, mode: String, destinationLatitude: Double? = null, destinationLongitude: Double? = null): String {
         if (label.isBlank()) return "Enter where you are going."
         val bounded = minutes.coerceIn(1, 360)
         val interval = when (mode) {
@@ -440,6 +445,8 @@ class ProtectionActions @Inject constructor(
                 mode = mode,
                 originLatitude = origin?.latitude,
                 originLongitude = origin?.longitude,
+                destinationLatitude = destinationLatitude,
+                destinationLongitude = destinationLongitude,
             ),
         ).data
         settings.setProtectionMode(mode)

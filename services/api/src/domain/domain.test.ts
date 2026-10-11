@@ -384,6 +384,53 @@ test("failed login does not reveal whether the email exists beyond the shared me
   assert.equal(auditRows.length, 0);
 });
 
+test("an emergency credential cannot update an incident opened on another phone", async () => {
+  const { service, actor, input, device } = await setup();
+  const created = await service.create(actor, input(), null);
+  const other = { ...actor, emergencyDeviceId: randomUUID() };
+  await assert.rejects(
+    () => service.create(other, { ...input(), deviceId: device.id }, null),
+    (error: unknown) => error instanceof AppError && error.code === "FORBIDDEN",
+  );
+  await assert.rejects(
+    () =>
+      service.addLocations(other, created.incident.id, {
+        points: [{
+          clientPointId: randomUUID(),
+          latitude: -26.21,
+          longitude: 28.05,
+          accuracy: 5,
+          speed: 0,
+          bearing: 0,
+          altitude: null,
+          recordedAt: "2026-10-01T09:00:10.000Z",
+          source: "GPS",
+        }],
+      }, null),
+    (error: unknown) => error instanceof AppError && error.code === "FORBIDDEN",
+  );
+  await assert.rejects(
+    () =>
+      service.addHeartbeat(other, created.incident.id, {
+        clientHeartbeatId: randomUUID(),
+        recordedAt: "2026-10-01T09:00:10.000Z",
+        latitude: -26.21,
+        longitude: 28.05,
+        accuracy: 5,
+        speed: 0,
+        heading: 90,
+        batteryLevel: 50,
+        charging: false,
+        networkType: "WIFI",
+        deviceOnline: true,
+        evidenceStatus: "NONE",
+        permissionsStatus: "LOCATION_GRANTED",
+        batteryMode: "NORMAL",
+      }, null),
+    (error: unknown) => error instanceof AppError && error.code === "FORBIDDEN",
+  );
+});
+
 test("an emergency credential is bound to one device", async () => {
   const memory = createMemory();
   const userId = randomUUID();

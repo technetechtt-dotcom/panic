@@ -196,3 +196,23 @@ export function backupDocument(takenAt: string, tables: Record<string, number>):
 export function restoreMatches(saved: BackupDocument, current: Record<string, number>): boolean {
   return Object.entries(saved.tables).every(([table, count]) => current[table] === count);
 }
+
+const RESPONDER_NEXT: Record<string, readonly string[]> = {
+  ASSIGNED: ["ACCEPTED", "DECLINED"],
+  ACCEPTED: ["EN_ROUTE", "DECLINED"],
+  EN_ROUTE: ["ON_SCENE", "DECLINED"],
+  ON_SCENE: ["USER_LOCATED", "COMPLETED"],
+  USER_LOCATED: ["COMPLETED"],
+  COMPLETED: [],
+  DECLINED: [],
+};
+
+export function normalizeResponderStatus(status: string): string {
+  return status === "RESPONDING" ? "EN_ROUTE" : status;
+}
+
+export function canAdvanceResponder(from: string, to: string): boolean {
+  const current = normalizeResponderStatus(from);
+  const next = normalizeResponderStatus(to);
+  return (RESPONDER_NEXT[current] ?? []).includes(next);
+}

@@ -9,6 +9,7 @@ import {
   phoneMaySendSignal,
   readMfaChallenge,
   restoreMatches,
+  canAdvanceResponder,
   routeDeviates,
   searchCorridor,
   signalIncidentState,
@@ -86,4 +87,15 @@ test("a backup document restores only when the table counts match", () => {
   const saved = backupDocument("2026-10-02T00:00:00.000Z", { User: 2, Incident: 1 });
   assert.equal(restoreMatches(saved, { User: 2, Incident: 1 }), true);
   assert.equal(restoreMatches(saved, { User: 2, Incident: 0 }), false);
+});
+
+test("responder workflow only advances in order", () => {
+  assert.equal(canAdvanceResponder("ASSIGNED", "ACCEPTED"), true);
+  assert.equal(canAdvanceResponder("ACCEPTED", "RESPONDING"), true);
+  assert.equal(canAdvanceResponder("EN_ROUTE", "ON_SCENE"), true);
+  assert.equal(canAdvanceResponder("ON_SCENE", "USER_LOCATED"), true);
+  assert.equal(canAdvanceResponder("USER_LOCATED", "COMPLETED"), true);
+  assert.equal(canAdvanceResponder("ASSIGNED", "COMPLETED"), false);
+  assert.equal(canAdvanceResponder("COMPLETED", "EN_ROUTE"), false);
+  assert.equal(canAdvanceResponder("DECLINED", "ACCEPTED"), false);
 });

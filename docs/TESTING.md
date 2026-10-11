@@ -67,3 +67,4 @@ PostgreSQL integration, when `GUARDIAN_PG_TEST=1`, checks migrated columns and a
 - CI audits production dependencies at critical severity. The Vitest runner's tinypool advisory is development-only and is not in the API image.
 - The monitoring screens against a live API. Use the browser against a seeded operator after `docker compose` is up. Component and workflow tests mock `fetch`.
 - OEM farms, iOS/watch binaries, an external penetration test, and a POPIA legal opinion. Those are outside this repository.
+- Live Twilio, FCM, and APNs sends. Set `GUARDIAN_PROVIDER_E2E=1` and the matching credentials to exercise `provider-e2e.test.ts`. Without that flag the callback signature checks still run.

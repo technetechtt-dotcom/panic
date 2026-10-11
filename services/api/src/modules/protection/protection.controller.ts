@@ -4,6 +4,7 @@ import {
   evidenceChunkSchema,
   guardianSchema,
   journeyExtendSchema,
+  journeyPreviewSchema,
   journeySchema,
   safetyPinSchema,
 } from "@guardian/shared-validation";
@@ -41,6 +42,13 @@ export class ProtectionController {
   @RequirePermissions(Permission.UserReadSelf)
   acceptInvitation(@Param("token") token: string, @Req() request: RequestWithUser) {
     return this.protection.acceptInvitation(actorFrom(request), token).then((data) => ({ data }));
+  }
+
+  @Post("journeys/preview")
+  @HttpCode(200)
+  @RequirePermissions(Permission.ProtectionManageOwn)
+  previewJourney(@Body() body: unknown, @Req() request: RequestWithUser) {
+    return this.protection.previewDestination(actorFrom(request), parseBody(journeyPreviewSchema, body).destinationLabel).then((data) => ({ data }));
   }
 
   @Post("journeys")

@@ -187,6 +187,14 @@ test("authentication, SOS idempotency, and operator actions", async () => {
     assert.equal(timeline.status, 200);
     assert.ok(timeline.body.data.some((entry: { type: string }) => entry.type === "incident.acknowledged"));
 
+    const live = await request(server)
+      .get(`/api/v1/incidents/${created.body.data.id}/live`)
+      .set("Authorization", `Bearer ${token}`);
+    assert.equal(live.status, 200);
+    assert.equal(live.body.data.incident.id, created.body.data.id);
+    assert.ok(Array.isArray(live.body.data.deliveries));
+    assert.ok(Array.isArray(live.body.data.responders));
+
     const pushDenied = await request(server).post("/api/v1/webhooks/push/receipt").send({ providerMessageId: "msg-1" });
     assert.equal(pushDenied.status, 401);
     const twilio = await request(server).post("/api/v1/webhooks/twilio/sms").send({ MessageSid: "SM1", MessageStatus: "delivered" });

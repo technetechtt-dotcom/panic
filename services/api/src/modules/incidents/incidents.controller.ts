@@ -62,6 +62,11 @@ export class IncidentsController {
     return this.incidents.get(actorFrom(request), id).then((data) => ({ data }));
   }
 
+  @Get(":id/live")
+  live(@Param("id") id: string, @Req() request: RequestWithUser) {
+    return this.platform.liveCompanion(actorFrom(request), id).then((data) => ({ data }));
+  }
+
   @Post(":id/locations")
   @HttpCode(200)
   @RequirePermissions(Permission.IncidentCreateOwn)

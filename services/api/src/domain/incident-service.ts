@@ -70,16 +70,12 @@ export class IncidentService {
     const existing = await this.incidents.findByTriggerId(input.triggerId);
     if (existing) return this.replay(actor, existing, requestHash);
 
-    if (actor.emergencyDeviceId && actor.emergencyDeviceId !== input.deviceId) {
-      throw new AppError("FORBIDDEN", 403, "This emergency credential is bound to a different phone.");
-    }
+    this.assertEmergencyDevice(actor, input.deviceId);
     const device = await this.devices.findByIdForUser(input.deviceId, actor.id);
     if (!device) {
       throw new AppError("DEVICE_NOT_FOUND", 404, "Register this device before sending an SOS.");
     }
-    if (actor.emergencyDeviceId && actor.emergencyDeviceId !== device.id) {
-      throw new AppError("FORBIDDEN", 403, "This emergency credential is bound to a different phone.");
-    }
+    this.assertEmergencyDevice(actor, device.id);
     if (!serverOriginated) this.assertDeviceProof(device, input);
 
     const prior = await this.incidents.findEscalation(input.triggerId);
@@ -189,6 +185,8 @@ export class IncidentService {
     input: CreateIncidentInput,
     requestId: string | null,
   ): Promise<CreateIncidentResult> {
+    this.assertEmergencyDevice(actor, active.deviceId);
+    this.assertEmergencyDevice(actor, input.deviceId);
     const now = this.clock.now();
     const recorded = await this.incidents.recordEscalation({
       id: this.ids.uuid(),
@@ -648,10 +646,17 @@ export class IncidentService {
     if (incident.userId !== actor.id || !hasPermission(actor.role, Permission.IncidentCreateOwn)) {
       throw new AppError("FORBIDDEN", 403, "You cannot update this incident.");
     }
+    this.assertEmergencyDevice(actor, incident.deviceId);
     if (!ACTIVE_STATES.has(incident.state)) {
       throw new AppError("INCIDENT_CLOSED", 409, "This incident is no longer accepting updates.");
     }
     return incident;
+  }
+
+  private assertEmergencyDevice(actor: Actor, deviceId: string): void {
+    if (actor.emergencyDeviceId && actor.emergencyDeviceId !== deviceId) {
+      throw new AppError("FORBIDDEN", 403, "This emergency credential is bound to a different phone.");
+    }
   }
 
   private async requireKnown(incidentId: string): Promise<IncidentRecord> {

@@ -183,6 +183,12 @@ export class ProtectionService {
     return journey;
   }
 
+  async previewDestination(actor: Actor, label: string): Promise<{ label: string; latitude: number; longitude: number } | null> {
+    this.own(actor);
+    const geo = await geocodeDestination(label);
+    return geo ? { label: geo.label, latitude: geo.latitude, longitude: geo.longitude } : null;
+  }
+
   async startJourney(actor: Actor, input: JourneyInput): Promise<JourneyRecord> {
     this.own(actor);
     const now = this.clock.now();
@@ -379,6 +385,9 @@ export class ProtectionService {
     const incident = await this.incidents.findById(incidentId);
     if (!incident || incident.userId !== actor.id || !ACTIVE_STATES.has(incident.state)) {
       throw new AppError("NOT_FOUND", 404, "There is no active incident for this evidence.");
+    }
+    if (actor.emergencyDeviceId && actor.emergencyDeviceId !== incident.deviceId) {
+      throw new AppError("FORBIDDEN", 403, "This emergency credential is bound to a different phone.");
     }
     const payload = Buffer.from(input.bytesBase64, "base64");
     const limit = maxEvidenceBytes(input.contentType);

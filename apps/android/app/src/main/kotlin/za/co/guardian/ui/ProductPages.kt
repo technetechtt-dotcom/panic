@@ -215,7 +215,24 @@ fun JourneyPage(onBack: () -> Unit, viewModel: SettingsViewModel = hiltViewModel
             Text("No active journey. Start one before a walk, ride, or meeting.")
             OutlinedTextField(destination, { destination = it }, label = { Text("Destination") }, modifier = Modifier.fillMaxWidth())
             OutlinedTextField(minutes, { minutes = it }, label = { Text("Minutes") }, modifier = Modifier.fillMaxWidth())
-            Button(onClick = { viewModel.startJourney(destination, minutes) }, modifier = Modifier.fillMaxWidth()) { Text("Start journey") }
+            Button(onClick = { viewModel.previewJourney(destination) }, modifier = Modifier.fillMaxWidth()) { Text("Look up destination") }
+            viewModel.journeyPreview?.let { preview ->
+                Text("Confirm ${preview.label}")
+                Text("${"%.5f".format(preview.latitude)}, ${"%.5f".format(preview.longitude)}")
+                androidx.compose.ui.viewinterop.AndroidView(
+                    factory = { context ->
+                        android.webkit.WebView(context).apply {
+                            settings.javaScriptEnabled = false
+                            loadUrl("https://www.openstreetmap.org/?mlat=${preview.latitude}&mlon=${preview.longitude}#map=16/${preview.latitude}/${preview.longitude}")
+                        }
+                    },
+                    update = { web ->
+                        web.loadUrl("https://www.openstreetmap.org/?mlat=${preview.latitude}&mlon=${preview.longitude}#map=16/${preview.latitude}/${preview.longitude}")
+                    },
+                    modifier = Modifier.fillMaxWidth().height(220.dp),
+                )
+                Button(onClick = { viewModel.startJourney(destination, minutes) }, modifier = Modifier.fillMaxWidth()) { Text("Confirm destination and start") }
+            }
         }
         viewModel.status?.let { Text(it, modifier = Modifier.padding(top = 8.dp)) }
     }

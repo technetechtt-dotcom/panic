@@ -6,6 +6,7 @@
   "types": "./dist/index.d.ts",
   "scripts": {
     "build": "tsc -p tsconfig.json",
+    "pretest": "npm run build -w @guardian/shared-types",
     "test": "node --import tsx --test src/validation.test.ts"
   },
   "dependencies": {
