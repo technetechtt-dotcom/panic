@@ -58,7 +58,7 @@ async function createApp(): Promise<INestApplication> {
     .overrideProvider(AUDIT_STORE)
     .useValue(memory.audit)
     .compile();
-  const app = moduleRef.createNestApplication();
+  const app = moduleRef.createNestApplication({ bodyParser: false });
   configureApp(app, loadConfig());
   await app.init();
   (app as INestApplication & { memory: ReturnType<typeof createMemory> }).memory = memory;

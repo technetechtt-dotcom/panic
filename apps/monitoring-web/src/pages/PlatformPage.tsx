@@ -21,7 +21,15 @@ interface PlatformStatus {
   release?: string;
   gitCommit?: string;
   evidenceQueue?: string;
-  notificationBacklog?: string;
+  notificationBacklog?: string | { pending: number; failed: number; dead: number; processing: number };
+  deadLetters?: Array<{ type: string; aggregateId: string; attempts: number; lastError: string; failedAt: string }>;
+  ai?: {
+    productionModel: string;
+    shadowModel: string;
+    decisions: number;
+    shadow: number;
+    pendingRecommendations: number;
+  } | null;
   lastBackup?: string;
 }
 
@@ -57,8 +65,21 @@ export function PlatformPage() {
           <Tile label="Release" value={row?.release ?? "unknown"} />
           <Tile label="Git commit" value={row?.gitCommit ?? "unknown"} />
           <Tile label="Evidence queue" value={row?.evidenceQueue ?? "unknown"} />
-          <Tile label="Notification backlog" value={row?.notificationBacklog ?? "unknown"} />
+          <Tile label="Notification backlog" value={backlogLabel(row?.notificationBacklog)} />
           <Tile label="Last backup" value={row?.lastBackup ?? "unknown"} />
+          <Tile label="AI decisions" value={aiLabel(row?.ai)} />
+        </section>
+        <section className="mt-6 max-w-3xl">
+          <h2 className="text-xl font-semibold">Dead letters</h2>
+          <ul className="mt-3 space-y-2 text-sm text-slate-300">
+            {(row?.deadLetters ?? []).map((letter) => (
+              <li key={`${letter.aggregateId}-${letter.failedAt}`} className="rounded-xl border border-line bg-panel p-3">
+                {letter.type} · {letter.attempts} attempts · {letter.failedAt}
+                <span className="mt-1 block text-slate-400">{letter.lastError}</span>
+              </li>
+            ))}
+            {(row?.deadLetters ?? []).length === 0 ? <li>No dead letters.</li> : null}
+          </ul>
         </section>
         <p className="mt-4 text-sm text-slate-400">Configured means the secret is present. It does not mean SMS, FCM, APNs, or object storage completed a live send or write.</p>
         <section className="mt-8 max-w-3xl space-y-3 text-sm text-slate-300">
@@ -81,6 +102,17 @@ export function PlatformPage() {
         </section>
       </main>
   );
+}
+
+function aiLabel(value: PlatformStatus["ai"]): string {
+  if (!value) return "unknown";
+  return `${value.decisions} published, ${value.shadow} shadow, ${value.pendingRecommendations} pending`;
+}
+
+function backlogLabel(value: PlatformStatus["notificationBacklog"]): string {
+  if (value == null) return "unknown";
+  if (typeof value === "string") return value;
+  return `${value.pending} pending, ${value.failed} failed, ${value.processing} processing, ${value.dead} dead`;
 }
 
 function flag(value: boolean | undefined): string {

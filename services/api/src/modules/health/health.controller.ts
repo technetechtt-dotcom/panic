@@ -27,8 +27,10 @@ export class HealthController {
   @Get("ready")
   async ready(@Res({ passthrough: true }) response: Response) {
     const snapshot = await this.snapshot();
-    if (snapshot.postgres !== "up") response.status(503);
-    return { data: { ready: snapshot.postgres === "up", postgres: snapshot.postgres, redis: snapshot.redis } };
+    const redisRequired = this.config.nodeEnv === "production";
+    const ready = snapshot.postgres === "up" && (!redisRequired || snapshot.redis === "up");
+    if (!ready) response.status(503);
+    return { data: { ready, postgres: snapshot.postgres, redis: snapshot.redis } };
   }
 
   @Public()

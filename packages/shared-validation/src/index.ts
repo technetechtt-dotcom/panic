@@ -292,6 +292,27 @@ export const evidenceChunkSchema = z
   })
   .strict();
 
+export const aiQuerySchema = z
+  .object({
+    question: z.string().trim().min(1).max(500),
+  })
+  .strict();
+
+export const aiReviewSchema = z
+  .object({
+    targetType: z.enum(["DECISION", "RECOMMENDATION", "SEARCH", "EVIDENCE"]),
+    targetId: z.string().uuid(),
+    status: z.enum(["CONFIRMED", "REJECTED", "UNCERTAIN"]),
+    note: z.string().trim().min(1).max(1000),
+  })
+  .strict();
+
+export const aiRecommendationDecisionSchema = z
+  .object({
+    status: z.enum(["ACCEPTED", "REJECTED"]),
+  })
+  .strict();
+
 export const operatorActionSchema = z
   .object({
     note: z.string().trim().max(500).optional(),

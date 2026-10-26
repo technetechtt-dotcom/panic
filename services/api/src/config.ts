@@ -42,6 +42,16 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     if (twilioBits.length > 0 && twilioBits.length < 3) {
       throw new Error("Production Twilio is incomplete. Set TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, and TWILIO_FROM together.");
     }
+    if (!env.REDIS_URL?.trim()) {
+      throw new Error("Production requires REDIS_URL so both API replicas share locks and rate limits.");
+    }
+    if (env.TRUST_PROXY !== "true") {
+      throw new Error("Production requires TRUST_PROXY=true behind the reverse proxy that sets the client IP.");
+    }
+    const smtp = env.SMTP_URL?.trim() ?? "";
+    if (!smtp.startsWith("smtp://") && !smtp.startsWith("smtps://")) {
+      throw new Error("Production requires SMTP_URL (smtp:// or smtps://) so verification and reset mail can be sent.");
+    }
   }
   const redisUrl = env.REDIS_URL?.trim() ? env.REDIS_URL.trim() : null;
   return {

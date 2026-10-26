@@ -12,10 +12,11 @@ import {
 import type { AppConfig } from "../../config";
 import { Public, type RequestWithUser } from "../../common/guards";
 import { parseBody } from "../../common/http";
-import { SlidingWindowRateLimiter } from "../../common/rate-limit";
+import { allowShared, SlidingWindowRateLimiter } from "../../common/rate-limit";
 import { APP_CONFIG } from "../../common/tokens";
 import { AppError } from "../../domain/errors";
 import { AuthService } from "../../domain/auth-service";
+import { RedisService } from "../../infra/redis.service";
 
 const REFRESH_COOKIE = "guardian_refresh";
 
@@ -36,12 +37,13 @@ export class AuthController {
   constructor(
     @Inject(AuthService) private readonly auth: AuthService,
     @Inject(APP_CONFIG) private readonly config: AppConfig,
+    @Inject(RedisService) private readonly redis: RedisService,
   ) {}
 
   @Public()
   @Post("register")
   async register(@Body() body: unknown, @Req() request: RequestWithUser, @Res({ passthrough: true }) response: Response) {
-    this.enforceLimit(`register:${request.ip}`);
+    await this.enforceLimit(`register:${request.ip}`);
     const input = parseBody(registerSchema, body);
     const session = await this.auth.register(input);
     response.cookie(REFRESH_COOKIE, session.refreshToken, cookieOptions(this.config));
@@ -52,7 +54,7 @@ export class AuthController {
   @Post("login")
   @HttpCode(200)
   async login(@Body() body: unknown, @Req() request: RequestWithUser, @Res({ passthrough: true }) response: Response) {
-    this.enforceLimit(`login:${request.ip}`);
+    await this.enforceLimit(`login:${request.ip}`);
     const input = parseBody(loginSchema, body);
     const session = await this.auth.login(input);
     if ("mfaRequired" in session || "mfaEnrollmentRequired" in session) return { data: session };
@@ -75,7 +77,7 @@ export class AuthController {
   @Post("refresh")
   @HttpCode(200)
   async refresh(@Body() body: unknown, @Req() request: RequestWithUser, @Res({ passthrough: true }) response: Response) {
-    this.enforceLimit(`refresh:${request.ip}`, 30);
+    await this.enforceLimit(`refresh:${request.ip}`, 30);
     const input = parseBody(refreshSchema, body ?? {});
     const cookies = (request as RequestWithUser & { cookies?: Record<string, string> }).cookies;
     const token = input.refreshToken ?? cookies?.[REFRESH_COOKIE];
@@ -133,8 +135,16 @@ export class AuthController {
     return { data: await this.auth.requestEmailVerification(user.id) };
   }
 
-  private enforceLimit(key: string, limit = this.config.nodeEnv === "production" ? 10 : 100): void {
-    if (!this.limiter.allow(key, limit, 15 * 60 * 1000)) {
+  private async enforceLimit(key: string, limit = this.config.nodeEnv === "production" ? 10 : 100): Promise<void> {
+    const allowed = await allowShared(
+      this.redis.client,
+      this.limiter,
+      key,
+      limit,
+      15 * 60 * 1000,
+      this.config.nodeEnv === "production" ? "closed" : "open",
+    );
+    if (!allowed) {
       throw new AppError("RATE_LIMITED", 429, "Too many sign-in attempts. Wait a few minutes and try once.");
     }
   }

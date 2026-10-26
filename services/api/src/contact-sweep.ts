@@ -7,6 +7,7 @@ import { IncidentService } from "./domain/incident-service";
 import { PlatformService } from "./domain/platform-service";
 import { ProtectionService } from "./domain/protection-service";
 import { SchedulerLockService } from "./domain/scheduler-lock";
+import { RealtimeGateway } from "./modules/realtime/realtime.gateway";
 
 @Injectable()
 export class ContactSweep implements OnModuleInit, OnModuleDestroy {
@@ -18,6 +19,7 @@ export class ContactSweep implements OnModuleInit, OnModuleDestroy {
     @Inject(ProtectionService) private readonly protection: ProtectionService,
     @Inject(PlatformService) private readonly platform: PlatformService,
     @Inject(SchedulerLockService) private readonly locks: SchedulerLockService,
+    @Inject(RealtimeGateway) private readonly realtime: RealtimeGateway,
     @Inject(APP_CONFIG) private readonly config: AppConfig,
   ) {}
 
@@ -40,6 +42,7 @@ export class ContactSweep implements OnModuleInit, OnModuleDestroy {
       await this.platform.processOutboxBatch(this.workerId).catch((error: unknown) => {
         console.error(JSON.stringify({ level: "error", message: "outbox drain failed", detail: String(error) }));
       });
+      await this.recheckOperators();
       return;
     }
     try {
@@ -55,8 +58,15 @@ export class ContactSweep implements OnModuleInit, OnModuleDestroy {
       await this.platform.processOutboxBatch(this.workerId).catch((error: unknown) => {
         console.error(JSON.stringify({ level: "error", message: "outbox drain failed", detail: String(error) }));
       });
+      await this.recheckOperators();
     } finally {
       await this.locks.release("contact-sweep").catch(() => undefined);
     }
+  }
+
+  private async recheckOperators(): Promise<void> {
+    await this.realtime.dropRevokedOperators().catch((error: unknown) => {
+      console.error(JSON.stringify({ level: "error", message: "operator socket recheck failed", detail: String(error) }));
+    });
   }
 }

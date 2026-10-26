@@ -14,8 +14,10 @@ import { sha256 } from "./security";
 import { apnsHealth, fcmHealth, sendApns, sendFcm, smsHealth, TwilioSmsProvider } from "./sms";
 import { requestMetrics } from "../common/http";
 import type { MfaStore } from "./auth-service";
+import type { AiService } from "./ai-service";
 import type { OutboxService } from "./outbox";
 import { etaSeconds } from "./scheduler-lock";
+import { websocketStatus } from "../modules/realtime/realtime-status";
 
 const OPERATOR_ROLES: Role[] = ["MONITOR_OPERATOR", "SUPERVISOR", "RESPONDER", "ADMIN"];
 
@@ -40,25 +42,34 @@ export class PlatformService {
     private readonly config: AppConfig,
     private readonly vault: FileEvidenceVault,
     private readonly outbox: OutboxService | null = null,
+    private readonly redis: { ping(): Promise<"up" | "down" | "unconfigured"> } | null = null,
+    private readonly ai: AiService | null = null,
   ) {}
 
   async notifyIncident(incident: { id: string; userId: string; userDisplayName: string; state: string; isTest: boolean }): Promise<void> {
-    if (incident.isTest) return;
     if (this.outbox) {
+      if (!incident.isTest) {
+        await this.outbox.enqueue({
+          type: "INCIDENT_GUARDIAN_NOTIFY",
+          aggregateType: "Incident",
+          aggregateId: incident.id,
+          payload: {
+            incidentId: incident.id,
+            userId: incident.userId,
+            userDisplayName: incident.userDisplayName,
+            state: incident.state,
+          },
+        });
+      }
       await this.outbox.enqueue({
-        type: "INCIDENT_GUARDIAN_NOTIFY",
+        type: "AI_ASSESS",
         aggregateType: "Incident",
         aggregateId: incident.id,
-        payload: {
-          incidentId: incident.id,
-          userId: incident.userId,
-          userDisplayName: incident.userDisplayName,
-          state: incident.state,
-        },
+        payload: { incidentId: incident.id },
       });
       return;
     }
-    await this.dispatchGuardianNotify(incident);
+    if (!incident.isTest) await this.dispatchGuardianNotify(incident);
   }
 
   async dispatchGuardianNotify(incident: { id?: string; incidentId?: string; userId: string; userDisplayName: string; state: string }): Promise<void> {
@@ -702,6 +713,10 @@ export class PlatformService {
         if (event.type === "INCIDENT_GUARDIAN_NOTIFY") {
           const payload = event.payload as { incidentId: string; userId: string; userDisplayName: string; state: string };
           await this.dispatchGuardianNotify(payload);
+        } else if (event.type === "AI_ASSESS") {
+          const payload = event.payload as { incidentId?: string };
+          if (!this.ai || !payload.incidentId) throw new Error("AI assessment needs an incident id.");
+          await this.ai.assess(payload.incidentId);
         } else {
           throw new Error(`Unknown outbox type ${event.type}`);
         }
@@ -849,13 +864,15 @@ export class PlatformService {
       fcmConfigured: fcmHealth() === "CONFIGURED",
       apnsConfigured: apnsHealth() === "CONFIGURED",
       s3Configured: s3Configured(),
-      redis: process.env.REDIS_URL?.trim() ? "configured" : "not configured",
-      websocket: "socket.io process attached",
+      redis: this.redis ? await this.redis.ping() : process.env.REDIS_URL?.trim() ? "down" : "unconfigured",
+      websocket: websocketStatus(),
       environment: process.env.NODE_ENV ?? "development",
       release: process.env.npm_package_version ?? "unknown",
       gitCommit: process.env.GIT_COMMIT ?? process.env.SOURCE_VERSION ?? "unknown",
-      evidenceQueue: "in-process",
+      evidenceQueue: this.outbox ? "durable-outbox" : "in-process",
       notificationBacklog: this.outbox ? await this.outbox.backlog() : "in-process-fallback",
+      deadLetters: this.outbox ? await this.outbox.recentDead() : [],
+      ai: this.ai ? await this.ai.counts() : null,
       lastBackup: process.env.LAST_BACKUP_AT ?? "not recorded by this process",
     };
   }

@@ -15,6 +15,7 @@ import { ACCESS_TOKENS, APP_CONFIG, USER_STORE } from "../../common/tokens";
 import type { AccessTokenIssuer } from "../../domain/auth-service";
 import type { RealtimePublisher, UserStore } from "../../domain/ports";
 import { hasPermission, Permission } from "../../domain/rbac";
+import { setWebsocketStatus } from "./realtime-status";
 
 @WebSocketGateway({
   namespace: "/monitoring",
@@ -31,26 +32,40 @@ export class RealtimeGateway implements OnGatewayInit, RealtimePublisher {
   ) {}
 
   afterInit(server: Server): void {
-    if (!this.config.redisUrl) return;
+    if (!this.config.redisUrl) {
+      setWebsocketStatus("single-process");
+      return;
+    }
+    setWebsocketStatus("redis adapter connecting");
     const options = {
       lazyConnect: true,
-      maxRetriesPerRequest: 1,
+      maxRetriesPerRequest: 2,
       enableOfflineQueue: false,
-      retryStrategy: () => null,
+      retryStrategy: (attempt: number) => (attempt > 20 ? null : Math.min(attempt * 200, 2000)),
     };
     const pub = new Redis(this.config.redisUrl, options);
     const sub = pub.duplicate();
     pub.on("error", () => undefined);
     sub.on("error", () => undefined);
-    void Promise.all([pub.connect(), sub.connect()])
-      .then(() => {
-        server.adapter(createAdapter(pub, sub));
-      })
-      .catch(() => {
+    const connect = async (): Promise<void> => {
+      try {
+        if (pub.status === "wait" || pub.status === "end") await pub.connect();
+        if (sub.status === "wait" || sub.status === "end") await sub.connect();
+        const pong = await pub.ping();
+        if (pong !== "PONG") throw new Error("Redis did not answer PING.");
+        const io = typeof (server as { adapter?: unknown }).adapter === "function"
+          ? server
+          : (server as unknown as { server: Server }).server;
+        io.adapter(createAdapter(pub, sub));
+        setWebsocketStatus("redis adapter up");
+      } catch {
         pub.disconnect();
         sub.disconnect();
+        setWebsocketStatus("redis adapter down");
         console.error(JSON.stringify({ level: "error", message: "Redis WebSocket adapter unavailable" }));
-      });
+      }
+    };
+    void connect();
   }
 
   publish(name: string, payload: unknown): void {
@@ -73,11 +88,28 @@ export class RealtimeGateway implements OnGatewayInit, RealtimePublisher {
         client.disconnect();
         return;
       }
+      client.data.userId = user.id;
       await client.join("monitors");
       client.emit("auth.ok", { role: user.role });
     } catch {
       client.emit("auth.error", { code: "UNAUTHENTICATED" });
       client.disconnect();
     }
+  }
+
+  async dropRevokedOperators(): Promise<number> {
+    const sockets = await this.server?.fetchSockets?.();
+    if (!sockets) return 0;
+    let dropped = 0;
+    for (const socket of sockets) {
+      const userId = typeof socket.data.userId === "string" ? socket.data.userId : "";
+      if (!userId) continue;
+      const user = await this.users.findById(userId);
+      if (!user || !hasPermission(user.role, Permission.IncidentReadActive)) {
+        socket.disconnect(true);
+        dropped += 1;
+      }
+    }
+    return dropped;
   }
 }

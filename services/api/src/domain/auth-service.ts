@@ -24,6 +24,7 @@ class MemoryRecovery implements RecoveryStore {
     return row.userId;
   }
 }
+import { recoveryPublicPayload, sendTransactionalEmail } from "./email";
 import { generateTotpSecret, readMfaChallenge, signMfaChallenge, verifyTotp } from "./operations";
 import {
   generateRefreshToken,
@@ -129,14 +130,15 @@ export class AuthService {
       createdAt: now,
     });
     await this.audit({ actorId: user.id, action: "auth.register", entityId: user.id });
-    await this.issueEmailToken(user.id);
+    const token = await this.issueEmailToken(user.id);
+    await this.deliverEmail(user.email, "verify", token);
     return this.issue(user, this.ids.uuid());
   }
 
   async requestPasswordReset(email: string): Promise<{ accepted: true; emailSent: boolean; deepLink?: string; appLink?: string; devToken?: string }> {
     const user = await this.users.findByEmail(email.trim().toLowerCase());
-    const emailSent = Boolean(process.env.SMTP_URL?.trim());
-    if (!user) return { accepted: true, emailSent };
+    const configured = Boolean(process.env.SMTP_URL?.trim());
+    if (!user) return { accepted: true, emailSent: configured };
     const token = randomBytes(24).toString("base64url");
     await this.recovery.insert({
       tokenHash: hashToken(token),
@@ -147,9 +149,8 @@ export class AuthService {
     });
     await this.audit({ actorId: user.id, action: "auth.password_reset_requested", entityId: user.id });
     const links = deepLinks("reset", token);
-    return process.env.NODE_ENV === "production"
-      ? { accepted: true, emailSent, ...links }
-      : { accepted: true, emailSent, ...links, devToken: token };
+    const emailSent = await this.deliverEmail(user.email, "reset", token);
+    return { accepted: true as const, ...recoveryPublicPayload(emailSent, { ...links, devToken: token }) };
   }
 
   async resetPassword(token: string, password: string): Promise<void> {
@@ -165,9 +166,10 @@ export class AuthService {
 
   async requestEmailVerification(userId: string): Promise<{ emailSent: boolean; deepLink?: string; appLink?: string; devToken?: string }> {
     const token = await this.issueEmailToken(userId);
-    const emailSent = Boolean(process.env.SMTP_URL?.trim());
+    const user = await this.users.findById(userId);
     const links = deepLinks("verify", token);
-    return process.env.NODE_ENV === "production" ? { emailSent, ...links } : { emailSent, ...links, devToken: token };
+    const emailSent = user ? await this.deliverEmail(user.email, "verify", token) : false;
+    return recoveryPublicPayload(emailSent, { ...links, devToken: token });
   }
 
   async verifyEmail(token: string): Promise<void> {
@@ -195,6 +197,21 @@ export class AuthService {
       // Registration still succeeds if the recovery table is unavailable.
     }
     return token;
+  }
+
+  private async deliverEmail(to: string, kind: "verify" | "reset", token: string): Promise<boolean> {
+    const links = deepLinks(kind, token);
+    const subject = kind === "verify" ? "Verify your Guardian email" : "Reset your Guardian password";
+    try {
+      return await sendTransactionalEmail({
+        to,
+        subject,
+        text: `Open this Guardian link: ${links.deepLink}`,
+      });
+    } catch (error) {
+      console.error(JSON.stringify({ level: "error", message: "transactional email failed", kind, detail: error instanceof Error ? error.message : "unknown" }));
+      return false;
+    }
   }
 
   async login(input: { email: string; password: string }): Promise<LoginResult> {

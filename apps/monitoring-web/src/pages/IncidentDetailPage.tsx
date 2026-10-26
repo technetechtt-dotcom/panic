@@ -6,6 +6,7 @@ import "leaflet/dist/leaflet.css";
 import { api, type Heartbeat, type Incident, type LocationPoint, type TimelineEntry } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
 import { Badge } from "./IncidentsPage";
+import { AiPanel } from "./AiPanel";
 
 const tileUrl = import.meta.env.VITE_MAP_TILE_URL || "https://tile.openstreetmap.org/{z}/{x}/{y}.png";
 const tileAttribution = import.meta.env.VITE_MAP_TILE_ATTRIBUTION || "© OpenStreetMap contributors";
@@ -106,11 +107,12 @@ export function IncidentDetailPage() {
       {incident.isError ? <p className="mt-6 text-sos">This incident could not be loaded.</p> : null}
       {current ? (
         <>
-        <nav className="mt-4 flex flex-wrap gap-2">
-          {["overview", "map", "evidence", "guardians", "responders", "timeline"].map((name) => (
+        <nav className="mt-4 flex flex-wrap gap-2" aria-label="Incident sections">
+          {["overview", "map", "evidence", "guardians", "responders", "timeline", "intelligence"].map((name) => (
             <button
               key={name}
               type="button"
+              aria-pressed={tab === name}
               onClick={() => setTab(name)}
               className={`rounded-lg px-3 py-2 text-sm ${tab === name ? "bg-ink text-white" : "border border-line"}`}
             >
@@ -118,7 +120,8 @@ export function IncidentDetailPage() {
             </button>
           ))}
         </nav>
-        <div className="mt-4 grid gap-4 lg:grid-cols-[280px_1fr_320px]">
+        {tab === "intelligence" ? <AiPanel id={id} token={token} canDecide={operator} /> : null}
+        <div className={`mt-4 grid gap-4 lg:grid-cols-[280px_1fr_320px] ${tab === "intelligence" ? "hidden" : ""}`}>
           <section className={`rounded-2xl border border-line bg-panel p-4 ${tab === "overview" || tab === "responders" ? "" : "lg:block hidden"}`}>
             <h1 className="text-2xl font-semibold">{current.userDisplayName}</h1>
             <dl className="mt-4 space-y-2 text-sm">

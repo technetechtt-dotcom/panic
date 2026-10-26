@@ -30,6 +30,7 @@ export function useMonitorSocket(token: string | null, onEvent: (name: string) =
     socket.on("duress.detected", () => refresh("duress.detected"));
     socket.on("evidence.received", () => refresh("evidence.received"));
     socket.on("risk.updated", () => refresh("risk.updated"));
+    socket.on("ai.risk.updated", () => refresh("ai.risk.updated"));
     const timer = window.setInterval(() => {
       void refreshSession().then((next) => {
         if (next && socket.connected) authorize(next);

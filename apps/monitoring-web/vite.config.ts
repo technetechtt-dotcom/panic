@@ -19,11 +19,11 @@ function apiUnavailable(_proxy: unknown, _req: unknown, res: object): void {
 export default defineConfig({
   plugins: [react()],
   server: {
-    port: 5173,
+    port: Number(process.env.GUARDIAN_WEB_PORT ?? 5173),
     proxy: {
-      "/api": { target: "http://127.0.0.1:3000", configure: (proxy) => proxy.on("error", apiUnavailable) },
+      "/api": { target: process.env.GUARDIAN_API_PROXY ?? "http://127.0.0.1:3000", configure: (proxy) => proxy.on("error", apiUnavailable) },
       "/socket.io": {
-        target: "http://127.0.0.1:3000",
+        target: process.env.GUARDIAN_API_PROXY ?? "http://127.0.0.1:3000",
         ws: true,
         configure: (proxy) => proxy.on("error", apiUnavailable),
       },

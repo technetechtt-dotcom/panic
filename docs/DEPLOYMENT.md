@@ -6,7 +6,7 @@ Production-shaped containers live in `services/api/Dockerfile`, `apps/monitoring
 docker compose --env-file .env -f infrastructure/docker/docker-compose.prod.yml up --build
 ```
 
-The API container runs `prisma migrate deploy` before it listens. Compose sets `DATABASE_URL` to the Postgres service, so a localhost URL in `.env` does not override it. Both API processes share Postgres, Redis, and the `guardian_evidence` volume. WebSocket fan-out uses the Redis adapter. The hub is published on port 8080 and proxies `/api` and `/socket.io` to the API. Set `EVIDENCE_VAULT_KEY`, Twilio, FCM, and S3 variables only when those providers are real. A missing provider records that the message or object was not sent. Without S3, evidence stays on the shared volume as AES-GCM files. With S3, a replica that does not have the local file reads the sealed object back.
+The API container runs `prisma migrate deploy` before it listens. Compose sets `DATABASE_URL` to the Postgres service, so a localhost URL in `.env` does not override it. Production also requires `REDIS_URL` (set by Compose to the Redis service), `TRUST_PROXY=true`, and `SMTP_URL`. Both API processes share Postgres, Redis, and the `guardian_evidence` volume. WebSocket fan-out uses the Redis adapter. Nginx listens on port 443 and redirects port 80 to HTTPS. Mount a public certificate, or set `GUARDIAN_TLS_SELF_SIGNED=1` only for a private lab. A self-signed certificate is not a launch certificate. Set `EVIDENCE_VAULT_KEY`, Twilio, FCM, and S3 variables only when those providers are real. A missing provider records that the message or object was not sent. An incomplete provider set stops the process. Without S3, evidence stays on the shared volume as AES-GCM files. With S3, a replica that does not have the local file reads the sealed object back.
 
 A database backup is `node --env-file=.env services/api/scripts/backup-restore.mjs`. Restore with `psql` against the dump file. This is a single-database procedure, not a multi-region disaster-recovery exercise.
 
@@ -48,13 +48,13 @@ The dashboard dev server proxies `/api` and `/socket.io` to port 3000. Set `VITE
 
 `VITE_MAP_TILE_URL` defaults to the public OpenStreetMap tile server. That is acceptable for a local demo. Production needs a tile host you are allowed to use, and the privacy review has to cover the area the browser requests. See [PRIVACY.md](PRIVACY.md).
 
-## Production notes that are not done
+## Production notes still required outside this checkout
 
-- Terminate TLS in front of the API. Set `NODE_ENV=production` so the refresh cookie is `Secure`.
-- Set `TRUST_PROXY` only when a reverse proxy you control sets the client IP. The rate limiter uses `request.ip`.
-- SOS rate limits use Redis when `REDIS_URL` is set, and fall back to the process memory if Redis throws. The production compose file sets `REDIS_URL`.
+- Put a public TLS certificate in the nginx cert volume. `GUARDIAN_TLS_SELF_SIGNED=1` is only for a private lab.
+- Set `NODE_ENV=production` so the refresh cookie is `Secure`. Compose already sets `TRUST_PROXY=true` behind nginx. The rate limiter uses `request.ip`.
+- Sign-in rate limits fail closed when Redis is down. SOS creation stays available on that replica if Redis throws, so an emergency is not blocked by the cache.
 - Do not commit `.env`.
-- The Android release build still needs a real API base URL over HTTPS. The debug cleartext host is emulator-only.
+- The Android release build still needs a real API base URL over HTTPS, a Play upload keystore, and a real `google-services.json`. The debug cleartext host is emulator-only.
 
 ## Backup
 

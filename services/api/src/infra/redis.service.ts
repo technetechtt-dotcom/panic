@@ -10,9 +10,9 @@ export class RedisService implements OnModuleDestroy {
     this.client = config.redisUrl
       ? new Redis(config.redisUrl, {
           lazyConnect: true,
-          maxRetriesPerRequest: 1,
+          maxRetriesPerRequest: 2,
           enableOfflineQueue: false,
-          retryStrategy: () => null,
+          retryStrategy: (attempt) => (attempt > 20 ? null : Math.min(attempt * 200, 2000)),
         })
       : null;
     this.client?.on("error", () => undefined);
@@ -21,7 +21,7 @@ export class RedisService implements OnModuleDestroy {
   async ping(): Promise<"up" | "down" | "unconfigured"> {
     if (!this.client) return "unconfigured";
     try {
-      if (this.client.status === "wait") await this.client.connect();
+      if (this.client.status === "wait" || this.client.status === "end") await this.client.connect();
       const result = await this.client.ping();
       return result === "PONG" ? "up" : "down";
     } catch {

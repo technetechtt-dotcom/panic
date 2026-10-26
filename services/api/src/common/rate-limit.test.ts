@@ -26,4 +26,6 @@ test("shared limiter uses redis and falls back when redis throws", async () => {
   assert.equal(await allowShared(redis, memory, "sos", 1, 1000), true);
   assert.equal(await allowShared(redis, memory, "sos", 1, 1000), false);
   assert.equal(await allowShared({ async incr() { throw new Error("down"); }, async pexpire() { return 0; } }, memory, "other", 1, 1000), true);
+  assert.equal(await allowShared({ async incr() { throw new Error("down"); }, async pexpire() { return 0; } }, memory, "login", 5, 1000, "closed"), false);
+  assert.equal(await allowShared(null, memory, "login-closed", 5, 1000, "closed"), false);
 });

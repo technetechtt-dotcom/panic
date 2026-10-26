@@ -17,6 +17,7 @@ apps/monitoring-web/dist/
 services/api/dist/
 packages/*/dist/
 infrastructure/docker/data/
+infrastructure/docker/certs/
 data/evidence-vault/
 data/backups/
 *.apk

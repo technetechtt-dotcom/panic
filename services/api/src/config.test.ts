@@ -40,12 +40,28 @@ test("production refuses incomplete configuration", () => {
       }),
     /FCM/,
   );
+  assert.throws(
+    () =>
+      loadConfig({
+        ...base,
+        NODE_ENV: "production",
+        EVIDENCE_VAULT_KEY: "vault-key-independent-32-chars-min",
+        CORS_ORIGIN: "https://hub.example.com",
+        PUBLIC_API_URL: "https://api.example.com",
+      }),
+    /REDIS_URL/,
+  );
   const config = loadConfig({
     ...base,
     NODE_ENV: "production",
     EVIDENCE_VAULT_KEY: "vault-key-independent-32-chars-min",
     CORS_ORIGIN: "https://hub.example.com",
     PUBLIC_API_URL: "https://api.example.com",
+    REDIS_URL: "redis://redis:6379",
+    TRUST_PROXY: "true",
+    SMTP_URL: "smtps://mailer:secret@smtp.example.com:465",
   });
   assert.equal(config.corsOrigins[0], "https://hub.example.com");
+  assert.equal(config.redisUrl, "redis://redis:6379");
+  assert.equal(config.trustProxy, true);
 });

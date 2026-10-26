@@ -9,13 +9,15 @@ export async function allowShared(
   key: string,
   limit: number,
   windowMs: number,
+  onRedisDown: "open" | "closed" = "open",
 ): Promise<boolean> {
-  if (!redis) return memory.allow(key, limit, windowMs);
+  if (!redis) return onRedisDown === "closed" ? false : memory.allow(key, limit, windowMs);
   try {
     const count = await redis.incr(`rl:${key}`);
     if (count === 1) await redis.pexpire(`rl:${key}`, windowMs);
     return count <= limit;
   } catch {
+    if (onRedisDown === "closed") return false;
     return memory.allow(key, limit, windowMs);
   }
 }

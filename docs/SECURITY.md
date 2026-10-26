@@ -19,7 +19,9 @@ Milestone 1 treats the SOS path as the asset that must stay available and the ac
 - `android:allowBackup` is false.
 - Location tracking runs in a foreground service with a visible notification, and only while an incident is active.
 - The partial wake lock is tagged `guardian:emergency` and is held for at most four hours.
-- Rate limits cover login, registration, refresh, SOS creation, location, and heartbeats. Redis is used when `REDIS_URL` is set for SOS coordination; otherwise process memory is used.
+- Rate limits cover login, registration, refresh, SOS creation, location, and heartbeats. Production requires Redis. Sign-in limits fail closed if Redis is down. SOS limits stay available on that replica if Redis throws, so an emergency is not blocked by a cache outage.
+- Verification and password-reset links are emailed when `SMTP_URL` is set. Production refuses to boot without it, and those API responses do not include the token.
+- Production readiness requires Postgres and Redis. Evidence uploads accept bodies up to 4 MB. Operator sockets are checked again and dropped after a role demotion.
 - Guardian notifications enqueue through a durable Postgres outbox with retries and a dead-letter table. Two API replicas use Redis or Postgres `SchedulerLock` so sweeps are not double-run.
 - See [SECURITY_REVIEW.md](SECURITY_REVIEW.md) for the pre-launch defensive checklist. That file is not an external review certificate.
 
@@ -32,7 +34,7 @@ Milestone 1 treats the SOS path as the asset that must stay available and the ac
 - Release minify is off.
 - `npm audit` reported vulnerabilities in the dependency tree. They have not been triaged.
 - No external penetration test or external privacy legal opinion has been commissioned. This repository does not contain exploit procedures. Defensive tests cover emergency-credential allowlists on SOS, escalation, location, heartbeat, and evidence, refresh-token reuse, and production fail-closed configuration.
-- WebSocket auth checks the database role at connect time. A demotion does not drop an already joined socket until the access token expires or the client reconnects.
+- Terminate TLS in front of the nginx listener on port 80. This repository does not ship certificates.
 - Physical OEM field tests and Safe Word accuracy campaigns are checklists/harnesses until results are recorded from real devices and fixtures.
 
 ## Operator seed

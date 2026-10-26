@@ -521,3 +521,84 @@ model OperatorShift {
   @@index([operatorId, status])
   @@index([status])
 }
+
+model AiModel {
+  id          String   @id @db.Uuid
+  name        String
+  version     String
+  purpose     String
+  status      String
+  datasetNote String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([name, version])
+}
+
+model AiDecision {
+  id              String   @id @db.Uuid
+  incidentId      String   @db.Uuid
+  modelName       String
+  modelVersion    String
+  mode            String
+  level           String
+  confidence      Float
+  explanation     String
+  contributing    Json
+  contradicting   Json
+  featureSnapshot Json
+  createdAt       DateTime @default(now())
+
+  @@index([incidentId, mode, createdAt])
+}
+
+model AiRecommendation {
+  id          String    @id @db.Uuid
+  incidentId  String    @db.Uuid
+  decisionId  String    @db.Uuid
+  action      String
+  reason      String
+  status      String
+  decidedById String?   @db.Uuid
+  decidedAt   DateTime?
+  createdAt   DateTime  @default(now())
+
+  @@index([incidentId, status])
+}
+
+model AiIncidentSummary {
+  id           String   @id @db.Uuid
+  incidentId   String   @db.Uuid
+  summary      String
+  changes      String
+  risks        String
+  modelVersion String
+  createdAt    DateTime @default(now())
+
+  @@index([incidentId, createdAt])
+}
+
+model AiReview {
+  id         String   @id @db.Uuid
+  incidentId String   @db.Uuid
+  actorId    String   @db.Uuid
+  targetType String
+  targetId   String
+  status     String
+  note       String
+  createdAt  DateTime @default(now())
+
+  @@index([incidentId, createdAt])
+}
+
+model SearchPrediction {
+  id         String   @id @db.Uuid
+  incidentId String   @db.Uuid
+  kind       String
+  label      String
+  confidence Float
+  geometry   Json
+  createdAt  DateTime @default(now())
+
+  @@index([incidentId, createdAt])
+}

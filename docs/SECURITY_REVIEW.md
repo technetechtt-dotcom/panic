@@ -7,7 +7,7 @@ This is an internal defensive checklist. It is **not** an external penetration t
 - [ ] External security review commissioned (scope: API auth, emergency token binding, outbox/webhooks, evidence vault, operator MFA, Android permission surfaces).
 - [ ] External privacy review commissioned against [PRIVACY.md](PRIVACY.md) and [POPIA.md](POPIA.md) (legal advice is out of this repo).
 - [ ] Secrets only in deployment secret stores; no `.env` commits.
-- [ ] Production fail-closed config: `JWT_ACCESS_SECRET`, `EVIDENCE_VAULT_KEY`, `PUBLIC_API_URL`, CORS, incomplete Twilio/FCM/APNs rejected.
+- [x] Production fail-closed config: `JWT_ACCESS_SECRET`, `EVIDENCE_VAULT_KEY`, `PUBLIC_API_URL`, CORS, `REDIS_URL`, `TRUST_PROXY`, `SMTP_URL`, and incomplete Twilio/FCM/APNs sets. Missing providers are recorded as not sent.
 - [ ] Emergency credential cannot change guardians, account, or operator roles (covered by product tests).
 - [ ] Delivery webhooks verify provider signatures before status updates.
 - [ ] Outbox dead-letter inspected; no silent forever-retries without operators noticing platform status.

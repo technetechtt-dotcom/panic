@@ -21,6 +21,7 @@ import {
   USER_STORE,
 } from "./common/tokens";
 import { ContactSweep } from "./contact-sweep";
+import { AiService } from "./domain/ai-service";
 import { AuthService } from "./domain/auth-service";
 import { DeviceService } from "./domain/device-service";
 import { IncidentService } from "./domain/incident-service";
@@ -53,6 +54,7 @@ import {
 } from "./infra/prisma-protection";
 import { PrismaService } from "./infra/prisma.service";
 import { RedisService } from "./infra/redis.service";
+import { AiController } from "./modules/ai/ai.controller";
 import { AuditController } from "./modules/audit/audit.controller";
 import { AuthController } from "./modules/auth/auth.controller";
 import { DevicesController } from "./modules/devices/devices.controller";
@@ -72,6 +74,7 @@ import { WebhooksController } from "./modules/webhooks/webhooks.controller";
     IncidentsController,
     ProtectionController,
     PlatformController,
+    AiController,
     AuditController,
     HealthController,
     WebhooksController,
@@ -263,6 +266,12 @@ import { WebhooksController } from "./modules/webhooks/webhooks.controller";
       inject: [PrismaService, RedisService],
     },
     {
+      provide: AiService,
+      useFactory: (prisma: PrismaService, ids: IdGenerator, clock: Clock, publisher: RealtimeGateway) =>
+        new AiService(prisma, ids, clock, publisher),
+      inject: [PrismaService, IDS, CLOCK, RealtimeGateway],
+    },
+    {
       provide: PlatformService,
       useFactory: (
         prisma: PrismaService,
@@ -276,8 +285,10 @@ import { WebhooksController } from "./modules/webhooks/webhooks.controller";
         config: AppConfig,
         vault: FileEvidenceVault,
         outbox: OutboxService,
-      ) => new PlatformService(prisma, incidents, protection, users, devices, passwords, ids, clock, config, vault, outbox),
-      inject: [PrismaService, IncidentService, ProtectionService, USER_STORE, DEVICE_STORE, PASSWORD_HASHER, IDS, CLOCK, APP_CONFIG, FileEvidenceVault, OutboxService],
+        redis: RedisService,
+        ai: AiService,
+      ) => new PlatformService(prisma, incidents, protection, users, devices, passwords, ids, clock, config, vault, outbox, redis, ai),
+      inject: [PrismaService, IncidentService, ProtectionService, USER_STORE, DEVICE_STORE, PASSWORD_HASHER, IDS, CLOCK, APP_CONFIG, FileEvidenceVault, OutboxService, RedisService, AiService],
     },
     ContactSweep,
     { provide: APP_GUARD, useClass: AuthGuard },

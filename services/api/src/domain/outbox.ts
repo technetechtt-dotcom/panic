@@ -135,6 +135,21 @@ export class OutboxService {
     return "retry";
   }
 
+  async recentDead(limit = 8): Promise<Array<{ type: string; aggregateId: string; attempts: number; lastError: string; failedAt: string }>> {
+    const rows = await this.prisma.outboxDeadLetter.findMany({
+      orderBy: { failedAt: "desc" },
+      take: limit,
+      select: { type: true, aggregateId: true, attempts: true, lastError: true, failedAt: true },
+    });
+    return rows.map((row) => ({
+      type: row.type,
+      aggregateId: row.aggregateId,
+      attempts: row.attempts,
+      lastError: row.lastError,
+      failedAt: row.failedAt.toISOString(),
+    }));
+  }
+
   async backlog(): Promise<{ pending: number; failed: number; dead: number; processing: number }> {
     const [pending, failed, dead, processing] = await Promise.all([
       this.prisma.outboxEvent.count({ where: { status: "PENDING" } }),

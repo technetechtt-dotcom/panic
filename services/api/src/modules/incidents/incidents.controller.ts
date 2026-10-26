@@ -129,7 +129,7 @@ export class IncidentsController {
   }
 
   private async enforce(key: string, limit: number, windowMs: number): Promise<void> {
-    const allowed = await allowShared(this.redis.client, this.limiter, key, limit, windowMs);
+    const allowed = await allowShared(this.redis.client, this.limiter, key, limit, windowMs, "open");
     if (!allowed) {
       throw new AppError("RATE_LIMITED", 429, "Too many requests. The saved emergency is still retried by the device.");
     }

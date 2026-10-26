@@ -12,7 +12,7 @@ Completed for the manual SOS path:
 
 Still thin inside milestone 1:
 
-- The API is not containerised.
+- The API container is `services/api/Dockerfile`, exercised by `infrastructure/docker/docker-compose.prod.yml`. That compose file is not a multi-region deployment.
 - HTTP tests do not use a real database. The migration exists and must be applied before a deployment.
 - Dashboard navigation does not include guardians, evidence, responders, reports, or audit browsing. Audit is an API route for supervisors only.
 - Onboarding is welcome, register, and login, then the home checklist. It is not the ten-screen flow.
