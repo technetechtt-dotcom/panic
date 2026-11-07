@@ -45,6 +45,25 @@ class EvidenceVault @Inject constructor(
         return row
     }
 
+    suspend fun storeFileChunks(
+        localIncidentId: String,
+        type: String,
+        file: File,
+        chunkBytes: Int = 900_000,
+    ): Int {
+        if (!file.exists() || file.length() <= 0L) return 0
+        var stored = 0
+        file.inputStream().buffered().use { input ->
+            val buffer = ByteArray(chunkBytes.coerceIn(64 * 1024, 1_400_000))
+            while (true) {
+                val read = input.read(buffer)
+                if (read <= 0) break
+                if (store(localIncidentId, type, buffer.copyOf(read)) != null) stored += 1
+            }
+        }
+        return stored
+    }
+
     suspend fun bind(localIncidentId: String, serverIncidentId: String) {
         if (serverIncidentId.isBlank()) return
         database.evidence().bind(localIncidentId, serverIncidentId)
