@@ -38,6 +38,8 @@ export interface MfaStore {
   secret(userId: string): Promise<string | null>;
   prepareEnrollment?(userId: string, secret: string): Promise<void>;
   enable?(userId: string): Promise<void>;
+  replaceRecoveryCodes?(userId: string, codeHashes: string[]): Promise<void>;
+  consumeRecoveryCode?(userId: string, codeHash: string, now: Date): Promise<boolean>;
 }
 
 export interface AccessTokenIssuer {
@@ -69,6 +71,7 @@ export interface AuthResult {
   accessToken: string;
   accessTokenExpiresInSeconds: number;
   refreshToken: string;
+  recoveryCodes?: string[];
   user: {
     id: string;
     email: string;
@@ -253,19 +256,42 @@ export class AuthService {
 
   async completeMfa(mfaToken: string, code: string): Promise<AuthResult> {
     if (!this.mfa) throw new AppError("MFA_UNAVAILABLE", 409, "Authenticator sign-in is not configured.");
-    const userId = readMfaChallenge(this.mfa.secret, mfaToken, this.clock.now().getTime());
+    const now = this.clock.now();
+    const userId = readMfaChallenge(this.mfa.secret, mfaToken, now.getTime());
     const secret = userId ? await this.mfa.store.secret(userId) : null;
-    if (!userId || !secret || !verifyTotp(secret, code, this.clock.now().getTime())) {
-      throw new AppError("INVALID_MFA", 401, "That authenticator code was not accepted.");
+    const enabled = userId ? await this.mfa.store.isEnabled(userId) : false;
+    const normalizedRecovery = code.replace("-", "").toUpperCase();
+    const totpOk = Boolean(userId && secret && /^\d{6}$/.test(code) && verifyTotp(secret, code, now.getTime()));
+    const recoveryOk = Boolean(
+      userId &&
+      enabled &&
+      !totpOk &&
+      /^[A-F0-9]{12}$/.test(normalizedRecovery) &&
+      await this.mfa.store.consumeRecoveryCode?.(userId, hashToken(normalizedRecovery), now),
+    );
+    if (!userId || !secret || (!totpOk && !recoveryOk)) {
+      throw new AppError("INVALID_MFA", 401, "That authenticator or recovery code was not accepted.");
     }
     const user = await this.users.findById(userId);
-    if (!user) throw new AppError("INVALID_MFA", 401, "That authenticator code was not accepted.");
-    await this.mfa.store.enable?.(userId);
-    user.lastLoginAt = this.clock.now();
-    user.updatedAt = user.lastLoginAt;
+    if (!user || user.suspendedAt) throw new AppError("INVALID_MFA", 401, "That authenticator code was not accepted.");
+    let recoveryCodes: string[] | undefined;
+    if (!enabled) {
+      await this.mfa.store.enable?.(userId);
+      recoveryCodes = Array.from({ length: 10 }, () => {
+        const raw = randomBytes(6).toString("hex").toUpperCase();
+        return `${raw.slice(0, 6)}-${raw.slice(6)}`;
+      });
+      await this.mfa.store.replaceRecoveryCodes?.(
+        userId,
+        recoveryCodes.map((value) => hashToken(value.replace("-", ""))),
+      );
+    }
+    user.lastLoginAt = now;
+    user.updatedAt = now;
     await this.users.save?.(user);
-    await this.audit({ actorId: user.id, action: "auth.mfa", entityId: user.id });
-    return this.issue(user, this.ids.uuid());
+    await this.audit({ actorId: user.id, action: recoveryOk ? "auth.mfa_recovery" : "auth.mfa", entityId: user.id });
+    const result = await this.issue(user, this.ids.uuid());
+    return recoveryCodes ? { ...result, recoveryCodes } : result;
   }
 
   async refresh(rawToken: string): Promise<AuthResult> {
