@@ -76,8 +76,8 @@ export async function sendApns(
   token: string,
   title: string,
   body: string,
-  data: Record<string, string> = {},
   env: NodeJS.ProcessEnv = process.env,
+  data: Record<string, string> = {},
 ): Promise<SmsSendResult> {
   if (!token) return { delivered: false, simulated: true, reason: "No Apple device token was stored." };
   if (!apnsReady(env)) {
@@ -147,8 +147,8 @@ export async function sendFcm(
   token: string,
   title: string,
   body: string,
-  data: Record<string, string> = {},
   env: NodeJS.ProcessEnv = process.env,
+  data: Record<string, string> = {},
 ): Promise<SmsSendResult> {
   if (!token) return { delivered: false, simulated: true, reason: "No FCM token was stored." };
   if (!fcmV1Ready(env)) {
