@@ -34,6 +34,21 @@ export function AiPanel({ id, token, canDecide }: { id: string; token: string | 
   });
   const row = bundle.data;
 
+  async function downloadReport() {
+    setError(null);
+    try {
+      const report = await api<Record<string, unknown>>(`/api/v1/incidents/${id}/ai/post-incident-report`, token);
+      const url = URL.createObjectURL(new Blob([JSON.stringify(report, null, 2)], { type: "application/json" }));
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = `guardian-intelligence-${id}.json`;
+      anchor.click();
+      URL.revokeObjectURL(url);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "The intelligence report could not be exported.");
+    }
+  }
+
   async function ask(event: FormEvent) {
     event.preventDefault();
     setError(null);
@@ -170,6 +185,9 @@ export function AiPanel({ id, token, canDecide }: { id: string; token: string | 
           {row.evidence.chunks} chunk(s). {row.evidence.note}
         </p>
       </article>
+      <button type="button" className="rounded-lg border border-line px-3 py-2 text-sm" onClick={() => void downloadReport()}>
+        Export factual intelligence report
+      </button>
       <form className="rounded-2xl border border-line bg-panel p-4" onSubmit={ask}>
         <h2 className="text-lg font-semibold">Ask from the incident record</h2>
         <label className="mt-3 block text-sm" htmlFor="ai-question">
