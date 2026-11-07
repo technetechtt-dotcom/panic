@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import type { CancelIncidentInput, EvidenceChunkInput, GuardianInput, JourneyInput, SafetyPinInput } from "@guardian/shared-validation";
+import type { CancelIncidentInput, EvidenceChunkInput, GuardianInput, GuardianUpdateInput, JourneyInput, SafetyPinInput } from "@guardian/shared-validation";
 import { AppError } from "./errors";
 import { hasPermission, Permission } from "./rbac";
 import type { PasswordHasher } from "./security";
@@ -32,6 +32,7 @@ export interface GuardianStore {
   insert(contact: TrustedContactRecord): Promise<void>;
   list(userId: string): Promise<TrustedContactRecord[]>;
   remove(id: string, userId: string): Promise<boolean>;
+  findForUser(id: string, userId: string): Promise<TrustedContactRecord | null>;
   findByInvitationToken(token: string): Promise<TrustedContactRecord | null>;
   save(contact: TrustedContactRecord): Promise<void>;
 }
@@ -152,6 +153,35 @@ export class ProtectionService {
   listGuardians(actor: Actor): Promise<TrustedContactRecord[]> {
     this.own(actor);
     return this.guardians.list(actor.id);
+  }
+
+  async updateGuardian(actor: Actor, id: string, input: GuardianUpdateInput, requestId: string | null): Promise<TrustedContactRecord> {
+    this.own(actor);
+    const contact = await this.guardians.findForUser(id, actor.id);
+    if (!contact) throw new AppError("NOT_FOUND", 404, "That Guardian was not found.");
+    if (input.canViewLocation !== undefined) contact.canViewLocation = input.canViewLocation;
+    if (input.canViewEvidence !== undefined) contact.canViewEvidence = input.canViewEvidence;
+    if (input.relationship !== undefined) contact.relationship = input.relationship;
+    if (input.priority !== undefined) contact.priority = input.priority;
+    if (input.notificationMethods !== undefined) contact.notificationMethods = input.notificationMethods;
+    await this.guardians.save(contact);
+    await this.audit.append({
+      id: this.ids.uuid(),
+      actorId: actor.id,
+      action: "guardian.updated",
+      entityType: "TrustedContact",
+      entityId: contact.id,
+      correlationId: null,
+      requestId,
+      metadata: {
+        priority: contact.priority,
+        notificationMethods: contact.notificationMethods,
+        canViewLocation: contact.canViewLocation,
+        canViewEvidence: contact.canViewEvidence,
+      },
+      createdAt: this.clock.now(),
+    });
+    return contact;
   }
 
   async removeGuardian(actor: Actor, id: string): Promise<void> {
