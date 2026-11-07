@@ -50,6 +50,43 @@ export class AiService {
     return bundle.search;
   }
 
+  async postIncidentReport(actor: Actor, incidentId: string) {
+    await this.assertReader(actor, incidentId);
+    const bundle = await this.assess(incidentId, false);
+    const facts = await this.facts(incidentId);
+    return {
+      reportVersion: 1,
+      generatedAt: this.clock.now().toISOString(),
+      safety: "This report summarises stored Guardian facts and explainable rule outputs. It does not prove a crime, identify an offender, or replace the original audit/evidence records.",
+      subject: {
+        displayName: facts.displayName,
+        triggerType: facts.triggerType,
+        state: facts.state,
+        duress: facts.duress,
+        isTest: facts.isTest,
+        contactStatus: facts.contactStatus,
+        protectionMode: facts.protectionMode,
+      },
+      assessment: bundle.decision,
+      shadow: bundle.shadow,
+      summary: bundle.summary,
+      search: bundle.search,
+      evidence: bundle.evidence,
+      recommendations: bundle.recommendations,
+      humanReviews: bundle.reviews,
+      responderSnapshot: facts.responders,
+      guardianAcknowledgement: { acknowledged: facts.guardianAcked, total: facts.guardianTotal },
+      locationSnapshot: {
+        latitude: facts.lastLatitude,
+        longitude: facts.lastLongitude,
+        accuracy: facts.lastAccuracy,
+        heading: facts.lastHeading,
+        speed: facts.lastSpeed,
+      },
+      timeline: facts.timeline,
+    };
+  }
+
   async query(actor: Actor, incidentId: string, question: string) {
     await this.assertReader(actor, incidentId);
     const facts = await this.facts(incidentId);
