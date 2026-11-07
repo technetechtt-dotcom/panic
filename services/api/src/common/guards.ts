@@ -63,6 +63,7 @@ export class AuthGuard implements CanActivate {
     }
     const user = await this.users.findById(userId);
     if (!user) throw new AppError("UNAUTHENTICATED", 401, "Sign in required.");
+    if (user.suspendedAt) throw new AppError("ACCOUNT_SUSPENDED", 403, "This account is suspended.");
     request.user = user;
     return true;
   }
