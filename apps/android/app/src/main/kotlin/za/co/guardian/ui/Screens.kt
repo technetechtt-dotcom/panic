@@ -101,7 +101,7 @@ class HomeViewModel @Inject constructor(
     val practice: StateFlow<Boolean> = practiceState
     var role by mutableStateOf(tokens?.userRole() ?: "USER")
         private set
-    var assignments by mutableStateOf<List<Pair<String, String>>>(emptyList())
+    var assignments by mutableStateOf<List<za.co.guardian.data.IncidentWire>>(emptyList())
         private set
     var protectedPeople by mutableStateOf<List<za.co.guardian.data.GuardianInboxPersonWire>>(emptyList())
         private set
@@ -118,9 +118,7 @@ class HomeViewModel @Inject constructor(
         if (api != null && role == "RESPONDER") {
             viewModelScope.launch {
                 assignments = try {
-                    api.incidents().data.map { incident ->
-                        incident.id to "${incident.userDisplayName.ifBlank { "Person" }} · ${incident.state}"
-                    }
+                    api.incidents().data
                 } catch (_: Exception) {
                     emptyList()
                 }
@@ -1085,6 +1083,7 @@ fun ResponderHomeScreen(
     viewModel: HomeViewModel = hiltViewModel(),
 ) {
     val message by viewModel.message.collectAsStateWithLifecycle()
+    val context = androidx.compose.ui.platform.LocalContext.current
     androidx.compose.runtime.LaunchedEffect(Unit) { viewModel.refresh() }
     val profile = viewModel.responderProfile
     var availability by remember(profile?.availability) { mutableStateOf(profile?.availability ?: "AVAILABLE") }
@@ -1114,16 +1113,34 @@ fun ResponderHomeScreen(
 
             Text("Assignments", fontSize = 22.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 18.dp))
             if (viewModel.assignments.isEmpty()) Text("No active assignments.", modifier = Modifier.padding(top = 8.dp))
-            viewModel.assignments.forEach { (id, label) ->
+            viewModel.assignments.forEach { incident ->
                 Surface(modifier = Modifier.fillMaxWidth().padding(top = 10.dp), color = Color(0xFF171C24)) {
                     Column(Modifier.padding(14.dp)) {
-                        Text(label, fontWeight = FontWeight.SemiBold)
-                        Button(onClick = { viewModel.updateAssignment(id, "ACCEPTED", "Assignment accepted. Live location sharing started.") }, modifier = Modifier.fillMaxWidth()) { Text("Accept") }
-                        Button(onClick = { viewModel.updateAssignment(id, "EN_ROUTE", "Marked en route. Live location sharing continues.") }, modifier = Modifier.fillMaxWidth()) { Text("En route") }
-                        Button(onClick = { viewModel.updateAssignment(id, "ON_SCENE", "Marked on scene.") }, modifier = Modifier.fillMaxWidth()) { Text("On scene") }
-                        Button(onClick = { viewModel.reportLocated(id) }, modifier = Modifier.fillMaxWidth()) { Text("Person located") }
-                        Button(onClick = { viewModel.updateAssignment(id, "COMPLETED", "Assignment completed. Live location sharing stopped.") }, modifier = Modifier.fillMaxWidth()) { Text("Complete") }
-                        TextButton(onClick = { viewModel.updateAssignment(id, "DECLINED", "Assignment declined. Live location sharing stopped.") }) { Text("Decline") }
+                        Text("${incident.userDisplayName.ifBlank { "Person" }} · ${incident.state}", fontWeight = FontWeight.SemiBold)
+                        Text("${incident.triggerType} · contact ${incident.contactStatus.ifBlank { "unknown" }}", color = Color(0xFFB7C0CC))
+                        if (incident.protectionMode.isNotBlank()) Text("Protection ${incident.protectionMode}", color = Color(0xFFB7C0CC))
+                        if (incident.lastLatitude != null && incident.lastLongitude != null) {
+                            Text(
+                                "Last confirmed ${"%.5f".format(incident.lastLatitude)}, ${"%.5f".format(incident.lastLongitude)} · accuracy ${incident.lastAccuracy ?: "unknown"} m",
+                                modifier = Modifier.padding(top = 6.dp),
+                            )
+                            incident.lastPositionAt?.let { Text("Position time $it", color = Color(0xFFB7C0CC)) }
+                            Button(
+                                onClick = {
+                                    val uri = android.net.Uri.parse("geo:${incident.lastLatitude},${incident.lastLongitude}?q=${incident.lastLatitude},${incident.lastLongitude}(Guardian incident)")
+                                    context.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, uri))
+                                },
+                                modifier = Modifier.fillMaxWidth(),
+                            ) { Text("Open last confirmed location") }
+                        } else {
+                            Text("No confirmed location received yet.", color = Color(0xFFB7C0CC), modifier = Modifier.padding(top = 6.dp))
+                        }
+                        Button(onClick = { viewModel.updateAssignment(incident.id, "ACCEPTED", "Assignment accepted. Live location sharing started.") }, modifier = Modifier.fillMaxWidth()) { Text("Accept") }
+                        Button(onClick = { viewModel.updateAssignment(incident.id, "EN_ROUTE", "Marked en route. Live location sharing continues.") }, modifier = Modifier.fillMaxWidth()) { Text("En route") }
+                        Button(onClick = { viewModel.updateAssignment(incident.id, "ON_SCENE", "Marked on scene.") }, modifier = Modifier.fillMaxWidth()) { Text("On scene") }
+                        Button(onClick = { viewModel.reportLocated(incident.id) }, modifier = Modifier.fillMaxWidth()) { Text("Person located") }
+                        Button(onClick = { viewModel.updateAssignment(incident.id, "COMPLETED", "Assignment completed. Live location sharing stopped.") }, modifier = Modifier.fillMaxWidth()) { Text("Complete") }
+                        TextButton(onClick = { viewModel.updateAssignment(incident.id, "DECLINED", "Assignment declined. Live location sharing stopped.") }) { Text("Decline") }
                     }
                 }
             }
