@@ -20,8 +20,13 @@ export class FileEvidenceVault {
     const iv = randomBytes(12);
     const cipher = createCipheriv("aes-256-gcm", this.key(), iv);
     const sealed = Buffer.concat([iv, cipher.update(plain), cipher.final(), cipher.getAuthTag()]);
-    await writeFile(path.join(this.directory, `${storageKey}.bin`), sealed);
+    const localPath = path.join(this.directory, `${storageKey}.bin`);
+    await writeFile(localPath, sealed);
     const s3 = await putObjectIfConfigured(storageKey, sealed);
+    if (process.env.EVIDENCE_REMOTE_REQUIRED === "true" && !s3.stored) {
+      await unlink(localPath).catch(() => undefined);
+      throw new Error("Authoritative evidence object storage is unavailable; the client must retry this chunk.");
+    }
     return { storageKey, byteLength: plain.length, duplicatedToS3: s3.stored, s3Detail: s3.detail };
   }
 
