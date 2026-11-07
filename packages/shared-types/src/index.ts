@@ -17,6 +17,7 @@ export const INCIDENT_STATES = [
   "RESPONDING",
   "USER_LOCATED",
   "RESOLVED",
+  "FALSE_ALARM",
   "ARCHIVED",
 ] as const;
 export type IncidentState = (typeof INCIDENT_STATES)[number];
