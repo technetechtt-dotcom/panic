@@ -183,6 +183,20 @@ export class PlatformController {
     return this.platform.incidentCommunications(actorFrom(request), id).then((data) => ({ data }));
   }
 
+  @Post("admin/outbox/dead/:id/retry")
+  @HttpCode(200)
+  @RequirePermissions(Permission.UserManage)
+  retryDeadLetter(@Param("id") id: string, @Req() request: RequestWithUser) {
+    return this.platform.recoverDeadLetter(actorFrom(request), id, "RETRY").then((data) => ({ data }));
+  }
+
+  @Post("admin/outbox/dead/:id/resolve")
+  @HttpCode(200)
+  @RequirePermissions(Permission.UserManage)
+  resolveDeadLetter(@Param("id") id: string, @Req() request: RequestWithUser) {
+    return this.platform.recoverDeadLetter(actorFrom(request), id, "RESOLVE").then((data) => ({ data }));
+  }
+
   @Get("admin/platform")
   @RequirePermissions(Permission.PlatformRead)
   platformStatus(@Req() request: RequestWithUser) {
