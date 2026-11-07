@@ -897,6 +897,27 @@ export class PlatformService {
     return this.liveCompanion(actor, incidentId);
   }
 
+  async listOperators(actor: Actor) {
+    this.operator(actor);
+    const rows = await this.prisma.user.findMany({
+      where: { role: { in: ["MONITOR_OPERATOR", "SUPERVISOR", "ADMIN"] } },
+      select: { id: true, displayName: true, email: true, role: true },
+      orderBy: { displayName: "asc" },
+      take: 200,
+    });
+    const shifts = await this.prisma.operatorShift.findMany({
+      where: { operatorId: { in: rows.map((row) => row.id) }, status: { in: ["READY", "ON_DUTY", "HANDOVER"] } },
+      orderBy: { startedAt: "desc" },
+    });
+    const current = new Map<string, (typeof shifts)[number]>();
+    for (const shift of shifts) if (!current.has(shift.operatorId)) current.set(shift.operatorId, shift);
+    return rows.map((row) => ({
+      ...row,
+      shiftStatus: current.get(row.id)?.status ?? "OFF_DUTY",
+      shiftStartedAt: current.get(row.id)?.startedAt.toISOString() ?? null,
+    }));
+  }
+
   async startShift(actor: Actor) {
     this.operator(actor);
     const open = await this.prisma.operatorShift.findFirst({
@@ -954,7 +975,7 @@ export class PlatformService {
         data: {
           id: this.ids.uuid(),
           operatorId: handoverToId,
-          status: "ON_DUTY",
+          status: "HANDOVER",
           startedAt: now,
           handoverNote: `Received from ${actor.displayName}: ${note.slice(0, 500)}`,
           createdAt: now,
