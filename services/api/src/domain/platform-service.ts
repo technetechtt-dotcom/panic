@@ -890,7 +890,7 @@ export class PlatformService {
     const incidents = [];
     for (const row of rows) {
       const incident = await this.prisma.incident.findUnique({ where: { id: row.incidentId }, include: { user: true } });
-      if (!incident || incident.state === "RESOLVED" || incident.state === "ARCHIVED") continue;
+      if (!incident || incident.state === "RESOLVED" || incident.state === "FALSE_ALARM" || incident.state === "ARCHIVED") continue;
       incidents.push({
         id: incident.id,
         userDisplayName: incident.user.displayName,
