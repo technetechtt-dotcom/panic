@@ -13,13 +13,17 @@ import { RequirePermissions, type RequestWithUser } from "../../common/guards";
 import { parseBody, requestContext } from "../../common/http";
 import { invitationDeepLinks } from "../../domain/auth-service";
 import { sendTransactionalEmail } from "../../domain/email";
+import { PlatformService } from "../../domain/platform-service";
 import { ProtectionService } from "../../domain/protection-service";
 import type { Actor } from "../../domain/ports";
 import { Permission } from "../../domain/rbac";
 
 @Controller()
 export class ProtectionController {
-  constructor(@Inject(ProtectionService) private readonly protection: ProtectionService) {}
+  constructor(
+    @Inject(ProtectionService) private readonly protection: ProtectionService,
+    @Inject(PlatformService) private readonly platform: PlatformService,
+  ) {}
 
   @Post("guardians")
   @RequirePermissions(Permission.ProtectionManageOwn)
@@ -128,7 +132,10 @@ export class ProtectionController {
   @HttpCode(200)
   @RequirePermissions(Permission.IncidentCreateOwn)
   evidence(@Param("id") id: string, @Body() body: unknown, @Req() request: RequestWithUser) {
-    return this.protection.addEvidence(actorFrom(request), id, parseBody(evidenceChunkSchema, body)).then((data) => ({ data }));
+    return this.protection.addEvidence(actorFrom(request), id, parseBody(evidenceChunkSchema, body)).then((data) => {
+      void this.platform.queueAiAssessment(id).catch(() => undefined);
+      return { data };
+    });
   }
 }
 
