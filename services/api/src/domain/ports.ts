@@ -25,6 +25,8 @@ export interface UserRecord {
   displayName: string;
   role: Role;
   emailVerifiedAt?: Date | null;
+  suspendedAt?: Date | null;
+  lastLoginAt?: Date | null;
   phone?: string | null;
   createdAt: Date;
   updatedAt: Date;
