@@ -336,8 +336,8 @@ export class PlatformService {
     const page = Math.max(1, input.page ?? 1);
     const pageSize = Math.min(100, Math.max(10, input.pageSize ?? 25));
     const where: Prisma.IncidentWhereInput = {};
-    if (input.state && input.state !== "ALL") where.state = input.state as Prisma.EnumIncidentStateFilter["equals"];
-    if (input.trigger && input.trigger !== "ALL") where.triggerType = input.trigger as Prisma.EnumTriggerTypeFilter["equals"];
+    if (input.state && input.state !== "ALL") where.state = input.state as any;
+    if (input.trigger && input.trigger !== "ALL") where.triggerType = input.trigger as any;
     if (typeof input.isTest === "boolean") where.isTest = input.isTest;
     if (input.operatorId) where.claimedBy = input.operatorId;
     if (input.responderId) where.assignments = { some: { responderId: input.responderId } };
