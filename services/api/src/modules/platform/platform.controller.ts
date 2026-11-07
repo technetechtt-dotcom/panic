@@ -270,6 +270,12 @@ export class PlatformController {
     return this.platform.acknowledgeDelivery(actorFrom(request), id).then((data) => ({ data }));
   }
 
+  @Get("operators")
+  @RequirePermissions(Permission.IncidentReadActive)
+  operators(@Req() request: RequestWithUser) {
+    return this.platform.listOperators(actorFrom(request)).then((data) => ({ data }));
+  }
+
   @Post("operators/shifts/start")
   @HttpCode(200)
   @RequirePermissions(Permission.IncidentAcknowledge)
