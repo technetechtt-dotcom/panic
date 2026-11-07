@@ -209,6 +209,9 @@ export class PrismaEvidenceStore implements EvidenceStore {
     contentType: string;
     byteLength: number;
     storageKey?: string | null;
+    retentionUntil?: Date | null;
+    legalHold?: boolean;
+    retentionPolicy?: string;
     payload: Buffer;
     createdAt: Date;
   }): Promise<"created" | "exists"> {
