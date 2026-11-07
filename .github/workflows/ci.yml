@@ -40,6 +40,29 @@ jobs:
         run: |
           npx prisma generate --schema services/api/prisma/schema.prisma
           npx prisma migrate deploy --schema services/api/prisma/schema.prisma
+      - name: Validate production operations configuration
+        env:
+          POSTGRES_PASSWORD: ci-postgres-password
+          JWT_ACCESS_SECRET: ci-jwt-secret-that-is-long-enough-for-hs256
+          EVIDENCE_VAULT_KEY: ci-evidence-vault-key-that-is-long-enough
+          PUBLIC_API_URL: https://api.guardian.test
+          CORS_ORIGIN: https://hub.guardian.test
+          DEEP_LINK_BASE: https://links.guardian.test
+          SMTP_URL: smtps://mailer:secret@smtp.guardian.test:465
+          S3_BUCKET: guardian-ci-evidence
+          S3_ENDPOINT: https://objects.guardian.test
+          S3_ACCESS_KEY_ID: ci-access
+          S3_SECRET_ACCESS_KEY: ci-secret
+          GEOCODER_URL: https://geocoder.guardian.test/search
+          VITE_MAP_TILE_URL: https://tiles.guardian.test/{z}/{x}/{y}.png
+          VITE_MAP_TILE_ATTRIBUTION: Guardian CI Tiles
+          GUARDIAN_ANDROID_CERT_SHA256: AA:BB:CC:DD:EE:FF
+          BACKUP_ENCRYPTION_KEY: ci-backup-secret-that-is-long-enough
+        run: |
+          set -euo pipefail
+          for file in services/api/scripts/*.mjs; do node --check "$file"; done
+          sh -n infrastructure/docker/nginx-entrypoint.sh
+          docker compose -f infrastructure/docker/docker-compose.prod.yml config >/dev/null
       - name: Test API, validation, and dashboard
         run: npm test
       - name: Build
