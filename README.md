@@ -1,85 +1,101 @@
 # GUARDIAN
 
-Personal safety and emergency-response platform. Milestone 1 is a working path for a deliberate manual SOS: the Android app stores the incident on the phone first, the API creates one incident per trigger, and a monitoring operator can see the location, heartbeat, and timeline and then acknowledge or resolve it.
+Guardian is an Android-first personal-safety, emergency-intelligence and coordinated-response platform. A deliberate SOS is stored locally first and does not wait for AI, cloud inference or operator approval. The platform combines offline-first emergency continuity, trusted Guardians, journey protection, encrypted evidence, responder coordination and explainable incident intelligence.
 
-This is not a replacement for official emergency services.
+> Guardian assists emergency response. It is not a replacement for official emergency services.
 
-## What this version does
+## Current product
 
-- Android account registration and login, device registration, a protection-status home screen, manual, volume, and safe-word SOS, a 10 minute test session, local incident history, distress-capsule upload, location breadcrumbs, heartbeat, guardians, journey watch, evidence chunks, and duress PIN.
-- NestJS API with PostgreSQL, Redis health and an optional Socket.IO adapter, JWT access tokens, rotating refresh tokens, role checks, audit events, and WebSocket updates for operators.
-- Monitoring web app: operator login, active incident list, incident detail with a map, heartbeat, timeline, acknowledge, and resolve.
+### Android
+- Registration, login, device registration and role-aware navigation for USER, GUARDIAN and RESPONDER.
+- Manual SOS, configurable volume-button SOS, Safe Word, duress PIN, impact/fall watch and test mode.
+- Offline-first SOS storage, emergency device credentials, retry/store-and-forward, breadcrumbs and heartbeats.
+- Trusted Circle invitations, priority/channel preferences and Guardian alert inbox.
+- Journey Protection with destination preview and continuous protected-journey location upload.
+- Responder assignments, availability/capability profile and live responder location sharing while assigned.
+- Full-size visible photo capture and visible video capture; evidence is encrypted locally and chunked for resumable upload.
+- Protection Readiness with explicit PROTECTED / LIMITED PROTECTION state.
 
-Volume-button SOS, on-device safe-word samples, guardian name records, journey watch, encrypted evidence queueing, and duress PIN behaviour are in the app. They are partial: there is no camera or video pipeline yet, guardians are not invited by SMS or push, and the safe-word detector is a local sample matcher rather than a trained multi-accent model. AI assistance is not implemented. See [docs/ROADMAP.md](docs/ROADMAP.md).
+### API / safety core
+- NestJS, PostgreSQL, Prisma, Redis, JWT access tokens and rotating refresh tokens.
+- Device-bound emergency credentials and backend-enforced RBAC.
+- Durable Postgres outbox with retries/dead-letter handling and replica-safe scheduler locks.
+- Guardian delivery identity through TrustedContact IDs, private incident rooms and delivery receipts.
+- Journey, incident, evidence, responder, account-security and audit APIs.
+- MFA secret encryption, one-time recovery codes, session revocation, suspension/reactivation and admin security tooling.
+- Explainable Guardian Safety Intelligence with production/shadow assessments, recommendations, reviews and search predictions.
 
-## Layout
+### Monitoring centre
+- Active incidents, incident command, maps, evidence, Guardian delivery, responder control, timeline, communications, emergency profile and Intelligence.
+- Shift readiness/handover.
+- Live dashboard map and active incident metrics.
+- Archive, Reports, Integrations, Platform health, People/User detail, Audit and Security/MFA.
+- Competition Demo Mode with deterministic TEST incidents excluded from live metrics.
+- Dead-letter visibility/recovery and integration probes.
+
+## Important safety rules
+
+- Explicit SOS always activates immediately.
+- AI cannot cancel, suppress, delay or downgrade an explicit SOS.
+- Contact loss is a signal, not proof of kidnapping or harm.
+- Predicted/search areas are labelled separately from confirmed locations.
+- Camera/microphone use is visible and follows Android permissions/system indicators.
+- TEST incidents are excluded from live operational metrics.
+
+## Repository layout
 
 ```
-guardian/
-  apps/android/          Kotlin app. :core is pure safety logic. :app is the Android UI and services.
-  apps/monitoring-web/   React operator console
-  services/api/          NestJS API
-  packages/shared-types/
-  packages/shared-validation/
-  infrastructure/docker/
-  docs/
+apps/android/          Android app and safety services
+apps/monitoring-web/   Monitoring centre
+services/api/          NestJS API
+packages/              Shared types and validation
+infrastructure/        Production-shaped Docker/nginx
+docs/                  Architecture, security, operations and testing
 ```
 
-Suggested feature names such as `feature-sos` are Kotlin packages inside `:app` in this version. They are not separate Gradle modules yet.
+## Local development
 
-## Run the API and dashboard
-
-Requirements: Node.js 22 or newer, Docker, and a copy of `.env.example` named `.env`.
+Requirements: Node.js 22+, Docker, Java/Android tooling for the app.
 
 ```powershell
 copy .env.example .env
-# Set POSTGRES_PASSWORD, DATABASE_URL, JWT_ACCESS_SECRET (32+ characters),
-# MONITOR_OPERATOR_EMAIL, and MONITOR_OPERATOR_PASSWORD (12+ characters).
-
-docker compose --env-file .env -f infrastructure/docker/docker-compose.yml up -d
-# If Docker is not running, start a local PostgreSQL instead:
-# npm run dev:db
 npm install
+docker compose --env-file .env -f infrastructure/docker/docker-compose.yml up -d
 npm run prisma:migrate -w @guardian/api
 npm run seed:operator -w @guardian/api
 npm run dev:api
 npm run dev:web
 ```
 
-The dashboard is at `http://localhost:5173`. The API is at `http://localhost:3000/api/v1`. Vite proxies `/api` and `/socket.io` to the API.
-
-Public registration always creates a `USER`. Operator accounts are created only by the seed script.
-
 ## Android
 
-Open `apps/android` in Android Studio, or build a debug APK:
-
 ```powershell
-$env:JAVA_HOME = "C:\Program Files\Android\Android Studio\jbr"
 cd apps\android
-.\gradlew.bat :app:assembleDebug
+.\gradlew.bat :core:test :app:testDebugUnitTest :app:lintDebug :app:assembleDebug
 ```
 
-The debug build talks to `http://10.0.2.2:3000/api/v1/` so an emulator can reach an API on the host. A physical phone needs a different base URL. Release builds do not allow cleartext HTTP.
+Release builds fail closed unless a real HTTPS API URL and Firebase configuration are provided. A signed AAB additionally requires the upload keystore and version variables documented in the Gradle configuration.
 
-## Tests
+## CI
 
-```powershell
-npm test
-cd apps\android
-$env:JAVA_HOME = "C:\Program Files\Android\Android Studio\jbr"
-.\gradlew.bat :core:test :app:testDebugUnitTest
-```
+GitHub Actions runs:
+- backend/API/validation/monitoring tests;
+- Prisma generation and migrations against PostgreSQL;
+- TypeScript production builds;
+- production dependency audit;
+- Android core/app unit tests, lint and debug APK;
+- release configuration checks and signed release build when secrets are supplied.
 
-## Documentation
+## Production status
 
+The repository is production-shaped, but broad commercial production still requires external evidence that cannot be created by source code alone: physical-device/OEM testing, real provider tests using production credentials, independent penetration testing, infrastructure failover/load exercises, legal/privacy review and operational pilot validation.
+
+See:
+- [Roadmap](docs/ROADMAP.md)
+- [External validation gate](docs/EXTERNAL_VALIDATION.md)
+- [Competition demo runbook](docs/COMPETITION_DEMO.md)
 - [Architecture](docs/ARCHITECTURE.md)
-- [Incident flow](docs/INCIDENT_FLOW.md)
-- [API](docs/API.md)
-- [Data model](docs/DATA_MODEL.md)
 - [Security](docs/SECURITY.md)
 - [Privacy](docs/PRIVACY.md)
-- [Android limitations](docs/ANDROID_LIMITATIONS.md)
 - [Deployment](docs/DEPLOYMENT.md)
 - [Testing](docs/TESTING.md)
-- [Roadmap](docs/ROADMAP.md)
