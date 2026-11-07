@@ -356,6 +356,9 @@ model EvidenceChunk {
   byteLength    Int
   storageKey    String?
   payload       Bytes
+  retentionUntil DateTime?
+  legalHold     Boolean  @default(false)
+  retentionPolicy String @default("STANDARD")
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
   incident      Incident @relation(fields: [incidentId], references: [id], onDelete: Cascade)
