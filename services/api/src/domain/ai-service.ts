@@ -207,11 +207,12 @@ export class AiService {
   }
 
   private async bundle(incidentId: string, facts: AiFacts, production: ThreatAssessment, shadow: ThreatAssessment) {
-    const [recommendations, search, reviews, summaryRow] = await Promise.all([
+    const [recommendations, search, reviews, summaryRow, decisionRow] = await Promise.all([
       this.prisma.aiRecommendation.findMany({ where: { incidentId, status: { not: "SUPERSEDED" } }, orderBy: { createdAt: "desc" }, take: 12 }),
       this.prisma.searchPrediction.findMany({ where: { incidentId }, orderBy: { createdAt: "desc" }, take: 6 }),
       this.prisma.aiReview.findMany({ where: { incidentId }, orderBy: { createdAt: "desc" }, take: 12 }),
       this.prisma.aiIncidentSummary.findFirst({ where: { incidentId }, orderBy: { createdAt: "desc" } }),
+      this.prisma.aiDecision.findFirst({ where: { incidentId, mode: "PRODUCTION" }, orderBy: { createdAt: "desc" } }),
     ]);
     const summary = summaryRow
       ? { summary: summaryRow.summary, changes: summaryRow.changes, risks: summaryRow.risks }
@@ -219,6 +220,7 @@ export class AiService {
     return {
       safety: "An explicit SOS is stored before this assessment runs. The score cannot delay, lower, or cancel it.",
       decision: {
+        id: decisionRow?.id ?? null,
         level: production.level,
         confidence: production.confidence,
         explanation: production.explanation,
