@@ -75,6 +75,7 @@ export function Shell({ children }: { children: ReactNode }) {
           {platform ? <NavItem to="/archive">Archive</NavItem> : null}
           {platform ? <NavItem to="/reports">Reports</NavItem> : null}
           {manage ? <NavItem to="/people">People</NavItem> : null}
+          {platform ? <NavItem to="/integrations">Integrations</NavItem> : null}
           {platform ? <NavItem to="/platform">Platform</NavItem> : null}
           {manage ? <NavItem to="/audit">Audit</NavItem> : null}
           <NavItem to="/security">Security</NavItem>
