@@ -12,6 +12,7 @@ import { ArchivePage } from "./pages/ArchivePage";
 import { ReportsPage } from "./pages/ReportsPage";
 import { LoginPage } from "./pages/LoginPage";
 import { PeoplePage } from "./pages/PeoplePage";
+import { UserDetailPage } from "./pages/UserDetailPage";
 import { PlatformPage } from "./pages/PlatformPage";
 import { RoomPage } from "./pages/RoomPage";
 import { SecurityPage } from "./pages/SecurityPage";
@@ -41,6 +42,7 @@ export function App() {
         <Route path="/security" element={<SecurityPage />} />
         <Route path="/platform" element={<RolePage allow={PLATFORM_ROLES}><PlatformPage /></RolePage>} />
         <Route path="/people" element={<RolePage allow={MANAGE_ROLES}><PeoplePage /></RolePage>} />
+        <Route path="/people/:id" element={<RolePage allow={MANAGE_ROLES}><UserDetailPage /></RolePage>} />
         <Route path="/audit" element={<RolePage allow={MANAGE_ROLES}><AuditPage /></RolePage>} />
         <Route path="/archive" element={<RolePage allow={PLATFORM_ROLES}><ArchivePage /></RolePage>} />
         <Route path="/reports" element={<RolePage allow={PLATFORM_ROLES}><ReportsPage /></RolePage>} />
