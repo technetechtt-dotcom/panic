@@ -583,15 +583,17 @@ export class PlatformService {
     }
     const now = this.clock.now();
     await this.prisma.incidentRoom.update({ where: { id: row.id }, data: { acknowledgedAt: now } });
-    await this.prisma.notificationDelivery.updateMany({
-      where: {
-        incidentId: row.incidentId,
-        trustedContactId: row.trustedContactId ?? "__unbound__",
-        channel: { in: ["ROOM", "SMS", "FCM", "APNS"] },
-        acknowledgedAt: null,
-      },
-      data: { acknowledgedAt: now, status: "ACKNOWLEDGED" },
-    });
+    if (row.trustedContactId) {
+      await this.prisma.notificationDelivery.updateMany({
+        where: {
+          incidentId: row.incidentId,
+          trustedContactId: row.trustedContactId,
+          channel: { in: ["ROOM", "SMS", "FCM", "APNS"] },
+          acknowledgedAt: null,
+        },
+        data: { acknowledgedAt: now, status: "ACKNOWLEDGED" },
+      });
+    }
     if (row.trustedContactId) {
       await this.prisma.trustedContact.updateMany({
         where: { id: row.trustedContactId, user: { incidents: { some: { id: row.incidentId } } } },
