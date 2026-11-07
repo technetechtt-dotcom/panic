@@ -37,6 +37,7 @@ export class HealthController {
   @Get("metrics")
   async metrics(@Res() response: Response) {
     const snapshot = await this.snapshot();
+    const operations = await this.operationalMetrics();
     response.type("text/plain").send(
       [
         "# HELP guardian_http_requests_total HTTP requests observed by this process.",
@@ -54,6 +55,28 @@ export class HealthController {
         "# HELP guardian_redis_up 1 when Redis answers PING. 0 means unused or down.",
         "# TYPE guardian_redis_up gauge",
         `guardian_redis_up ${snapshot.redis === "up" ? 1 : 0}`,
+        "# HELP guardian_active_incidents Current non-test incidents that are still active.",
+        "# TYPE guardian_active_incidents gauge",
+        `guardian_active_incidents ${operations.activeIncidents}`,
+        "# HELP guardian_unacknowledged_sos Current non-test SOS incidents without operator acknowledgement.",
+        "# TYPE guardian_unacknowledged_sos gauge",
+        `guardian_unacknowledged_sos ${operations.unacknowledgedSos}`,
+        "# HELP guardian_outbox_pending Pending or failed durable outbox events.",
+        "# TYPE guardian_outbox_pending gauge",
+        `guardian_outbox_pending ${operations.outboxPending}`,
+        "# HELP guardian_outbox_oldest_age_seconds Age of the oldest retryable outbox event.",
+        "# TYPE guardian_outbox_oldest_age_seconds gauge",
+        `guardian_outbox_oldest_age_seconds ${operations.oldestOutboxAgeSeconds}`,
+        "# HELP guardian_outbox_dead_letters_total Current dead-letter rows.",
+        "# TYPE guardian_outbox_dead_letters_total gauge",
+        `guardian_outbox_dead_letters_total ${operations.deadLetters}`,
+        "# HELP guardian_evidence_expired_pending Current evidence chunks past retention but not under legal hold.",
+        "# TYPE guardian_evidence_expired_pending gauge",
+        `guardian_evidence_expired_pending ${operations.expiredEvidence}`,
+        "# HELP guardian_postgres_probe_latency_ms Latest Postgres SELECT probe latency.",
+        "# TYPE guardian_postgres_probe_latency_ms gauge",
+        `guardian_postgres_probe_latency_ms ${snapshot.postgresLatencyMs}`,
+
         "",
       ].join("\n"),
     );
@@ -61,20 +84,52 @@ export class HealthController {
 
   private async snapshot() {
     let postgres: "up" | "down" = "down";
+    const started = Date.now();
     try {
       await this.prisma.$queryRaw`SELECT 1`;
       postgres = "up";
     } catch {
       postgres = "down";
     }
+    const postgresLatencyMs = Date.now() - started;
     const redis = await this.redis.ping();
     const status = postgres === "up" ? (redis === "down" ? "degraded" : "ok") : "down";
     return {
       status,
       postgres,
+      postgresLatencyMs,
       redis,
       version: "0.1.0",
       environment: this.config.nodeEnv,
+    };
+  }
+
+  private async operationalMetrics() {
+    const now = new Date();
+    const [activeIncidents, unacknowledgedSos, outboxPending, oldestOutbox, deadLetters, expiredEvidence] = await Promise.all([
+      this.prisma.incident.count({
+        where: {
+          isTest: false,
+          state: { in: ["CONCERN", "HIGH_RISK", "SOS", "ACKNOWLEDGED", "RESPONDING", "USER_LOCATED"] },
+        },
+      }),
+      this.prisma.incident.count({ where: { isTest: false, state: "SOS", acknowledgedAt: null } }),
+      this.prisma.outboxEvent.count({ where: { status: { in: ["PENDING", "FAILED", "PROCESSING"] } } }),
+      this.prisma.outboxEvent.findFirst({
+        where: { status: { in: ["PENDING", "FAILED"] } },
+        orderBy: { createdAt: "asc" },
+        select: { createdAt: true },
+      }),
+      this.prisma.outboxDeadLetter.count(),
+      this.prisma.evidenceChunk.count({ where: { legalHold: false, retentionUntil: { lte: now } } }),
+    ]);
+    return {
+      activeIncidents,
+      unacknowledgedSos,
+      outboxPending,
+      oldestOutboxAgeSeconds: oldestOutbox ? Math.max(0, Math.floor((now.getTime() - oldestOutbox.createdAt.getTime()) / 1000)) : 0,
+      deadLetters,
+      expiredEvidence,
     };
   }
 }
