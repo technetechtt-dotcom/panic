@@ -166,6 +166,12 @@ export class PlatformController {
     return this.platform.acknowledgeRoom(token).then((data) => ({ data }));
   }
 
+  @Get("guardian/inbox")
+  @RequirePermissions(Permission.UserReadSelf)
+  guardianInbox(@Req() request: RequestWithUser) {
+    return this.platform.guardianInbox(actorFrom(request)).then((data) => ({ data }));
+  }
+
   @Get("responders")
   @RequirePermissions(Permission.IncidentAcknowledge)
   responders(@Req() request: RequestWithUser) {
