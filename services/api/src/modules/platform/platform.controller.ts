@@ -58,7 +58,7 @@ export class PlatformController {
   @RequirePermissions(Permission.UserManage)
   evidenceGovernance(@Param("id") id: string, @Body() body: unknown, @Req() request: RequestWithUser) {
     const input = parseBody(evidenceGovernanceSchema, body);
-    return this.platform.setEvidenceGovernance(actorFrom(request), id, input).then((data) => ({ data }));
+    return this.platform.setEvidenceGovernance(actorFrom(request), id, { ...input, policy: input.policy ?? "STANDARD" }).then((data) => ({ data }));
   }
 
   @Get("incidents/:id/evidence/:chunkId")
