@@ -18,6 +18,8 @@ import type { AiService } from "./ai-service";
 import type { OutboxService } from "./outbox";
 import { etaSeconds } from "./scheduler-lock";
 import { websocketStatus } from "../modules/realtime/realtime-status";
+import { sendTransactionalEmail } from "./email";
+import { geocodeDestination } from "./geocode";
 
 const OPERATOR_ROLES: Role[] = ["MONITOR_OPERATOR", "SUPERVISOR", "RESPONDER", "ADMIN"];
 
@@ -1114,6 +1116,61 @@ export class PlatformService {
     }
     await this.prisma.user.update({ where: { id: userId }, data: { role } });
     return { id: userId, role };
+  }
+
+  async integrationTest(actor: Actor, kind: string) {
+    if (!hasPermission(actor.role, Permission.UserManage)) {
+      throw new AppError("FORBIDDEN", 403, "Only supervisors or administrators can run integration tests.");
+    }
+    const upper = kind.trim().toUpperCase();
+    if (upper === "DATABASE") {
+      try {
+        await this.prisma.$queryRaw`SELECT 1`;
+        return { kind: upper, ok: true, detail: "PostgreSQL query succeeded." };
+      } catch (error) {
+        return { kind: upper, ok: false, detail: error instanceof Error ? error.message : "PostgreSQL probe failed." };
+      }
+    }
+    if (upper === "REDIS") {
+      const state = this.redis ? await this.redis.ping() : "unconfigured";
+      return { kind: upper, ok: state === "up", detail: `Redis ${state}.` };
+    }
+    if (upper === "WEBSOCKET") {
+      const state = websocketStatus();
+      return { kind: upper, ok: state.includes("up") || state === "single-process", detail: state };
+    }
+    if (upper === "EVIDENCE") {
+      const result = await this.vault.probeLocal();
+      return { kind: upper, ...result };
+    }
+    if (upper === "SMS") {
+      const to = process.env.INTEGRATION_TEST_PHONE?.trim();
+      if (!to) return { kind: upper, ok: false, detail: "Set INTEGRATION_TEST_PHONE before sending a test SMS." };
+      const result = await this.sms.send({ to, body: "Guardian integration test. No emergency is active.", incidentId: "integration-test" });
+      return { kind: upper, ok: result.delivered, detail: result.reason };
+    }
+    if (upper === "PUSH") {
+      const token = process.env.INTEGRATION_TEST_FCM_TOKEN?.trim();
+      if (!token) return { kind: upper, ok: false, detail: "Set INTEGRATION_TEST_FCM_TOKEN before sending a test push." };
+      const result = await sendFcm(token, "Guardian test", "Integration test. No emergency is active.", process.env, { type: "INTEGRATION_TEST" });
+      return { kind: upper, ok: result.delivered, detail: result.reason };
+    }
+    if (upper === "EMAIL") {
+      const to = process.env.INTEGRATION_TEST_EMAIL?.trim();
+      if (!to) return { kind: upper, ok: false, detail: "Set INTEGRATION_TEST_EMAIL before sending a test email." };
+      try {
+        const sent = await sendTransactionalEmail({ to, subject: "Guardian integration test", text: "Guardian integration test. No emergency is active." });
+        return { kind: upper, ok: sent, detail: sent ? "SMTP accepted the test email." : "SMTP is not configured." };
+      } catch (error) {
+        return { kind: upper, ok: false, detail: error instanceof Error ? error.message : "SMTP test failed." };
+      }
+    }
+    if (upper === "MAPS") {
+      const query = process.env.INTEGRATION_TEST_GEOCODE_QUERY?.trim() || "Kimberley, South Africa";
+      const result = await geocodeDestination(query).catch(() => null);
+      return { kind: upper, ok: Boolean(result), detail: result ? `Geocoding returned ${result.label}.` : "Geocoding did not return a result." };
+    }
+    throw new AppError("VALIDATION", 422, "Unknown integration test.");
   }
 
   async recoverDeadLetter(actor: Actor, id: string, action: "RETRY" | "RESOLVE") {
