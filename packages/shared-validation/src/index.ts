@@ -180,6 +180,16 @@ export const guardianSchema = z
   })
   .strict();
 
+export const guardianUpdateSchema = z
+  .object({
+    canViewLocation: z.boolean().optional(),
+    canViewEvidence: z.boolean().optional(),
+    relationship: z.string().trim().max(40).optional(),
+    priority: z.number().int().min(1).max(20).optional(),
+    notificationMethods: z.string().trim().regex(/^(PUSH|SMS|EMAIL)(,(PUSH|SMS|EMAIL))*$/).max(40).optional(),
+  })
+  .strict();
+
 export const invitationTokenSchema = z.object({ token: z.string().uuid() }).strict();
 
 export const journeyExtendSchema = z.object({ minutes: z.number().int().min(5).max(12 * 60) }).strict();
@@ -335,6 +345,7 @@ export type LocationBatchInput = z.infer<typeof locationBatchSchema>;
 export type HeartbeatInput = z.infer<typeof heartbeatSchema>;
 export type OperatorActionInput = z.infer<typeof operatorActionSchema>;
 export type GuardianInput = z.infer<typeof guardianSchema>;
+export type GuardianUpdateInput = z.infer<typeof guardianUpdateSchema>;
 export type JourneyInput = z.infer<typeof journeySchema>;
 export type SafetyPinInput = z.infer<typeof safetyPinSchema>;
 export type CancelIncidentInput = z.infer<typeof cancelIncidentSchema>;
