@@ -52,6 +52,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     if (!smtp.startsWith("smtp://") && !smtp.startsWith("smtps://")) {
       throw new Error("Production requires SMTP_URL (smtp:// or smtps://) so verification and reset mail can be sent.");
     }
+    const geocoderUrl = env.GEOCODER_URL?.trim() ?? "";
+    if (!geocoderUrl.startsWith("https://") || geocoderUrl.includes("nominatim.openstreetmap.org")) {
+      throw new Error("Production requires an approved HTTPS GEOCODER_URL; the public Nominatim service is development/demo only.");
+    }
   }
   const redisUrl = env.REDIS_URL?.trim() ? env.REDIS_URL.trim() : null;
   return {
