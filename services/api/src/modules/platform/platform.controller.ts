@@ -131,6 +131,40 @@ export class PlatformController {
     return this.platform.listUsers(actorFrom(request)).then((data) => ({ data }));
   }
 
+  @Get("admin/users/:id")
+  @RequirePermissions(Permission.UserManage)
+  userDetail(@Param("id") id: string, @Req() request: RequestWithUser) {
+    return this.platform.userDetail(actorFrom(request), id).then((data) => ({ data }));
+  }
+
+  @Post("admin/users/:id/suspend")
+  @HttpCode(200)
+  @RequirePermissions(Permission.UserManage)
+  suspendUser(@Param("id") id: string, @Req() request: RequestWithUser) {
+    return this.platform.suspendUser(actorFrom(request), id, true).then((data) => ({ data }));
+  }
+
+  @Post("admin/users/:id/reactivate")
+  @HttpCode(200)
+  @RequirePermissions(Permission.UserManage)
+  reactivateUser(@Param("id") id: string, @Req() request: RequestWithUser) {
+    return this.platform.suspendUser(actorFrom(request), id, false).then((data) => ({ data }));
+  }
+
+  @Post("admin/users/:id/revoke-sessions")
+  @HttpCode(200)
+  @RequirePermissions(Permission.UserManage)
+  revokeSessions(@Param("id") id: string, @Req() request: RequestWithUser) {
+    return this.platform.revokeUserSessions(actorFrom(request), id).then((data) => ({ data }));
+  }
+
+  @Post("admin/users/:id/reset-mfa")
+  @HttpCode(200)
+  @RequirePermissions(Permission.UserManage)
+  resetMfa(@Param("id") id: string, @Req() request: RequestWithUser) {
+    return this.platform.resetUserMfa(actorFrom(request), id).then((data) => ({ data }));
+  }
+
   @Post("admin/users/:id/role")
   @HttpCode(200)
   @RequirePermissions(Permission.UserManage)
