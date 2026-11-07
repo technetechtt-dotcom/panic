@@ -25,6 +25,7 @@ enum IncidentState {
   RESPONDING
   USER_LOCATED
   RESOLVED
+  FALSE_ALARM
   ARCHIVED
 }
 
