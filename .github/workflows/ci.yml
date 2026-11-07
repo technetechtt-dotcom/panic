@@ -97,7 +97,7 @@ jobs:
               export GUARDIAN_UPLOAD_KEY_PASSWORD="${{ secrets.GUARDIAN_UPLOAD_KEY_PASSWORD }}"
               export GUARDIAN_VERSION_CODE="${{ github.run_number }}"
               export GUARDIAN_VERSION_NAME="0.1.${{ github.run_number }}"
-              ./gradlew :app:checkSignedBundleConfig :app:bundleRelease --no-daemon -PreleaseApiBaseUrl="${{ secrets.RELEASE_API_BASE_URL }}" -PversionCode="${{ github.run_number }}" -PversionName="0.1.${{ github.run_number }}"
+              ./gradlew :app:checkSignedBundleConfig :app:assembleRelease :app:bundleRelease --no-daemon -PreleaseApiBaseUrl="${{ secrets.RELEASE_API_BASE_URL }}" -PversionCode="${{ github.run_number }}" -PversionName="0.1.${{ github.run_number }}"
               exit $?
             fi
             exit 0
@@ -109,3 +109,21 @@ jobs:
             exit 1
           fi
           exit 0
+      - name: Create Android release checksums
+        if: always()
+        working-directory: apps/android
+        run: |
+          set -euo pipefail
+          mkdir -p release-artifacts
+          find app/build/outputs -type f \( -name '*.aab' -o -name '*release*.apk' \) -print -exec cp {} release-artifacts/ \; 2>/dev/null || true
+          if find release-artifacts -type f | grep -q .; then
+            (cd release-artifacts && sha256sum * > SHA256SUMS.txt)
+          fi
+      - name: Upload Android release artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: guardian-android-release
+          path: apps/android/release-artifacts/
+          if-no-files-found: ignore
+          retention-days: 30
