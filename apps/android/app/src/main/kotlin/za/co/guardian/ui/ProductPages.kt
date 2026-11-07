@@ -342,63 +342,97 @@ fun SetupOnboardingScreen(onDone: () -> Unit, viewModel: SettingsViewModel = hil
     val context = androidx.compose.ui.platform.LocalContext.current
     val location = androidx.activity.compose.rememberLauncherForActivityResult(
         androidx.activity.result.contract.ActivityResultContracts.RequestPermission(),
-    ) { }
+    ) { granted ->
+        if (granted) step = 2 else viewModel.note("Location was not granted. Manual SOS still works, but live location will be limited.")
+    }
     val notify = androidx.activity.compose.rememberLauncherForActivityResult(
         androidx.activity.result.contract.ActivityResultContracts.RequestPermission(),
-    ) { }
+    ) { granted ->
+        if (granted) step = 1 else viewModel.note("Notifications were not granted. Guardian may be unable to tell you when Android needs the app reopened.")
+    }
+    androidx.compose.runtime.LaunchedEffect(step) { viewModel.refresh() }
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Text("Setup ${step + 1} of 8", fontSize = 28.sp, fontWeight = FontWeight.SemiBold)
         when (step) {
             0 -> {
-                Text("Allow notifications so Guardian can ask you to reopen the app after a background SOS.")
+                Text("Allow notifications so Guardian can show urgent alerts and recovery prompts.")
                 Button(onClick = {
                     if (android.os.Build.VERSION.SDK_INT >= 33) notify.launch(android.Manifest.permission.POST_NOTIFICATIONS)
-                    step += 1
+                    else step = 1
                 }, modifier = Modifier.fillMaxWidth()) { Text("Allow notifications") }
             }
             1 -> {
-                Text("Allow location for an on-screen SOS. Android will show the location indicator.")
+                Text("Allow precise location for SOS, Journey Protection and responder navigation. Android always shows location indicators.")
                 Button(onClick = {
                     location.launch(android.Manifest.permission.ACCESS_FINE_LOCATION)
-                    step += 1
                 }, modifier = Modifier.fillMaxWidth()) { Text("Allow location") }
             }
             2 -> {
-                Text("Add one trusted guardian. Email starts an invitation.")
+                Text("Add one trusted Guardian. This step advances only after the server confirms the contact.")
                 OutlinedTextField(guardian, { guardian = it }, label = { Text("Name") }, modifier = Modifier.fillMaxWidth())
                 OutlinedTextField(phone, { phone = it }, label = { Text("Phone") }, modifier = Modifier.fillMaxWidth())
-                Button(onClick = { viewModel.addGuardian(guardian, phone); step += 1 }, modifier = Modifier.fillMaxWidth()) { Text("Save guardian") }
+                Button(
+                    onClick = { viewModel.addGuardian(guardian, phone, onSuccess = { step = 3 }) },
+                    enabled = guardian.isNotBlank(),
+                    modifier = Modifier.fillMaxWidth(),
+                ) { Text("Save guardian") }
             }
             3 -> {
-                Text("Volume SOS uses an accessibility service. Freeze uses the other volume key.")
+                Text("Volume SOS uses Android Accessibility. Open settings, enable Guardian, return here and verify it before continuing.")
                 Button(onClick = {
                     context.startActivity(android.content.Intent(android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS))
-                    step += 1
                 }, modifier = Modifier.fillMaxWidth()) { Text("Open accessibility settings") }
+                Button(onClick = {
+                    viewModel.refresh()
+                    if (viewModel.volumeConnected) step = 4 else viewModel.note("Volume protection is not connected yet. Enable Guardian in Accessibility, then verify again.")
+                }, modifier = Modifier.fillMaxWidth()) { Text("Verify volume protection") }
             }
             4 -> {
-                Text("Save a safe word. Record samples later on the Safe Word page.")
+                Text("Choose a Safe Word. Voice samples are enrolled on the Safe Word page; until then Guardian will show LIMITED PROTECTION.")
                 OutlinedTextField(phrase, { phrase = it }, label = { Text("Phrase") }, modifier = Modifier.fillMaxWidth())
-                Button(onClick = { viewModel.saveSafeWord(phrase); step += 1 }, modifier = Modifier.fillMaxWidth()) { Text("Save phrase") }
+                Button(onClick = {
+                    if (phrase.trim().length >= 4) {
+                        viewModel.saveSafeWord(phrase)
+                        step = 5
+                    } else {
+                        viewModel.note("Use a Safe Word of at least four characters.")
+                    }
+                }, modifier = Modifier.fillMaxWidth()) { Text("Save phrase") }
             }
             5 -> {
-                Text("Emergency profile is shared with the hub during an incident export.")
-                OutlinedTextField(blood, { blood = it }, label = { Text("Blood type") }, modifier = Modifier.fillMaxWidth())
-                Button(onClick = { viewModel.saveProfile(blood, "", "", ""); step += 1 }, modifier = Modifier.fillMaxWidth()) { Text("Save profile") }
+                Text("Emergency profile is shared only with authorised incident responders/operators.")
+                OutlinedTextField(blood, { blood = it }, label = { Text("Blood type (optional)") }, modifier = Modifier.fillMaxWidth())
+                Button(onClick = {
+                    viewModel.saveProfile(blood, "", "", "", onSuccess = { step = 6 })
+                }, modifier = Modifier.fillMaxWidth()) { Text("Save profile") }
             }
             6 -> {
-                Text("Cancel PIN ends the incident. Duress PIN looks cancelled and keeps monitoring.")
+                Text("Cancel PIN ends an incident. Duress PIN appears to cancel locally while the incident remains active.")
                 PasswordField(cancel, { cancel = it }, "Cancel PIN", numeric = true)
                 PasswordField(duress, { duress = it }, "Duress PIN", numeric = true)
-                Button(onClick = { viewModel.savePins(cancel, duress); step += 1 }, modifier = Modifier.fillMaxWidth()) { Text("Save PINs") }
+                Button(
+                    onClick = { viewModel.savePins(cancel, duress, onSuccess = { step = 7 }) },
+                    enabled = cancel.matches(Regex("[0-9]{4,8}")) && duress.matches(Regex("[0-9]{4,8}")) && cancel != duress,
+                    modifier = Modifier.fillMaxWidth(),
+                ) { Text("Save PINs") }
             }
             else -> {
-                Text("Start a 10 minute test if you want to practise. Then Guardian is ready for a real SOS.")
-                Button(onClick = viewModel::startTest, modifier = Modifier.fillMaxWidth()) { Text("Start test session") }
-                Button(onClick = { viewModel.finishOnboarding(onDone) }, modifier = Modifier.fillMaxWidth()) { Text("Finish setup") }
+                val readiness = viewModel.protectionReadiness()
+                val ready = readiness.level == za.co.guardian.core.ProtectionLevel.PROTECTED
+                Text(if (ready) "PROTECTED" else "LIMITED PROTECTION", fontSize = 24.sp, fontWeight = FontWeight.Bold)
+                readiness.checks.forEach { check ->
+                    Text("${if (check.status == za.co.guardian.core.CheckStatus.PASS) "✓" else "!"} ${check.label} · ${check.detail}")
+                }
+                Text("You can finish with limited protection and correct missing items from Protect. Manual SOS remains available.")
+                Button(onClick = viewModel::startTest, modifier = Modifier.fillMaxWidth()) { Text("Start 10 minute test") }
+                Button(onClick = { viewModel.finishOnboarding(onDone) }, modifier = Modifier.fillMaxWidth()) {
+                    Text(if (ready) "Finish setup" else "Finish with limited protection")
+                }
             }
         }
-        TextButton(onClick = { if (step < 7) step += 1 else viewModel.finishOnboarding(onDone) }) { Text("Skip this step") }
+        if (step < 7) {
+            TextButton(onClick = { step += 1 }) { Text("Skip for now") }
+        }
         viewModel.status?.let { Text(it) }
     }
 }
