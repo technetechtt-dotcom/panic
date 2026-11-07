@@ -8,6 +8,7 @@ import { IncidentDetailPage } from "./pages/IncidentDetailPage";
 import { IntegrationsPage } from "./pages/IntegrationsPage";
 import { IncidentsPage } from "./pages/IncidentsPage";
 import { AuditPage } from "./pages/AuditPage";
+import { AiOperationsPage } from "./pages/AiOperationsPage";
 import { ArchivePage } from "./pages/ArchivePage";
 import { ReportsPage } from "./pages/ReportsPage";
 import { LoginPage } from "./pages/LoginPage";
@@ -44,6 +45,7 @@ export function App() {
         <Route path="/people" element={<RolePage allow={MANAGE_ROLES}><PeoplePage /></RolePage>} />
         <Route path="/people/:id" element={<RolePage allow={MANAGE_ROLES}><UserDetailPage /></RolePage>} />
         <Route path="/audit" element={<RolePage allow={MANAGE_ROLES}><AuditPage /></RolePage>} />
+        <Route path="/ai-operations" element={<RolePage allow={MANAGE_ROLES}><AiOperationsPage /></RolePage>} />
         <Route path="/archive" element={<RolePage allow={PLATFORM_ROLES}><ArchivePage /></RolePage>} />
         <Route path="/reports" element={<RolePage allow={PLATFORM_ROLES}><ReportsPage /></RolePage>} />
         <Route path="/integrations" element={<RolePage allow={PLATFORM_ROLES}><IntegrationsPage /></RolePage>} />
