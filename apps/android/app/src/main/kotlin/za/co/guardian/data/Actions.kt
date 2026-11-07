@@ -341,6 +341,7 @@ class ProtectionActions @Inject constructor(
     private val database: GuardianDatabase,
     private val settings: SettingsStore,
     private val signals: PhoneSignals,
+    @ApplicationContext private val context: Context,
 ) {
     suspend fun addGuardian(name: String, phone: String = "", email: String = ""): String {
         if (name.isBlank()) return "Enter a guardian's name."
@@ -388,6 +389,7 @@ class ProtectionActions @Inject constructor(
         val id = settings.journeyId() ?: return "Start a journey first."
         api.completeJourney(id)
         settings.setJourneyId(null)
+        za.co.guardian.service.ProtectionTrackingService.stopIfIdle(context, settings)
         return "Journey marked complete."
     }
 
@@ -451,7 +453,8 @@ class ProtectionActions @Inject constructor(
         ).data
         settings.setProtectionMode(mode)
         settings.setJourneyId(journey.id)
-        return "${mode.lowercase().replace('_', ' ')} watch is ${journey.status.lowercase()}. A missed check-in raises concern on the server. It does not replace the SOS button."
+        za.co.guardian.service.ProtectionTrackingService.ensureRunning(context)
+        return "${mode.lowercase().replace('_', ' ')} watch is ${journey.status.lowercase()}. Live route positions are shared while the visible Guardian tracking notification is active. A missed check-in raises concern on the server. It does not replace the SOS button."
     }
 
     suspend fun saveProfile(bloodType: String, allergies: String, medications: String, notes: String): String {
