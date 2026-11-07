@@ -185,6 +185,7 @@ import { WebhooksController } from "./modules/webhooks/webhooks.controller";
         config: AppConfig,
         users,
         bridge: FusionBridge,
+        prisma: PrismaService,
       ) => {
         const service = new IncidentService(
           incidents,
@@ -198,6 +199,10 @@ import { WebhooksController } from "./modules/webhooks/webhooks.controller";
           clock,
           config.staleAfterSeconds,
           users,
+          async (responderId, incidentId) => Boolean(await prisma.responderAssignment.findUnique({
+            where: { incidentId_responderId: { incidentId, responderId } },
+            select: { id: true },
+          })),
         );
         bridge.handler = (userId, triggerType) => service.raiseFromFusion(userId, triggerType);
         return service;
@@ -215,6 +220,7 @@ import { WebhooksController } from "./modules/webhooks/webhooks.controller";
         APP_CONFIG,
         USER_STORE,
         FusionBridge,
+        PrismaService,
       ],
     },
     {
