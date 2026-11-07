@@ -351,8 +351,9 @@ export class PlatformService {
     }
     const needle = input.query?.trim();
     if (needle) {
+      const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(needle) ? needle : null;
       where.OR = [
-        { id: { contains: needle, mode: "insensitive" } },
+        ...(uuid ? [{ id: uuid }] : []),
         { user: { displayName: { contains: needle, mode: "insensitive" } } },
       ];
     }
