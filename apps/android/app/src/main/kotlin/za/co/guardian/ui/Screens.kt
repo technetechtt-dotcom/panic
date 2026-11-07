@@ -105,6 +105,8 @@ class HomeViewModel @Inject constructor(
         private set
     var protectedPeople by mutableStateOf<List<za.co.guardian.data.GuardianInboxPersonWire>>(emptyList())
         private set
+    var responderProfile by mutableStateOf<za.co.guardian.data.ResponderProfileWire?>(null)
+        private set
     var remainingMs by mutableStateOf(practiceMode.remainingMs())
         private set
 
@@ -122,9 +124,11 @@ class HomeViewModel @Inject constructor(
                 } catch (_: Exception) {
                     emptyList()
                 }
+                responderProfile = try { api.responderProfile().data } catch (_: Exception) { null }
             }
         } else {
             assignments = emptyList()
+            responderProfile = null
         }
         if (api != null && role == "GUARDIAN") {
             viewModelScope.launch {
@@ -149,6 +153,34 @@ class HomeViewModel @Inject constructor(
         }
         if (za.co.guardian.core.releasePinMatches(pin, release)) return "Nothing was transferred."
         return "That password was not accepted."
+    }
+
+    fun updateResponderProfile(
+        availability: String,
+        team: String,
+        region: String,
+        capabilities: String,
+        vehicle: String,
+        phone: String,
+    ) {
+        val client = api ?: return
+        viewModelScope.launch {
+            try {
+                responderProfile = client.updateResponderProfile(
+                    za.co.guardian.data.ResponderProfileBody(
+                        availability = availability,
+                        team = team.ifBlank { null },
+                        region = region.ifBlank { null },
+                        capabilities = capabilities.ifBlank { null },
+                        vehicle = vehicle.ifBlank { null },
+                        phone = phone.ifBlank { null },
+                    ),
+                ).data
+                messageState.value = "Responder profile updated."
+            } catch (error: Exception) {
+                messageState.value = error.userMessage()
+            }
+        }
     }
 
     fun reportLocated(incidentId: String) = updateAssignment(incidentId, "USER_LOCATED", "Location report sent. This does not close the incident.")
@@ -1054,10 +1086,33 @@ fun ResponderHomeScreen(
 ) {
     val message by viewModel.message.collectAsStateWithLifecycle()
     androidx.compose.runtime.LaunchedEffect(Unit) { viewModel.refresh() }
+    val profile = viewModel.responderProfile
+    var availability by remember(profile?.availability) { mutableStateOf(profile?.availability ?: "AVAILABLE") }
+    var team by remember(profile?.team) { mutableStateOf(profile?.team.orEmpty()) }
+    var region by remember(profile?.region) { mutableStateOf(profile?.region.orEmpty()) }
+    var capabilities by remember(profile?.capabilities) { mutableStateOf(profile?.capabilities.orEmpty()) }
+    var vehicle by remember(profile?.vehicle) { mutableStateOf(profile?.vehicle.orEmpty()) }
+    var phone by remember(profile?.phone) { mutableStateOf(profile?.phone.orEmpty()) }
     Scaffold { padding ->
         Column(Modifier.fillMaxSize().padding(padding).padding(20.dp).verticalScroll(rememberScrollState())) {
             Text("Responder", fontSize = 34.sp, fontWeight = FontWeight.Bold)
-            Text("Assignments", fontSize = 22.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 16.dp))
+            Text("Availability & capability", fontSize = 20.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 14.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth()) {
+                listOf("AVAILABLE", "BUSY", "OFF_DUTY", "UNAVAILABLE").forEach { state ->
+                    TextButton(onClick = { availability = state }) { Text(if (availability == state) "✓ $state" else state) }
+                }
+            }
+            OutlinedTextField(team, { team = it }, label = { Text("Team") }, modifier = Modifier.fillMaxWidth())
+            OutlinedTextField(region, { region = it }, label = { Text("Region") }, modifier = Modifier.fillMaxWidth())
+            OutlinedTextField(capabilities, { capabilities = it }, label = { Text("Capabilities e.g. FIRST_AID,SEARCH") }, modifier = Modifier.fillMaxWidth())
+            OutlinedTextField(vehicle, { vehicle = it }, label = { Text("Vehicle") }, modifier = Modifier.fillMaxWidth())
+            OutlinedTextField(phone, { phone = it }, label = { Text("Response phone") }, modifier = Modifier.fillMaxWidth())
+            Button(
+                onClick = { viewModel.updateResponderProfile(availability, team, region, capabilities, vehicle, phone) },
+                modifier = Modifier.fillMaxWidth(),
+            ) { Text("Save responder status") }
+
+            Text("Assignments", fontSize = 22.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 18.dp))
             if (viewModel.assignments.isEmpty()) Text("No active assignments.", modifier = Modifier.padding(top = 8.dp))
             viewModel.assignments.forEach { (id, label) ->
                 Surface(modifier = Modifier.fillMaxWidth().padding(top = 10.dp), color = Color(0xFF171C24)) {
@@ -1074,7 +1129,7 @@ fun ResponderHomeScreen(
             }
             message?.let { Text(it, modifier = Modifier.padding(top = 12.dp)) }
             Button(onClick = { viewModel.refresh() }, modifier = Modifier.fillMaxWidth().padding(top = 16.dp)) { Text("Refresh assignments") }
-            Button(onClick = onProfile, modifier = Modifier.fillMaxWidth()) { Text("Profile & settings") }
+            Button(onClick = onProfile, modifier = Modifier.fillMaxWidth()) { Text("Account profile") }
             Text("Guardian shows a visible Android location notification whenever responder location is being shared.", modifier = Modifier.padding(top = 12.dp))
         }
     }
