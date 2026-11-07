@@ -648,6 +648,55 @@ class SettingsViewModel @Inject constructor(
             status = "Impact detection is off."
         }
     }
+    fun saveCaptureFile(type: String, file: java.io.File) {
+        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            val incident = database.incidents().list().firstOrNull { it.state != "RESOLVED" && it.state != "ARCHIVED" }
+            if (incident == null) {
+                status = "Send SOS before saving evidence."
+                file.delete()
+                return@launch
+            }
+            val battery = signals.deviceState().batteryLevel ?: 100
+            if (!za.co.guardian.core.captureEvidence(type, battery)) {
+                status = "Battery is too low for $type. Short audio can still be kept."
+                file.delete()
+                return@launch
+            }
+            try {
+                if (type == "photo") {
+                    val bitmap = android.graphics.BitmapFactory.decodeFile(file.absolutePath)
+                    if (bitmap == null) {
+                        status = "The captured photo could not be read."
+                        return@launch
+                    }
+                    var quality = 90
+                    var bytes: ByteArray
+                    do {
+                        val stream = java.io.ByteArrayOutputStream()
+                        bitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, quality, stream)
+                        bytes = stream.toByteArray()
+                        quality -= 10
+                    } while (bytes.size > 1_400_000 && quality >= 40)
+                    if (bytes.size > 1_500_000) {
+                        status = "The photo is too large to upload safely. Retake it with the normal camera framing."
+                        return@launch
+                    }
+                    vault.store(incident.triggerId, "photo", bytes)
+                    status = "Full-resolution photo captured, encrypted on this phone, and queued for upload."
+                } else {
+                    val chunks = vault.storeFileChunks(incident.triggerId, type, file)
+                    status = if (chunks > 0) {
+                        "Video captured and encrypted in $chunks resumable upload chunk(s)."
+                    } else {
+                        "The video could not be stored."
+                    }
+                }
+            } finally {
+                file.delete()
+            }
+        }
+    }
+
     fun saveCapture(type: String, bytes: ByteArray) = run {
         val incident = database.incidents().list().firstOrNull { it.state != "RESOLVED" && it.state != "ARCHIVED" }
             ?: return@run "Send SOS before saving a photo or video. The camera is not used in the background."
@@ -1228,25 +1277,58 @@ fun ProfileScreen(
 fun ActiveIncidentScreen(onBack: () -> Unit, viewModel: SettingsViewModel = hiltViewModel()) {
     val context = androidx.compose.ui.platform.LocalContext.current
     var cancelPin by remember { mutableStateOf("") }
-    val photoCapture = androidx.activity.compose.rememberLauncherForActivityResult(
-        androidx.activity.result.contract.ActivityResultContracts.TakePicturePreview(),
-    ) { bitmap ->
-        if (bitmap == null) return@rememberLauncherForActivityResult
-        val stream = java.io.ByteArrayOutputStream()
-        bitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 70, stream)
-        viewModel.saveCapture("photo", stream.toByteArray())
+    var pendingPhoto by remember { mutableStateOf<java.io.File?>(null) }
+    var pendingVideo by remember { mutableStateOf<java.io.File?>(null) }
+
+    fun newCaptureFile(extension: String): java.io.File {
+        val directory = java.io.File(context.cacheDir, "guardian_capture").apply { mkdirs() }
+        return java.io.File(directory, "${java.util.UUID.randomUUID()}.$extension")
     }
+
+    val photoCapture = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.TakePicture(),
+    ) { saved ->
+        val file = pendingPhoto
+        pendingPhoto = null
+        if (saved && file != null && file.exists()) viewModel.saveCaptureFile("photo", file)
+        else file?.delete()
+    }
+
+    fun launchPhoto() {
+        val file = newCaptureFile("jpg")
+        pendingPhoto = file
+        val uri = androidx.core.content.FileProvider.getUriForFile(context, "${context.packageName}.files", file)
+        photoCapture.launch(uri)
+    }
+
     val videoCapture = androidx.activity.compose.rememberLauncherForActivityResult(
         androidx.activity.result.contract.ActivityResultContracts.StartActivityForResult(),
     ) { result ->
-        val uri = result.data?.data ?: return@rememberLauncherForActivityResult
-        viewModel.saveCapture("video", context.contentResolver.openInputStream(uri)?.use { it.readBytes() } ?: byteArrayOf())
+        val target = pendingVideo
+        pendingVideo = null
+        if (result.resultCode == android.app.Activity.RESULT_OK && target != null) {
+            if (target.length() <= 0L) {
+                result.data?.data?.let { returned ->
+                    runCatching {
+                        context.contentResolver.openInputStream(returned)?.use { input ->
+                            target.outputStream().use { output -> input.copyTo(output) }
+                        }
+                    }
+                }
+            }
+            if (target.exists() && target.length() > 0L) viewModel.saveCaptureFile("video", target)
+            else target.delete()
+        } else {
+            target?.delete()
+        }
     }
+
     val cameraPermission = androidx.activity.compose.rememberLauncherForActivityResult(
         androidx.activity.result.contract.ActivityResultContracts.RequestPermission(),
     ) { granted ->
-        if (granted) photoCapture.launch(null)
+        if (granted) launchPhoto() else viewModel.note("Camera permission is required for visible evidence capture.")
     }
+
     androidx.compose.runtime.LaunchedEffect(Unit) { viewModel.refresh() }
     Scaffold { padding ->
         Column(Modifier.fillMaxSize().padding(padding).padding(20.dp).verticalScroll(rememberScrollState())) {
@@ -1257,26 +1339,36 @@ fun ActiveIncidentScreen(onBack: () -> Unit, viewModel: SettingsViewModel = hilt
                 }
             }
             Text(if (viewModel.incidentActive) "SOS ACTIVE" else "Active incident", fontSize = 32.sp, fontWeight = FontWeight.SemiBold)
-            Text("State                    ${viewModel.liveState}")
-            Text("SOS sent                 ✓")
-            Text("Monitoring               ${viewModel.liveClaim}")
-            Text("Contact                  ${viewModel.liveContact}")
-            Text("Last heartbeat           ${viewModel.liveHeartbeat}")
-            Text("Last location            ${viewModel.lastLocation}")
-            Text("Battery                  ${viewModel.battery ?: "unknown"}%")
-            Text("Network                  ${viewModel.network}")
-            Text("Evidence                 Recording if you capture it")
-            Text("Guardian delivery")
+            Text("State · ${viewModel.liveState}")
+            Text("Monitoring · ${viewModel.liveClaim}")
+            Text("Contact · ${viewModel.liveContact}")
+            Text("Last heartbeat · ${viewModel.liveHeartbeat}")
+            Text("Last location · ${viewModel.lastLocation}")
+            Text("Battery · ${viewModel.battery ?: "unknown"}%")
+            Text("Network · ${viewModel.network}")
+            Text("Guardian delivery", fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 8.dp))
             Text(viewModel.liveDeliveries)
-            Text("Responder")
+            Text("Responder", fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 8.dp))
             Text(viewModel.liveResponders)
             Text("This page refreshes from the server every 4 seconds while the incident is open.")
-            Text("Photos and video are taken by you, with the camera app visible. They are not captured in the background.", modifier = Modifier.padding(vertical = 8.dp))
-            Button(onClick = { cameraPermission.launch(android.Manifest.permission.CAMERA) }, modifier = Modifier.fillMaxWidth()) { Text("Take a photo") }
+            Text(
+                "Evidence capture is always visible. Photos use a full-size camera file. Video is copied as a file and encrypted into resumable chunks; Guardian does not secretly activate the camera.",
+                modifier = Modifier.padding(vertical = 8.dp),
+            )
             Button(onClick = {
+                if (androidx.core.content.ContextCompat.checkSelfPermission(context, android.Manifest.permission.CAMERA) ==
+                    android.content.pm.PackageManager.PERMISSION_GRANTED
+                ) launchPhoto() else cameraPermission.launch(android.Manifest.permission.CAMERA)
+            }, modifier = Modifier.fillMaxWidth()) { Text("Take full-resolution photo") }
+            Button(onClick = {
+                val file = newCaptureFile("mp4")
+                pendingVideo = file
+                val uri = androidx.core.content.FileProvider.getUriForFile(context, "${context.packageName}.files", file)
                 val intent = android.content.Intent(android.provider.MediaStore.ACTION_VIDEO_CAPTURE)
-                intent.putExtra(android.provider.MediaStore.EXTRA_DURATION_LIMIT, 8)
-                intent.putExtra(android.provider.MediaStore.EXTRA_VIDEO_QUALITY, 0)
+                    .putExtra(android.provider.MediaStore.EXTRA_DURATION_LIMIT, 8)
+                    .putExtra(android.provider.MediaStore.EXTRA_VIDEO_QUALITY, 1)
+                    .putExtra(android.provider.MediaStore.EXTRA_OUTPUT, uri)
+                    .addFlags(android.content.Intent.FLAG_GRANT_WRITE_URI_PERMISSION or android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
                 videoCapture.launch(intent)
             }, modifier = Modifier.fillMaxWidth()) { Text("Record a short video") }
             PasswordField(cancelPin, { cancelPin = it }, "Cancel PIN", numeric = true)
