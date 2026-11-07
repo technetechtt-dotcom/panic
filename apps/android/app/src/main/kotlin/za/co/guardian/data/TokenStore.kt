@@ -181,6 +181,11 @@ class SettingsStore @Inject constructor(@ApplicationContext context: Context) : 
     fun setJourneyId(id: String?) {
         if (id == null) prefs.edit().remove(JOURNEY_ID).apply() else prefs.edit().putString(JOURNEY_ID, id).apply()
     }
+    fun responderIncidentId(): String? = prefs.getString(RESPONDER_INCIDENT_ID, null)
+    fun setResponderIncidentId(id: String?) {
+        if (id == null) prefs.edit().remove(RESPONDER_INCIDENT_ID).apply()
+        else prefs.edit().putString(RESPONDER_INCIDENT_ID, id).apply()
+    }
     fun freezePattern(): za.co.guardian.core.VolumePattern =
         za.co.guardian.core.VolumePattern.fromStored(prefs.getString(FREEZE_PATTERN, za.co.guardian.core.VolumePattern.UP_2.name))
     fun setFreezePattern(pattern: za.co.guardian.core.VolumePattern) = prefs.edit().putString(FREEZE_PATTERN, pattern.name).apply()
@@ -216,6 +221,7 @@ class SettingsStore @Inject constructor(@ApplicationContext context: Context) : 
         const val FALL_WATCH = "fall_watch"
         const val PROTECTION_MODE = "protection_mode"
         const val JOURNEY_ID = "journey_id"
+        const val RESPONDER_INCIDENT_ID = "responder_incident_id"
         const val FREEZE_PATTERN = "freeze_pattern"
         const val GUARDIAN_PHONE = "guardian_phone"
     }
