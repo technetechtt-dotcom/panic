@@ -183,6 +183,26 @@ export class PlatformController {
     return this.platform.incidentCommunications(actorFrom(request), id).then((data) => ({ data }));
   }
 
+  @Get("admin/demo")
+  @RequirePermissions(Permission.UserManage)
+  demoStatus(@Req() request: RequestWithUser) {
+    return this.platform.demoStatus(actorFrom(request)).then((data) => ({ data }));
+  }
+
+  @Post("admin/demo/reset")
+  @HttpCode(200)
+  @RequirePermissions(Permission.UserManage)
+  demoReset(@Req() request: RequestWithUser) {
+    return this.platform.resetDemo(actorFrom(request)).then((data) => ({ data }));
+  }
+
+  @Post("admin/demo/advance")
+  @HttpCode(200)
+  @RequirePermissions(Permission.UserManage)
+  demoAdvance(@Req() request: RequestWithUser) {
+    return this.platform.advanceDemo(actorFrom(request)).then((data) => ({ data }));
+  }
+
   @Post("admin/integrations/:kind/test")
   @HttpCode(200)
   @RequirePermissions(Permission.UserManage)
