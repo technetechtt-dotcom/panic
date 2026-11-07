@@ -226,6 +226,10 @@ export class AuthService {
       });
       throw new AppError("INVALID_CREDENTIALS", 401, "Invalid email or password.");
     }
+    if (user.suspendedAt) {
+      await this.audit({ actorId: user.id, action: "auth.login_suspended", entityId: user.id });
+      throw new AppError("ACCOUNT_SUSPENDED", 403, "This account is suspended. Contact an administrator.");
+    }
     if (this.mfa && MFA_ROLES.includes(user.role)) {
       const token = signMfaChallenge(this.mfa.secret, user.id, this.clock.now().getTime() + 5 * 60 * 1000);
       if (await this.mfa.store.isEnabled(user.id)) {
@@ -240,6 +244,9 @@ export class AuthService {
         otpauth: `otpauth://totp/Guardian:${encodeURIComponent(user.email)}?secret=${secret}&issuer=Guardian`,
       };
     }
+    user.lastLoginAt = this.clock.now();
+    user.updatedAt = user.lastLoginAt;
+    await this.users.save?.(user);
     await this.audit({ actorId: user.id, action: "auth.login", entityId: user.id });
     return this.issue(user, this.ids.uuid());
   }
@@ -254,6 +261,9 @@ export class AuthService {
     const user = await this.users.findById(userId);
     if (!user) throw new AppError("INVALID_MFA", 401, "That authenticator code was not accepted.");
     await this.mfa.store.enable?.(userId);
+    user.lastLoginAt = this.clock.now();
+    user.updatedAt = user.lastLoginAt;
+    await this.users.save?.(user);
     await this.audit({ actorId: user.id, action: "auth.mfa", entityId: user.id });
     return this.issue(user, this.ids.uuid());
   }
@@ -277,7 +287,7 @@ export class AuthService {
       throw new AppError("INVALID_REFRESH", 401, "Sign in again.");
     }
     const user = await this.users.findById(record.userId);
-    if (!user) throw new AppError("INVALID_REFRESH", 401, "Sign in again.");
+    if (!user || user.suspendedAt) throw new AppError("INVALID_REFRESH", 401, "Sign in again.");
     const replacementId = this.ids.uuid();
     await this.refreshTokens.revoke(record.id, now, replacementId);
     await this.audit({ actorId: user.id, action: "auth.refresh", entityId: user.id });
