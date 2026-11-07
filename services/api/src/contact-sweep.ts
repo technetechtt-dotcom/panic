@@ -42,6 +42,9 @@ export class ContactSweep implements OnModuleInit, OnModuleDestroy {
       await this.platform.processOutboxBatch(this.workerId).catch((error: unknown) => {
         console.error(JSON.stringify({ level: "error", message: "outbox drain failed", detail: String(error) }));
       });
+      await this.platform.purgeExpiredEvidence().catch((error: unknown) => {
+        console.error(JSON.stringify({ level: "error", message: "evidence retention sweep failed", detail: String(error) }));
+      });
       await this.recheckOperators();
       return;
     }
