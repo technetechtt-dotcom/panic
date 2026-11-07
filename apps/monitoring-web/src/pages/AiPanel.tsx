@@ -5,6 +5,7 @@ import { api } from "../api/client";
 interface AiBundle {
   safety: string;
   decision: {
+    id: string | null;
     level: string;
     confidence: number;
     explanation: string;
@@ -16,7 +17,7 @@ interface AiBundle {
   shadow: { level: string; modelVersion: string; applied: boolean; note: string };
   summary: { summary: string; changes: string; risks: string };
   recommendations: Array<{ id: string; action: string; reason: string; status: string }>;
-  search: Array<{ id: string; kind: string; label: string; confidence: number }>;
+  search: Array<{ id: string; kind: string; label: string; confidence: number; polygon?: Array<{ latitude: number; longitude: number }> }>;
   evidence: { analysed: boolean; chunks: number; note: string };
   reviews: Array<{ id: string; status: string; note: string; createdAt: string }>;
 }
@@ -44,6 +45,24 @@ export function AiPanel({ id, token, canDecide }: { id: string; token: string | 
       setAnswer(result.answer);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "The question could not be answered.");
+    }
+  }
+
+  async function review(targetType: "DECISION" | "SEARCH", targetId: string, status: "CONFIRMED" | "REJECTED" | "UNCERTAIN") {
+    setError(null);
+    try {
+      await api(`/api/v1/incidents/${id}/ai/review`, token, {
+        method: "POST",
+        body: JSON.stringify({
+          targetType,
+          targetId,
+          status,
+          note: `Operator review: ${status.toLowerCase()}.`,
+        }),
+      });
+      await queryClient.invalidateQueries({ queryKey: ["ai", id] });
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "The AI review was not saved.");
     }
   }
 
@@ -90,6 +109,13 @@ export function AiPanel({ id, token, canDecide }: { id: string; token: string | 
         <p className="mt-4 text-xs text-slate-400">
           Shadow {row.shadow.modelVersion} would say {row.shadow.level}. {row.shadow.note}
         </p>
+        {canDecide && row.decision.id ? (
+          <div className="mt-4 flex flex-wrap gap-2" aria-label="Review AI risk assessment">
+            <button type="button" className="rounded-lg border border-line px-3 py-1 text-sm" onClick={() => void review("DECISION", row.decision.id!, "CONFIRMED")}>Correct</button>
+            <button type="button" className="rounded-lg border border-line px-3 py-1 text-sm" onClick={() => void review("DECISION", row.decision.id!, "REJECTED")}>Incorrect</button>
+            <button type="button" className="rounded-lg border border-line px-3 py-1 text-sm" onClick={() => void review("DECISION", row.decision.id!, "UNCERTAIN")}>Uncertain</button>
+          </div>
+        ) : null}
       </article>
       <article className="rounded-2xl border border-line bg-panel p-4 text-sm">
         <h2 className="text-lg font-semibold">Situation</h2>
@@ -127,8 +153,13 @@ export function AiPanel({ id, token, canDecide }: { id: string; token: string | 
         <ul className="mt-2 list-disc pl-5 text-slate-300">
           {row.search.length === 0 ? <li>No confirmed fix, so no search area was drawn.</li> : null}
           {row.search.map((area) => (
-            <li key={area.id}>
-              {area.kind}: {area.label}
+            <li key={area.id} className="mb-3">
+              <div>{area.kind}: {area.label} · confidence {Math.round(area.confidence * 100)}%</div>
+              {canDecide ? <div className="mt-1 flex flex-wrap gap-2">
+                <button type="button" className="underline" onClick={() => void review("SEARCH", area.id, "CONFIRMED")}>Correct</button>
+                <button type="button" className="underline" onClick={() => void review("SEARCH", area.id, "REJECTED")}>Incorrect</button>
+                <button type="button" className="underline" onClick={() => void review("SEARCH", area.id, "UNCERTAIN")}>Uncertain</button>
+              </div> : null}
             </li>
           ))}
         </ul>
