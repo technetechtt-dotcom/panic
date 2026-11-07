@@ -397,10 +397,12 @@ model NotificationDelivery {
   failureCode       String?
   openedAt          DateTime?
   acknowledgedAt    DateTime?
+  trustedContactId  String?   @db.Uuid
   createdAt         DateTime  @default(now())
   incident          Incident  @relation(fields: [incidentId], references: [id], onDelete: Cascade)
 
   @@index([incidentId, createdAt])
+  @@index([trustedContactId])
 }
 
 model EvidenceAccessLog {
@@ -419,12 +421,15 @@ model IncidentRoom {
   incidentId       String   @db.Uuid
   tokenHash        String   @unique
   guardianName     String?
+  trustedContactId String?   @db.Uuid
   acknowledgedAt   DateTime?
   canViewLocation  Boolean
   canViewEvidence  Boolean
   expiresAt        DateTime
   createdAt        DateTime @default(now())
   incident         Incident @relation(fields: [incidentId], references: [id], onDelete: Cascade)
+
+  @@index([trustedContactId])
 }
 
 model ResponderAssignment {
