@@ -1,4 +1,6 @@
 import { randomBytes, randomUUID } from "node:crypto";
+import { readdir, stat } from "node:fs/promises";
+import { join } from "node:path";
 import type { Prisma, PrismaClient } from "@prisma/client";
 import type { Role } from "@guardian/shared-types";
 import type { AppConfig } from "../config";
@@ -22,6 +24,20 @@ import { sendTransactionalEmail } from "./email";
 import { geocodeDestination } from "./geocode";
 
 const OPERATOR_ROLES: Role[] = ["MONITOR_OPERATOR", "SUPERVISOR", "RESPONDER", "ADMIN"];
+
+async function latestEncryptedBackup(directory: string | undefined): Promise<string> {
+  if (!directory?.trim()) return process.env.LAST_BACKUP_AT ?? "not configured";
+  try {
+    const files = (await readdir(directory)).filter((name) => name.startsWith("guardian-") && name.endsWith(".sql.enc"));
+    if (!files.length) return "no encrypted backup found";
+    const rows = await Promise.all(files.map(async (name) => ({ name, info: await stat(join(directory, name)) })));
+    rows.sort((a, b) => b.info.mtimeMs - a.info.mtimeMs);
+    const newest = rows[0]!;
+    return `${newest.info.mtime.toISOString()} · ${newest.name}`;
+  } catch {
+    return process.env.LAST_BACKUP_AT ?? "backup directory unavailable";
+  }
+}
 
 function maskDestination(value: string): string {
   const trimmed = value.trim();
@@ -1911,7 +1927,7 @@ export class PlatformService {
       notificationBacklog: this.outbox ? await this.outbox.backlog() : "in-process-fallback",
       deadLetters: this.outbox ? await this.outbox.recentDead() : [],
       ai: this.ai ? await this.ai.counts() : null,
-      lastBackup: process.env.LAST_BACKUP_AT ?? "not recorded by this process",
+      lastBackup: await latestEncryptedBackup(process.env.BACKUP_STATUS_DIR),
     };
   }
 
