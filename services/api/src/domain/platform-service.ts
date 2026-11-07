@@ -81,7 +81,7 @@ export class PlatformService {
     });
     for (const contact of contacts) {
       const methods = (contact.notificationMethods || "PUSH,SMS").split(",").map((item) => item.trim().toUpperCase());
-      const room = await this.openRoom(incidentId, contact.canViewLocation, contact.canViewEvidence, contact.displayName);
+      const room = await this.openRoom(incidentId, contact.canViewLocation, contact.canViewEvidence, contact.id, contact.displayName);
       const body = guardianSmsBody({
         name: incident.userDisplayName,
         incidentState: incident.state,
@@ -91,7 +91,7 @@ export class PlatformService {
         const sms = contact.phone
           ? await this.sms.send({ to: contact.phone, body, incidentId })
           : { delivered: false, simulated: true, reason: "This guardian has no phone number.", providerMessageId: undefined };
-        await this.record(incidentId, "SMS", contact.phone ?? contact.email ?? contact.displayName, sms.delivered ? "SENT" : "SKIPPED", sms.reason, sms.providerMessageId);
+        await this.record(incidentId, "SMS", contact.phone ?? contact.email ?? contact.displayName, sms.delivered ? "SENT" : "SKIPPED", sms.reason, sms.providerMessageId, contact.id);
       }
       await this.record(incidentId, "ROOM", contact.displayName, "SENT", "A private room link was created for this guardian.", undefined, contact.id);
       if (methods.includes("PUSH") && contact.guardianUserId) {
@@ -101,10 +101,24 @@ export class PlatformService {
         for (const phone of guardianPhones) {
           if (!phone.fcmToken) continue;
           const apple = phone.platform === "IOS";
+          const pushData = {
+            type: "GUARDIAN_INCIDENT",
+            incidentId,
+            trustedContactId: contact.id,
+            roomUrl: room.url,
+          };
           const push = apple
-            ? await sendApns(phone.fcmToken, "Guardian", `${incident.userDisplayName} needs help.`)
-            : await sendFcm(phone.fcmToken, "Guardian", `${incident.userDisplayName} needs help.`);
-          await this.record(incidentId, apple ? "APNS" : "FCM", contact.displayName, push.delivered ? "SENT" : "SKIPPED", push.reason, push.providerMessageId);
+            ? await sendApns(phone.fcmToken, "Guardian", `${incident.userDisplayName} needs help.`, process.env, pushData)
+            : await sendFcm(phone.fcmToken, "Guardian", `${incident.userDisplayName} needs help.`, process.env, pushData);
+          await this.record(
+            incidentId,
+            apple ? "APNS" : "FCM",
+            contact.displayName,
+            push.delivered ? "SENT" : "SKIPPED",
+            push.reason,
+            push.providerMessageId,
+            contact.id,
+          );
         }
       }
     }
@@ -570,16 +584,29 @@ export class PlatformService {
     const now = this.clock.now();
     await this.prisma.incidentRoom.update({ where: { id: row.id }, data: { acknowledgedAt: now } });
     await this.prisma.notificationDelivery.updateMany({
-      where: { incidentId: row.incidentId, channel: { in: ["ROOM", "SMS", "FCM", "APNS"] }, acknowledgedAt: null },
+      where: {
+        incidentId: row.incidentId,
+        trustedContactId: row.trustedContactId ?? "__unbound__",
+        channel: { in: ["ROOM", "SMS", "FCM", "APNS"] },
+        acknowledgedAt: null,
+      },
       data: { acknowledgedAt: now, status: "ACKNOWLEDGED" },
     });
-    if (row.guardianName) {
+    if (row.trustedContactId) {
       await this.prisma.trustedContact.updateMany({
-        where: { displayName: row.guardianName, user: { incidents: { some: { id: row.incidentId } } } },
+        where: { id: row.trustedContactId, user: { incidents: { some: { id: row.incidentId } } } },
         data: { lastAcknowledgedAt: now },
       });
     }
-    await this.record(row.incidentId, "ROOM_ACK", row.guardianName ?? "guardian", "ACKNOWLEDGED", "A guardian opened and acknowledged the room.");
+    await this.record(
+      row.incidentId,
+      "ROOM_ACK",
+      row.guardianName ?? "guardian",
+      "ACKNOWLEDGED",
+      "A guardian opened and acknowledged the room.",
+      undefined,
+      row.trustedContactId ?? undefined,
+    );
     return { acknowledgedAt: now.toISOString() };
   }
 
@@ -588,15 +615,20 @@ export class PlatformService {
     if (!row) throw new AppError("NOT_FOUND", 404, "That delivery was not found.");
     const incident = await this.prisma.incident.findUnique({ where: { id: row.incidentId } });
     if (!incident) throw new AppError("NOT_FOUND", 404, "That incident was not found.");
-    const guardian = await this.prisma.trustedContact.findFirst({
-      where: {
-        userId: incident.userId,
-        OR: [{ guardianUserId: actor.id }, { email: { equals: actor.displayName, mode: "insensitive" } }],
-      },
-    });
+    const guardian = row.trustedContactId
+      ? await this.prisma.trustedContact.findFirst({
+          where: {
+            id: row.trustedContactId,
+            userId: incident.userId,
+            guardianUserId: actor.id,
+            invitationStatus: "ACCEPTED",
+            active: true,
+          },
+        })
+      : null;
     const isOwner = incident.userId === actor.id;
     const isOperator = hasPermission(actor.role, Permission.IncidentReadActive);
-    if (!guardian && !isOwner && !isOperator && actor.role !== "GUARDIAN") {
+    if (!guardian && !isOwner && !isOperator) {
       throw new AppError("FORBIDDEN", 403, "You cannot acknowledge this delivery.");
     }
     const now = this.clock.now();
@@ -739,7 +771,13 @@ export class PlatformService {
     return { processed, dead };
   }
 
-  private async openRoom(incidentId: string, canViewLocation: boolean, canViewEvidence: boolean, guardianName?: string): Promise<{ url: string }> {
+  private async openRoom(
+    incidentId: string,
+    canViewLocation: boolean,
+    canViewEvidence: boolean,
+    trustedContactId?: string,
+    guardianName?: string,
+  ): Promise<{ url: string }> {
     const token = randomBytes(32).toString("base64url");
     const now = this.clock.now();
     await this.prisma.incidentRoom.create({
@@ -748,6 +786,7 @@ export class PlatformService {
         incidentId,
         tokenHash: sha256(token),
         guardianName: guardianName ?? null,
+        trustedContactId: trustedContactId ?? null,
         canViewLocation,
         canViewEvidence,
         expiresAt: new Date(now.getTime() + 24 * 60 * 60 * 1000),
@@ -802,6 +841,7 @@ export class PlatformService {
         status,
         detail,
         providerMessageId,
+        trustedContactId: trustedContactId ?? null,
         queuedAt: now,
         sentAt: status === "SENT" || status === "ACKNOWLEDGED" ? now : null,
         acknowledgedAt: status === "ACKNOWLEDGED" ? now : null,
