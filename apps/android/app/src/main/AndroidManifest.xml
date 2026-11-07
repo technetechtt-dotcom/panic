@@ -73,6 +73,11 @@
             android:foregroundServiceType="location|dataSync|microphone" />
 
         <service
+            android:name=".service.ProtectionTrackingService"
+            android:exported="false"
+            android:foregroundServiceType="location|dataSync" />
+
+        <service
             android:name=".service.SafeWordService"
             android:exported="false"
             android:foregroundServiceType="microphone" />
