@@ -100,9 +100,9 @@ export function PlatformPage() {
           <p>Deliberate SOS does not wait for Safety Fusion. Fusion can open a concern or high-risk incident from a missed check-in on the server.</p>
           <p>Search Corridor is a map hint around the last confirmed point. It is not a claim about where the person is.</p>
           <p>The rules brief restates the timeline. It cannot cancel, accuse, or dispatch.</p>
-          <p>Evidence is encrypted on this server. An S3 copy is written only when the bucket settings are present.</p>
+          <p>Evidence is encrypted before storage. Production Compose requires authoritative S3-compatible object storage and leaves the handset queue to retry if that remote store is unavailable.</p>
           <p>High availability in this repo is two API containers sharing one Postgres and one Redis. That is not a multi-region cluster.</p>
-          <p>Disaster recovery is a Postgres dump from services/api/scripts/backup-restore.mjs. Restoring that dump has to be rehearsed on a spare database before it counts as a drill.</p>
+          <p>Production database backups are encrypted before local/off-host storage and restore verification uses a throwaway database. A real recovery exercise with measured RPO/RTO is still an operational launch gate.</p>
           <h2 className="pt-2 text-xl font-semibold text-white">POPIA operating steps</h2>
           <p>These steps are the in-product process. They are not a legal filing or a certificate.</p>
           <ol className="list-decimal space-y-2 pl-5">
