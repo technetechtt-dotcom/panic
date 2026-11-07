@@ -225,6 +225,12 @@ interface GuardianApi {
     @POST("incidents/{id}/heartbeats")
     suspend fun heartbeat(@Path("id") id: String, @Body body: HeartbeatBody)
 
+    @GET("responders/me/profile")
+    suspend fun responderProfile(): ResponderProfileEnvelope
+
+    @POST("responders/me/profile")
+    suspend fun updateResponderProfile(@Body body: ResponderProfileBody): ResponderProfileEnvelope
+
     @GET("guardian/inbox")
     suspend fun guardianInbox(): GuardianInboxEnvelope
 
@@ -306,6 +312,31 @@ interface GuardianApi {
     @POST("incidents/{id}/evidence")
     suspend fun evidence(@Path("id") id: String, @Body body: EvidenceBody)
 }
+
+@Serializable
+data class ResponderProfileBody(
+    val availability: String,
+    val team: String? = null,
+    val region: String? = null,
+    val capabilities: String? = null,
+    val vehicle: String? = null,
+    val phone: String? = null,
+)
+
+@Serializable
+data class ResponderProfileWire(
+    val id: String? = null,
+    val userId: String,
+    val availability: String = "AVAILABLE",
+    val team: String? = null,
+    val region: String? = null,
+    val capabilities: String? = null,
+    val vehicle: String? = null,
+    val phone: String? = null,
+)
+
+@Serializable
+data class ResponderProfileEnvelope(val data: ResponderProfileWire)
 
 @Serializable
 data class GuardianInboxIncidentWire(
