@@ -72,6 +72,8 @@ export function Shell({ children }: { children: ReactNode }) {
         <nav className="mt-4 flex flex-col gap-2 md:flex-col">
           <NavItem to="/">Dashboard</NavItem>
           <NavItem to="/incidents">Incidents</NavItem>
+          {platform ? <NavItem to="/archive">Archive</NavItem> : null}
+          {platform ? <NavItem to="/reports">Reports</NavItem> : null}
           {manage ? <NavItem to="/people">People</NavItem> : null}
           {platform ? <NavItem to="/platform">Platform</NavItem> : null}
           {manage ? <NavItem to="/audit">Audit</NavItem> : null}
