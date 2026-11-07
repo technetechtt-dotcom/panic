@@ -112,6 +112,8 @@ data class IncidentWire(
     val userDisplayName: String = "",
     val triggerType: String = "",
     val contactStatus: String = "",
+    val protectionMode: String = "",
+    val lastPositionAt: String? = null,
     val lastHeartbeatAt: String? = null,
     val lastLatitude: Double? = null,
     val lastLongitude: Double? = null,
