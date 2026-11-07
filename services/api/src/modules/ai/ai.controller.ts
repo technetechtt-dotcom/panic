@@ -63,6 +63,12 @@ export class AiController {
     return this.ai.decideRecommendation(actorFrom(request), id, recommendationId, input.status).then((data) => ({ data }));
   }
 
+  @Get("admin/ai/operations")
+  @RequirePermissions(Permission.AuditRead)
+  operations() {
+    return this.ai.operations().then((data) => ({ data }));
+  }
+
   @Get("operators/shifts/brief")
   @RequirePermissions(Permission.IncidentReadActive)
   handover(@Req() request: RequestWithUser) {
