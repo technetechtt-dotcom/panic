@@ -1119,6 +1119,15 @@ fun ResponderHomeScreen(
                         Text("${incident.userDisplayName.ifBlank { "Person" }} · ${incident.state}", fontWeight = FontWeight.SemiBold)
                         Text("${incident.triggerType} · contact ${incident.contactStatus.ifBlank { "unknown" }}", color = Color(0xFFB7C0CC))
                         if (incident.protectionMode.isNotBlank()) Text("Protection ${incident.protectionMode}", color = Color(0xFFB7C0CC))
+                        incident.emergencyProfile?.let { profile ->
+                            if (!profile.bloodType.isNullOrBlank() || !profile.allergies.isNullOrBlank() || !profile.medications.isNullOrBlank() || !profile.notes.isNullOrBlank()) {
+                                Text("Emergency profile", fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 8.dp))
+                                profile.bloodType?.takeIf { it.isNotBlank() }?.let { Text("Blood type: $it") }
+                                profile.allergies?.takeIf { it.isNotBlank() }?.let { Text("Allergies: $it") }
+                                profile.medications?.takeIf { it.isNotBlank() }?.let { Text("Medication: $it") }
+                                profile.notes?.takeIf { it.isNotBlank() }?.let { Text("Notes: $it") }
+                            }
+                        }
                         if (incident.lastLatitude != null && incident.lastLongitude != null) {
                             Text(
                                 "Last confirmed ${"%.5f".format(incident.lastLatitude)}, ${"%.5f".format(incident.lastLongitude)} · accuracy ${incident.lastAccuracy ?: "unknown"} m",
