@@ -14,6 +14,7 @@ import { PeoplePage } from "./pages/PeoplePage";
 import { PlatformPage } from "./pages/PlatformPage";
 import { RoomPage } from "./pages/RoomPage";
 import { SecurityPage } from "./pages/SecurityPage";
+import { ShiftPage } from "./pages/ShiftPage";
 import { ForbiddenPage, NotFoundPage } from "./pages/StatusPages";
 
 const PLATFORM_ROLES = ["ADMIN", "SUPERVISOR", "MONITOR_OPERATOR"];
@@ -43,6 +44,7 @@ export function App() {
         <Route path="/archive" element={<RolePage allow={PLATFORM_ROLES}><ArchivePage /></RolePage>} />
         <Route path="/reports" element={<RolePage allow={PLATFORM_ROLES}><ReportsPage /></RolePage>} />
         <Route path="/integrations" element={<RolePage allow={PLATFORM_ROLES}><IntegrationsPage /></RolePage>} />
+        <Route path="/shift" element={<RolePage allow={PLATFORM_ROLES}><ShiftPage /></RolePage>} />
         <Route path="/403" element={<ForbiddenPage />} />
         <Route path="*" element={<NotFoundPage />} />
       </Route>
