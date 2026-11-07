@@ -6,6 +6,8 @@ import { DashboardPage } from "./pages/DashboardPage";
 import { IncidentDetailPage } from "./pages/IncidentDetailPage";
 import { IncidentsPage } from "./pages/IncidentsPage";
 import { AuditPage } from "./pages/AuditPage";
+import { ArchivePage } from "./pages/ArchivePage";
+import { ReportsPage } from "./pages/ReportsPage";
 import { LoginPage } from "./pages/LoginPage";
 import { PeoplePage } from "./pages/PeoplePage";
 import { PlatformPage } from "./pages/PlatformPage";
@@ -37,6 +39,8 @@ export function App() {
         <Route path="/platform" element={<RolePage allow={PLATFORM_ROLES}><PlatformPage /></RolePage>} />
         <Route path="/people" element={<RolePage allow={MANAGE_ROLES}><PeoplePage /></RolePage>} />
         <Route path="/audit" element={<RolePage allow={MANAGE_ROLES}><AuditPage /></RolePage>} />
+        <Route path="/archive" element={<RolePage allow={PLATFORM_ROLES}><ArchivePage /></RolePage>} />
+        <Route path="/reports" element={<RolePage allow={PLATFORM_ROLES}><ReportsPage /></RolePage>} />
         <Route path="/403" element={<ForbiddenPage />} />
         <Route path="*" element={<NotFoundPage />} />
       </Route>
