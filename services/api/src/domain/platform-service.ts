@@ -1,4 +1,4 @@
-import { randomBytes } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import type { Prisma, PrismaClient } from "@prisma/client";
 import type { Role } from "@guardian/shared-types";
 import type { AppConfig } from "../config";
@@ -10,7 +10,7 @@ import { canAdvanceResponder, fusionEvaluate, generateTotpSecret, guardianSmsBod
 import { ProtectionService } from "./protection-service";
 import type { Actor, Clock, DeviceStore, IdGenerator, UserStore } from "./ports";
 import type { PasswordHasher } from "./security";
-import { sha256 } from "./security";
+import { hashToken, openSecret, sealSecret, sha256 } from "./security";
 import { apnsHealth, fcmHealth, sendApns, sendFcm, smsHealth, TwilioSmsProvider } from "./sms";
 import { requestMetrics } from "../common/http";
 import type { MfaStore } from "./auth-service";
@@ -830,19 +830,35 @@ export class PlatformService {
     const now = this.clock.now();
     await this.prisma.operatorMfa.upsert({
       where: { userId: actor.id },
-      create: { userId: actor.id, secret, enabled: false, createdAt: now, updatedAt: now },
-      update: { secret, enabled: false, updatedAt: now },
+      create: { userId: actor.id, secret: sealSecret(secret, this.config.jwtSecret), enabled: false, createdAt: now, updatedAt: now },
+      update: { secret: sealSecret(secret, this.config.jwtSecret), enabled: false, updatedAt: now },
     });
     return { secret, otpauth: `otpauth://totp/Guardian:${encodeURIComponent(actor.displayName)}?secret=${secret}&issuer=Guardian` };
   }
 
   async confirmMfa(actor: Actor, code: string) {
     const row = await this.prisma.operatorMfa.findUnique({ where: { userId: actor.id } });
-    if (!row || !verifyTotp(row.secret, code, this.clock.now().getTime())) {
+    if (!row || !verifyTotp(openSecret(row.secret, this.config.jwtSecret), code, this.clock.now().getTime())) {
       throw new AppError("INVALID_MFA", 401, "That authenticator code was not accepted.");
     }
-    await this.prisma.operatorMfa.update({ where: { userId: actor.id }, data: { enabled: true, updatedAt: this.clock.now() } });
-    return { enabled: true };
+    const now = this.clock.now();
+    await this.prisma.operatorMfa.update({ where: { userId: actor.id }, data: { enabled: true, updatedAt: now } });
+    const recoveryCodes = Array.from({ length: 10 }, () => {
+      const raw = randomBytes(6).toString("hex").toUpperCase();
+      return `${raw.slice(0, 6)}-${raw.slice(6)}`;
+    });
+    await this.prisma.$transaction([
+      this.prisma.operatorMfaRecoveryCode.deleteMany({ where: { userId: actor.id } }),
+      this.prisma.operatorMfaRecoveryCode.createMany({
+        data: recoveryCodes.map((value) => ({
+          id: randomUUID(),
+          userId: actor.id,
+          codeHash: hashToken(value.replace("-", "")),
+          createdAt: now,
+        })),
+      }),
+    ]);
+    return { enabled: true, recoveryCodes };
   }
 
   async room(token: string) {
@@ -1597,7 +1613,10 @@ export class PlatformService {
 }
 
 export class PrismaMfaStore implements MfaStore {
-  constructor(private readonly prisma: PrismaClient) {}
+  constructor(
+    private readonly prisma: PrismaClient,
+    private readonly keyMaterial: string,
+  ) {}
 
   async isEnabled(userId: string): Promise<boolean> {
     try {
@@ -1611,7 +1630,7 @@ export class PrismaMfaStore implements MfaStore {
   async secret(userId: string): Promise<string | null> {
     try {
       const row = await this.prisma.operatorMfa.findUnique({ where: { userId } });
-      return row?.secret ?? null;
+      return row?.secret ? openSecret(row.secret, this.keyMaterial) : null;
     } catch {
       return null;
     }
@@ -1619,14 +1638,38 @@ export class PrismaMfaStore implements MfaStore {
 
   async prepareEnrollment(userId: string, secret: string): Promise<void> {
     const now = new Date();
-    await this.prisma.operatorMfa.upsert({
-      where: { userId },
-      create: { userId, secret, enabled: false, createdAt: now, updatedAt: now },
-      update: { secret, enabled: false, updatedAt: now },
-    });
+    const sealed = sealSecret(secret, this.keyMaterial);
+    await this.prisma.$transaction([
+      this.prisma.operatorMfa.upsert({
+        where: { userId },
+        create: { userId, secret: sealed, enabled: false, createdAt: now, updatedAt: now },
+        update: { secret: sealed, enabled: false, updatedAt: now },
+      }),
+      this.prisma.operatorMfaRecoveryCode.deleteMany({ where: { userId } }),
+    ]);
   }
 
   async enable(userId: string): Promise<void> {
     await this.prisma.operatorMfa.updateMany({ where: { userId }, data: { enabled: true, updatedAt: new Date() } });
+  }
+
+  async replaceRecoveryCodes(userId: string, codeHashes: string[]): Promise<void> {
+    const now = new Date();
+    await this.prisma.$transaction([
+      this.prisma.operatorMfaRecoveryCode.deleteMany({ where: { userId } }),
+      this.prisma.operatorMfaRecoveryCode.createMany({
+        data: codeHashes.map((codeHash) => ({ id: randomUUID(), userId, codeHash, createdAt: now })),
+      }),
+    ]);
+  }
+
+  async consumeRecoveryCode(userId: string, codeHash: string, now: Date): Promise<boolean> {
+    const row = await this.prisma.operatorMfaRecoveryCode.findFirst({ where: { userId, codeHash, usedAt: null } });
+    if (!row) return false;
+    const updated = await this.prisma.operatorMfaRecoveryCode.updateMany({
+      where: { id: row.id, usedAt: null },
+      data: { usedAt: now },
+    });
+    return updated.count === 1;
   }
 }
