@@ -12,7 +12,8 @@ export async function geocodeDestination(
   const trimmed = query.trim();
   if (!trimmed) return null;
   if (env.NODE_ENV === "test" && !env.GEOCODER_FORCE) return null;
-  const url = new URL("https://nominatim.openstreetmap.org/search");
+  const base = env.GEOCODER_URL?.trim() || "https://nominatim.openstreetmap.org/search";
+  const url = new URL(base);
   url.searchParams.set("q", trimmed);
   url.searchParams.set("format", "json");
   url.searchParams.set("limit", "1");
