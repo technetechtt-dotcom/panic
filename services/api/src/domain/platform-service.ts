@@ -935,7 +935,10 @@ export class PlatformService {
     const rows = await this.prisma.responderAssignment.findMany({ where: { responderId: actor.id }, select: { incidentId: true, status: true } });
     const incidents = [];
     for (const row of rows) {
-      const incident = await this.prisma.incident.findUnique({ where: { id: row.incidentId }, include: { user: true } });
+      const incident = await this.prisma.incident.findUnique({
+        where: { id: row.incidentId },
+        include: { user: { include: { profile: true } } },
+      });
       if (!incident || incident.state === "RESOLVED" || incident.state === "FALSE_ALARM" || incident.state === "ARCHIVED") continue;
       incidents.push({
         id: incident.id,
@@ -950,6 +953,12 @@ export class PlatformService {
         lastLongitude: incident.lastLongitude,
         lastAccuracy: incident.lastAccuracy,
         lastPositionAt: incident.lastPositionAt?.toISOString() ?? null,
+        emergencyProfile: incident.user.profile ? {
+          bloodType: incident.user.profile.bloodType,
+          allergies: incident.user.profile.allergies,
+          medications: incident.user.profile.medications,
+          notes: incident.user.profile.notes,
+        } : null,
         assignment: row.status,
       });
     }
