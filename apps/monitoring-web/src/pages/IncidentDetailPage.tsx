@@ -11,6 +11,28 @@ import { AiPanel } from "./AiPanel";
 const tileUrl = import.meta.env.VITE_MAP_TILE_URL || "https://tile.openstreetmap.org/{z}/{x}/{y}.png";
 const tileAttribution = import.meta.env.VITE_MAP_TILE_ATTRIBUTION || "© OpenStreetMap contributors";
 
+interface EmergencyProfile {
+  bloodType: string | null;
+  allergies: string | null;
+  medications: string | null;
+  notes: string | null;
+}
+interface CommunicationEntry {
+  id: string;
+  at: string;
+  kind: string;
+  channel: string;
+  message: string;
+  status: string | null;
+}
+interface SearchArea {
+  id: string;
+  kind: string;
+  label: string;
+  confidence: number;
+  polygon: Array<{ latitude: number; longitude: number }>;
+}
+
 export function IncidentDetailPage() {
   const { id = "" } = useParams();
   const { session } = useAuth();
@@ -71,6 +93,22 @@ export function IncidentDetailPage() {
     queryFn: () => api<Array<{ id: string; channel: string; status: string; detail: string; destination: string; providerMessageId?: string; attemptNumber?: number; sentAt?: string; deliveredAt?: string; failedAt?: string; failureCode?: string }>>(`/api/v1/incidents/${id}/deliveries`, token),
   });
 
+  const emergencyProfile = useQuery({
+    queryKey: ["emergency-profile", id],
+    queryFn: () => api<EmergencyProfile>(`/api/v1/incidents/${id}/emergency-profile`, token),
+  });
+  const communications = useQuery({
+    queryKey: ["communications", id],
+    queryFn: () => api<CommunicationEntry[]>(`/api/v1/incidents/${id}/communications`, token),
+    refetchInterval: 4_000,
+  });
+  const aiSearch = useQuery({
+    queryKey: ["ai-search", id],
+    enabled: operator,
+    queryFn: () => api<SearchArea[]>(`/api/v1/incidents/${id}/ai/search`, token),
+    refetchInterval: 15_000,
+  });
+
   const action = useMutation({
     mutationFn: async (kind: "acknowledge" | "resolve") => {
       await api(`/api/v1/incidents/${id}/${kind}`, token, {
@@ -107,12 +145,15 @@ export function IncidentDetailPage() {
       {incident.isError ? <p className="mt-6 text-sos">This incident could not be loaded.</p> : null}
       {current ? (
         <>
-        <nav className="mt-4 flex flex-wrap gap-2" aria-label="Incident sections">
-          {["overview", "map", "evidence", "guardians", "responders", "timeline", "intelligence"].map((name) => (
+        <nav className="mt-4 flex flex-wrap gap-2" aria-label="Incident sections" role="tablist">
+          {["overview", "map", "evidence", "guardians", "responders", "timeline", "communications", "profile", "intelligence"].map((name) => (
             <button
               key={name}
               type="button"
-              aria-pressed={tab === name}
+              role="tab"
+              aria-selected={tab === name}
+              aria-controls={`incident-panel-${name}`}
+              id={`incident-tab-${name}`}
               onClick={() => setTab(name)}
               className={`rounded-lg px-3 py-2 text-sm ${tab === name ? "bg-ink text-white" : "border border-line"}`}
             >
@@ -121,7 +162,33 @@ export function IncidentDetailPage() {
           ))}
         </nav>
         {tab === "intelligence" ? <AiPanel id={id} token={token} canDecide={operator} /> : null}
-        <div className={`mt-4 grid gap-4 lg:grid-cols-[280px_1fr_320px] ${tab === "intelligence" ? "hidden" : ""}`}>
+        {tab === "communications" ? (
+          <section id="incident-panel-communications" role="tabpanel" aria-labelledby="incident-tab-communications" className="mt-4 rounded-2xl border border-line bg-panel p-4">
+            <h2 className="text-xl font-semibold">Communications</h2>
+            <p className="mt-1 text-sm text-slate-400">Ordered delivery, operator, responder and emergency-service events.</p>
+            <ol className="mt-4 space-y-3 text-sm">
+              {(communications.data ?? []).map(entry => <li key={entry.id} className="border-l-2 border-line pl-3">
+                <time className="block text-xs text-slate-400">{new Date(entry.at).toLocaleString()}</time>
+                <strong>{entry.channel}</strong> · {entry.kind}{entry.status ? ` · ${entry.status}` : ""}
+                <p className="text-slate-300">{entry.message}</p>
+              </li>)}
+              {communications.data?.length === 0 ? <li>No communications recorded yet.</li> : null}
+            </ol>
+          </section>
+        ) : null}
+        {tab === "profile" ? (
+          <section id="incident-panel-profile" role="tabpanel" aria-labelledby="incident-tab-profile" className="mt-4 rounded-2xl border border-line bg-panel p-4">
+            <h2 className="text-xl font-semibold">Emergency profile</h2>
+            <p className="mt-1 text-sm text-slate-400">Authorised incident information only.</p>
+            <dl className="mt-4 grid gap-3 text-sm sm:grid-cols-2">
+              <Row label="Blood type" value={emergencyProfile.data?.bloodType ?? "not recorded"} />
+              <Row label="Allergies" value={emergencyProfile.data?.allergies ?? "not recorded"} />
+              <Row label="Medications" value={emergencyProfile.data?.medications ?? "not recorded"} />
+              <Row label="Notes" value={emergencyProfile.data?.notes ?? "not recorded"} />
+            </dl>
+          </section>
+        ) : null}
+        <div id={`incident-panel-${tab}`} role="tabpanel" aria-labelledby={`incident-tab-${tab}`} className={`mt-4 grid gap-4 lg:grid-cols-[280px_1fr_320px] ${["intelligence","communications","profile"].includes(tab) ? "hidden" : ""}`}>
           <section className={`rounded-2xl border border-line bg-panel p-4 ${tab === "overview" || tab === "responders" ? "" : "lg:block hidden"}`}>
             <h1 className="text-2xl font-semibold">{current.userDisplayName}</h1>
             <dl className="mt-4 space-y-2 text-sm">
@@ -150,6 +217,13 @@ export function IncidentDetailPage() {
                   {corridor.data?.polygon?.length ? (
                     <Polygon positions={corridor.data.polygon.map((point) => [point.latitude, point.longitude])} pathOptions={{ color: "#7eb6ff" }} />
                   ) : null}
+                  {(aiSearch.data ?? []).filter(area => Array.isArray(area.polygon) && area.polygon.length >= 3).map(area => (
+                    <Polygon
+                      key={area.id}
+                      positions={area.polygon.map(point => [point.latitude, point.longitude])}
+                      pathOptions={{ color: "#c084fc", dashArray: "6 6", fillOpacity: Math.max(0.08, Math.min(0.28, area.confidence * 0.25)) }}
+                    />
+                  ))}
                   <CircleMarker center={[position.lat, position.lng]} radius={10} pathOptions={{ color: "#e23b3b" }} />
                 </MapContainer>
               ) : (
@@ -157,7 +231,7 @@ export function IncidentDetailPage() {
               )}
             </div>
             <p className="mt-2 text-xs text-slate-400">
-              The marker is the last confirmed device report. The blue shape is a search hint around that point, not a claim about where the person is.
+              The red marker is the last confirmed device report. Blue is the deterministic search corridor. Dashed purple areas are AI search predictions and are never confirmed locations.
               Replace the public tile server before production use.
             </p>
           </section>
