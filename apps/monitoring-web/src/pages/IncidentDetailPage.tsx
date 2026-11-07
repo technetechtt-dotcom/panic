@@ -44,7 +44,11 @@ export function IncidentDetailPage() {
   const [preview, setPreview] = useState<string | null>(null);
   const [media, setMedia] = useState<{ url: string; type: string } | null>(null);
   const [tab, setTab] = useState("overview");
+  const [retentionDays, setRetentionDays] = useState("365");
+  const [legalHold, setLegalHold] = useState(false);
+  const [retentionPolicy, setRetentionPolicy] = useState("STANDARD");
   const operator = session?.user.role !== "RESPONDER";
+  const canManageEvidence = session?.user.role === "ADMIN" || session?.user.role === "SUPERVISOR";
 
   const incident = useQuery({
     queryKey: ["incident", id],
@@ -123,6 +127,38 @@ export function IncidentDetailPage() {
     },
     onError: (caught: unknown) => setError(caught instanceof Error ? caught.message : "The action failed."),
   });
+
+  async function downloadEvidenceManifest() {
+    setError(null);
+    try {
+      const manifest = await api<Record<string, unknown>>(`/api/v1/incidents/${id}/evidence-manifest`, token);
+      const url = URL.createObjectURL(new Blob([JSON.stringify(manifest, null, 2)], { type: "application/json" }));
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = `guardian-evidence-${id}.json`;
+      anchor.click();
+      URL.revokeObjectURL(url);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "The evidence manifest could not be exported.");
+    }
+  }
+
+  async function saveEvidenceGovernance() {
+    setError(null);
+    try {
+      await api(`/api/v1/admin/incidents/${id}/evidence/governance`, token, {
+        method: "POST",
+        body: JSON.stringify({
+          retentionDays: Number(retentionDays),
+          legalHold,
+          policy: retentionPolicy.trim() || "STANDARD",
+        }),
+      });
+      await queryClient.invalidateQueries({ queryKey: ["evidence", id] });
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Evidence governance could not be updated.");
+    }
+  }
 
   const current = incident.data;
   const points = locations.data ?? [];
@@ -300,6 +336,47 @@ export function IncidentDetailPage() {
               ))}
               {evidence.data?.length === 0 ? <li>No evidence stored for this incident.</li> : null}
             </ul>
+            <div className={`mt-3 space-y-2 ${tab === "evidence" || tab === "overview" ? "" : "hidden"}`}>
+              <button type="button" className="rounded-lg border border-line px-3 py-2 text-sm" onClick={() => void downloadEvidenceManifest()}>
+                Export chain-of-custody manifest
+              </button>
+              {canManageEvidence ? (
+                <div className="rounded-xl border border-line p-3 text-sm">
+                  <h3 className="font-semibold">Evidence governance</h3>
+                  <div className="mt-2 grid gap-2 sm:grid-cols-3">
+                    <label>
+                      Retention days
+                      <input
+                        type="number"
+                        min={1}
+                        max={3650}
+                        value={retentionDays}
+                        disabled={legalHold}
+                        onChange={(event) => setRetentionDays(event.target.value)}
+                        className="mt-1 w-full rounded-lg border border-line bg-ink px-2 py-2"
+                      />
+                    </label>
+                    <label>
+                      Policy
+                      <input
+                        value={retentionPolicy}
+                        maxLength={40}
+                        onChange={(event) => setRetentionPolicy(event.target.value)}
+                        className="mt-1 w-full rounded-lg border border-line bg-ink px-2 py-2"
+                      />
+                    </label>
+                    <label className="flex items-end gap-2 pb-2">
+                      <input type="checkbox" checked={legalHold} onChange={(event) => setLegalHold(event.target.checked)} />
+                      Legal hold
+                    </label>
+                  </div>
+                  <button type="button" className="mt-2 rounded-lg border border-line px-3 py-2" onClick={() => void saveEvidenceGovernance()}>
+                    Save retention / hold
+                  </button>
+                  <p className="mt-2 text-xs text-slate-400">A legal hold clears automatic expiry. Changes are written to the audit log.</p>
+                </div>
+              ) : null}
+            </div>
             {preview ? <img src={preview} alt="Incident evidence" className="mt-3 max-h-64 rounded-lg" /> : null}
             {media?.type.startsWith("audio/") ? <audio className="mt-3 w-full" controls src={media.url} /> : null}
             {media?.type.startsWith("video/") ? <video className="mt-3 max-h-64 w-full" controls src={media.url} /> : null}
