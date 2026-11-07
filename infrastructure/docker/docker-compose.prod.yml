@@ -27,8 +27,15 @@ services:
       dockerfile: services/api/Dockerfile
     env_file: ../../.env
     environment:
+      NODE_ENV: production
       DATABASE_URL: postgresql://${POSTGRES_USER:-guardian}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-guardian}
       REDIS_URL: redis://redis:6379
+      JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:?Set JWT_ACCESS_SECRET}
+      EVIDENCE_VAULT_KEY: ${EVIDENCE_VAULT_KEY:?Set EVIDENCE_VAULT_KEY}
+      PUBLIC_API_URL: ${PUBLIC_API_URL:?Set PUBLIC_API_URL to the public HTTPS API origin}
+      CORS_ORIGIN: ${CORS_ORIGIN:?Set CORS_ORIGIN to the monitoring hub origin}
+      DEEP_LINK_BASE: ${DEEP_LINK_BASE:?Set DEEP_LINK_BASE to the verified links host}
+      GUARDIAN_REQUIRE_DELIVERY_PROVIDER: "true"
       EVIDENCE_VAULT_DIR: /app/data/evidence-vault
       EVIDENCE_REMOTE_REQUIRED: "true"
       S3_BUCKET: ${S3_BUCKET:?Set S3_BUCKET for authoritative evidence storage}
