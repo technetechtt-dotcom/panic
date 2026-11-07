@@ -12,6 +12,7 @@ export function Shell({ children }: { children: ReactNode }) {
   const platform = role === "ADMIN" || role === "SUPERVISOR" || role === "MONITOR_OPERATOR";
   const queryClient = useQueryClient();
   const [alarm, setAlarm] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
   const audioRef = useRef<AudioContext | null>(null);
   const token = session?.accessToken ?? null;
   const incidents = useQuery({
@@ -69,7 +70,16 @@ export function Shell({ children }: { children: ReactNode }) {
         <p className="text-sm uppercase tracking-[0.2em] text-warn">Guardian</p>
         <p className="mt-1 text-sm text-slate-300">{session?.user.displayName}</p>
         <p className="text-xs text-slate-400">{role.replace(/_/g, " ")}</p>
-        <nav className="mt-4 flex flex-col gap-2 md:flex-col">
+        <button
+          type="button"
+          className="mt-3 rounded-lg border border-line px-3 py-2 text-sm md:hidden"
+          aria-expanded={menuOpen}
+          aria-controls="guardian-main-nav"
+          onClick={() => setMenuOpen((value) => !value)}
+        >
+          {menuOpen ? "Close menu" : "Menu"}
+        </button>
+        <nav id="guardian-main-nav" className={`mt-4 ${menuOpen ? "flex" : "hidden"} flex-col gap-2 md:flex`}>
           <NavItem to="/">Dashboard</NavItem>
           <NavItem to="/incidents">Incidents</NavItem>
           {platform ? <NavItem to="/shift">Shift</NavItem> : null}
@@ -82,13 +92,13 @@ export function Shell({ children }: { children: ReactNode }) {
           {manage ? <NavItem to="/audit">Audit</NavItem> : null}
           <NavItem to="/security">Security</NavItem>
         </nav>
-        <button type="button" onClick={() => void logout()} className="mt-4 rounded-lg border border-line px-3 py-2 text-sm">
+        <button type="button" onClick={() => void logout()} className={`mt-4 rounded-lg border border-line px-3 py-2 text-sm ${menuOpen ? "inline-block" : "hidden"} md:inline-block`}>
           Sign out
         </button>
       </aside>
       <div>
         {alarm && openSos[0] ? (
-          <p className="border-b border-line bg-sos px-4 py-3 text-sm font-semibold">
+          <p className="border-b border-line bg-sos px-4 py-3 text-sm font-semibold" role="alert" aria-live="assertive">
             Unacknowledged SOS. Operator claim countdown {remaining}s.
             {overdue ? " Escalated to a supervisor after 30 seconds without an ack." : ""}{" "}
             <Link to={`/incidents/${openSos[0].id}`} className="underline" onClick={() => setAlarm(false)}>
