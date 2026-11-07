@@ -55,7 +55,7 @@ export function DashboardPage() {
     refetchInterval: 5_000,
   });
   const live = useMemo(
-    () => (incidents.data ?? []).filter((row) => !["RESOLVED", "ARCHIVED"].includes(row.state) && !row.isTest),
+    () => (incidents.data ?? []).filter((row) => !["RESOLVED", "FALSE_ALARM", "ARCHIVED"].includes(row.state) && !row.isTest),
     [incidents.data],
   );
   const unacked = live.filter((row) => row.state === "SOS" && !row.acknowledgedAt);
