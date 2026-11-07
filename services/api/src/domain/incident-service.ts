@@ -564,6 +564,32 @@ export class IncidentService {
     return dto;
   }
 
+  async markFalseAlarm(actor: Actor, incidentId: string, note: string | undefined, requestId: string | null) {
+    if (!hasPermission(actor.role, Permission.IncidentResolve)) {
+      throw new AppError("FORBIDDEN", 403, "You cannot close incidents as false alarms.");
+    }
+    const incident = await this.requireKnown(incidentId);
+    this.assertTransition(incident, "FALSE_ALARM");
+    const now = this.clock.now();
+    incident.state = "FALSE_ALARM";
+    incident.resolvedAt = now;
+    incident.resolvedById = actor.id;
+    incident.updatedAt = now;
+    await this.incidents.save(incident);
+    await this.timeline.append({
+      id: this.ids.uuid(),
+      incidentId: incident.id,
+      type: "incident.false_alarm",
+      message: note ? `Incident closed as false alarm. ${note}` : "Incident closed as false alarm",
+      occurredAt: now.toISOString(),
+      actorId: actor.id,
+    });
+    await this.writeStateAudit(actor, incident, "incident.false_alarm", requestId, now);
+    const dto = toIncidentDto(incident);
+    this.publisher.publish("incident.resolved", dto);
+    return dto;
+  }
+
   async timelineFor(actor: Actor, incidentId: string) {
     await this.requireReadable(actor, incidentId);
     return this.timeline.list(incidentId);
