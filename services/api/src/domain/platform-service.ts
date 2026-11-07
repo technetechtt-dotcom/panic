@@ -1247,7 +1247,7 @@ export class PlatformService {
         entityId,
         correlationId: null,
         requestId: null,
-        metadata,
+        metadata: metadata as Prisma.InputJsonValue,
         createdAt: now,
         updatedAt: now,
       },
@@ -1514,6 +1514,7 @@ export class PlatformService {
         speed: 16,
         bearing: 210,
         altitude: null,
+        source: "DEMO",
         recordedAt: now,
       },
     });
@@ -1567,7 +1568,7 @@ export class PlatformService {
         },
       });
       await this.prisma.incidentLocation.create({
-        data: { id: this.ids.uuid(), incidentId: incident.id, clientPointId: this.ids.uuid(), latitude, longitude, accuracy: 12, speed: 18, bearing: 215, altitude: null, recordedAt: now },
+        data: { id: this.ids.uuid(), incidentId: incident.id, clientPointId: this.ids.uuid(), latitude, longitude, accuracy: 12, speed: 18, bearing: 215, altitude: null, source: "DEMO", recordedAt: now },
       });
       await this.prisma.timelineEvent.create({ data: { id: this.ids.uuid(), incidentId: incident.id, type: "device.contact_lost", message: "TEST device contact lost after route deviation.", occurredAt: now } });
     } else if (stage === 2) {
