@@ -183,6 +183,13 @@ export class PlatformController {
     return this.platform.incidentCommunications(actorFrom(request), id).then((data) => ({ data }));
   }
 
+  @Post("admin/integrations/:kind/test")
+  @HttpCode(200)
+  @RequirePermissions(Permission.UserManage)
+  integrationTest(@Param("kind") kind: string, @Req() request: RequestWithUser) {
+    return this.platform.integrationTest(actorFrom(request), kind).then((data) => ({ data }));
+  }
+
   @Post("admin/outbox/dead/:id/retry")
   @HttpCode(200)
   @RequirePermissions(Permission.UserManage)
