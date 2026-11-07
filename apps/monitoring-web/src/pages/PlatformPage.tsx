@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
 
@@ -22,7 +22,7 @@ interface PlatformStatus {
   gitCommit?: string;
   evidenceQueue?: string;
   notificationBacklog?: string | { pending: number; failed: number; dead: number; processing: number };
-  deadLetters?: Array<{ type: string; aggregateId: string; attempts: number; lastError: string; failedAt: string }>;
+  deadLetters?: Array<{ id: string; outboxEventId: string; type: string; aggregateId: string; attempts: number; lastError: string; failedAt: string }>;
   ai?: {
     productionModel: string;
     shadowModel: string;
@@ -36,12 +36,18 @@ interface PlatformStatus {
 export function PlatformPage() {
   const { session } = useAuth();
   const token = session?.accessToken ?? null;
+  const queryClient = useQueryClient();
+  const canRecover = session?.user.role === "ADMIN" || session?.user.role === "SUPERVISOR";
   const status = useQuery({
     queryKey: ["platform"],
     queryFn: () => api<PlatformStatus>("/api/v1/admin/platform", token),
     refetchInterval: 15_000,
   });
   const row = status.data;
+  async function recover(id: string, action: "retry" | "resolve") {
+    await api(`/api/v1/admin/outbox/dead/${id}/${action}`, token, { method: "POST", body: JSON.stringify({}) });
+    await queryClient.invalidateQueries({ queryKey: ["platform"] });
+  }
 
   return (
       <main className="px-4 py-6">
@@ -74,8 +80,15 @@ export function PlatformPage() {
           <ul className="mt-3 space-y-2 text-sm text-slate-300">
             {(row?.deadLetters ?? []).map((letter) => (
               <li key={`${letter.aggregateId}-${letter.failedAt}`} className="rounded-xl border border-line bg-panel p-3">
-                {letter.type} · {letter.attempts} attempts · {letter.failedAt}
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span>{letter.type} · {letter.attempts} attempts · {letter.failedAt}</span>
+                  <a href={`/incidents/${letter.aggregateId}`} className="underline">Open related incident</a>
+                </div>
                 <span className="mt-1 block text-slate-400">{letter.lastError}</span>
+                {canRecover ? <div className="mt-2 flex gap-2">
+                  <button type="button" className="rounded-lg border border-line px-3 py-1" onClick={() => void recover(letter.id, "retry")}>Retry / requeue</button>
+                  <button type="button" className="rounded-lg border border-line px-3 py-1" onClick={() => void recover(letter.id, "resolve")}>Mark resolved</button>
+                </div> : null}
               </li>
             ))}
             {(row?.deadLetters ?? []).length === 0 ? <li>No dead letters.</li> : null}
