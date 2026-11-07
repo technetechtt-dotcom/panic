@@ -103,6 +103,8 @@ class HomeViewModel @Inject constructor(
         private set
     var assignments by mutableStateOf<List<Pair<String, String>>>(emptyList())
         private set
+    var protectedPeople by mutableStateOf<List<za.co.guardian.data.GuardianInboxPersonWire>>(emptyList())
+        private set
     var remainingMs by mutableStateOf(practiceMode.remainingMs())
         private set
 
@@ -111,7 +113,7 @@ class HomeViewModel @Inject constructor(
         practiceState.value = practiceMode.enabled()
         remainingMs = practiceMode.remainingMs()
         role = tokens?.userRole() ?: "USER"
-        if (role == "RESPONDER" && api != null) {
+        if (api != null && role == "RESPONDER") {
             viewModelScope.launch {
                 assignments = try {
                     api.incidents().data.map { incident ->
@@ -121,6 +123,19 @@ class HomeViewModel @Inject constructor(
                     emptyList()
                 }
             }
+        } else {
+            assignments = emptyList()
+        }
+        if (api != null && role == "GUARDIAN") {
+            viewModelScope.launch {
+                protectedPeople = try {
+                    api.guardianInbox().data
+                } catch (_: Exception) {
+                    emptyList()
+                }
+            }
+        } else {
+            protectedPeople = emptyList()
         }
     }
 
@@ -900,6 +915,84 @@ fun HomeScreen(
                 Text("Open the phone dialer for 112")
             }
             Text("This opens the dialer. Guardian does not place the call.", modifier = Modifier.padding(vertical = 8.dp))
+        }
+    }
+}
+
+@Composable
+fun GuardianHomeScreen(
+    onProfile: () -> Unit,
+    onSignedOut: () -> Unit,
+    viewModel: HomeViewModel = hiltViewModel(),
+) {
+    androidx.compose.runtime.LaunchedEffect(Unit) { viewModel.refresh() }
+    Scaffold { padding ->
+        Column(Modifier.fillMaxSize().padding(padding).padding(20.dp).verticalScroll(rememberScrollState())) {
+            Text("Guardian", fontSize = 34.sp, fontWeight = FontWeight.Bold)
+            Text("People I protect", fontSize = 22.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 16.dp))
+            if (viewModel.protectedPeople.isEmpty()) {
+                Text("No accepted protection invitations yet.", modifier = Modifier.padding(top = 8.dp))
+            }
+            viewModel.protectedPeople.forEach { person ->
+                val active = person.activeIncidents
+                Surface(modifier = Modifier.fillMaxWidth().padding(top = 10.dp), color = Color(0xFF171C24)) {
+                    Column(Modifier.padding(14.dp)) {
+                        Text(person.displayName, fontWeight = FontWeight.SemiBold, fontSize = 19.sp)
+                        Text("${person.relationship} · priority ${person.priority}", color = Color(0xFFB7C0CC))
+                        if (active.isEmpty()) {
+                            Text("SAFE · no active Guardian incident", color = Color(0xFF8BD3A8), modifier = Modifier.padding(top = 6.dp))
+                        } else {
+                            active.forEach { incident ->
+                                Text(
+                                    "${incident.state} · ${incident.triggerType} · ${incident.contactStatus.ifBlank { "contact unknown" }}",
+                                    color = Color(0xFFE23B3B),
+                                    fontWeight = FontWeight.Bold,
+                                    modifier = Modifier.padding(top = 6.dp),
+                                )
+                            }
+                            Text("Open the incident from the alert notification or private Guardian Room link.", modifier = Modifier.padding(top = 6.dp))
+                        }
+                        person.lastAcknowledgedAt?.let { Text("Last acknowledgement $it", color = Color(0xFFB7C0CC)) }
+                    }
+                }
+            }
+            viewModel.message.collectAsStateWithLifecycle().value?.let { Text(it, modifier = Modifier.padding(top = 12.dp)) }
+            Button(onClick = { viewModel.refresh() }, modifier = Modifier.fillMaxWidth().padding(top = 16.dp)) { Text("Refresh alerts") }
+            Button(onClick = onProfile, modifier = Modifier.fillMaxWidth()) { Text("Profile & settings") }
+            Text("Guardian alerts are relationship-scoped. This account cannot acknowledge another person's delivery only because it has the GUARDIAN role.", modifier = Modifier.padding(top = 12.dp))
+        }
+    }
+}
+
+@Composable
+fun ResponderHomeScreen(
+    onProfile: () -> Unit,
+    viewModel: HomeViewModel = hiltViewModel(),
+) {
+    val message by viewModel.message.collectAsStateWithLifecycle()
+    androidx.compose.runtime.LaunchedEffect(Unit) { viewModel.refresh() }
+    Scaffold { padding ->
+        Column(Modifier.fillMaxSize().padding(padding).padding(20.dp).verticalScroll(rememberScrollState())) {
+            Text("Responder", fontSize = 34.sp, fontWeight = FontWeight.Bold)
+            Text("Assignments", fontSize = 22.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 16.dp))
+            if (viewModel.assignments.isEmpty()) Text("No active assignments.", modifier = Modifier.padding(top = 8.dp))
+            viewModel.assignments.forEach { (id, label) ->
+                Surface(modifier = Modifier.fillMaxWidth().padding(top = 10.dp), color = Color(0xFF171C24)) {
+                    Column(Modifier.padding(14.dp)) {
+                        Text(label, fontWeight = FontWeight.SemiBold)
+                        Button(onClick = { viewModel.updateAssignment(id, "ACCEPTED", "Assignment accepted. Live location sharing started.") }, modifier = Modifier.fillMaxWidth()) { Text("Accept") }
+                        Button(onClick = { viewModel.updateAssignment(id, "EN_ROUTE", "Marked en route. Live location sharing continues.") }, modifier = Modifier.fillMaxWidth()) { Text("En route") }
+                        Button(onClick = { viewModel.updateAssignment(id, "ON_SCENE", "Marked on scene.") }, modifier = Modifier.fillMaxWidth()) { Text("On scene") }
+                        Button(onClick = { viewModel.reportLocated(id) }, modifier = Modifier.fillMaxWidth()) { Text("Person located") }
+                        Button(onClick = { viewModel.updateAssignment(id, "COMPLETED", "Assignment completed. Live location sharing stopped.") }, modifier = Modifier.fillMaxWidth()) { Text("Complete") }
+                        TextButton(onClick = { viewModel.updateAssignment(id, "DECLINED", "Assignment declined. Live location sharing stopped.") }) { Text("Decline") }
+                    }
+                }
+            }
+            message?.let { Text(it, modifier = Modifier.padding(top = 12.dp)) }
+            Button(onClick = { viewModel.refresh() }, modifier = Modifier.fillMaxWidth().padding(top = 16.dp)) { Text("Refresh assignments") }
+            Button(onClick = onProfile, modifier = Modifier.fillMaxWidth()) { Text("Profile & settings") }
+            Text("Guardian shows a visible Android location notification whenever responder location is being shared.", modifier = Modifier.padding(top = 12.dp))
         }
     }
 }
