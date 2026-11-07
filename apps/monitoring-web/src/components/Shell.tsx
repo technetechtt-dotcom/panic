@@ -90,6 +90,7 @@ export function Shell({ children }: { children: ReactNode }) {
           {platform ? <NavItem to="/integrations">Integrations</NavItem> : null}
           {platform ? <NavItem to="/platform">Platform</NavItem> : null}
           {manage ? <NavItem to="/audit">Audit</NavItem> : null}
+          {manage ? <NavItem to="/ai-operations">AI Operations</NavItem> : null}
           <NavItem to="/security">Security</NavItem>
         </nav>
         <button type="button" onClick={() => void logout()} className={`mt-4 rounded-lg border border-line px-3 py-2 text-sm ${menuOpen ? "inline-block" : "hidden"} md:inline-block`}>
