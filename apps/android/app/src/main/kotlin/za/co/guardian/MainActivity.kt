@@ -26,6 +26,7 @@ import za.co.guardian.ui.DuressPage
 import za.co.guardian.ui.EmergencyProfilePage
 import za.co.guardian.ui.ForgotPasswordScreen
 import za.co.guardian.ui.GuardianTheme
+import za.co.guardian.ui.GuardianHomeScreen
 import za.co.guardian.ui.GuardiansScreen
 import za.co.guardian.ui.HistoryScreen
 import za.co.guardian.ui.HomeScreen
@@ -36,6 +37,7 @@ import za.co.guardian.ui.OnboardingScreen
 import za.co.guardian.ui.PrivacyPage
 import za.co.guardian.ui.ProfileScreen
 import za.co.guardian.ui.RegisterScreen
+import za.co.guardian.ui.ResponderHomeScreen
 import za.co.guardian.ui.ResetPasswordScreen
 import za.co.guardian.ui.SafeWordPage
 import za.co.guardian.ui.SettingsScreen
@@ -63,11 +65,19 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
+        openGuardianRoom(intent)
         pendingDeepLink = parseGuardianDeepLink(intent)
+    }
+
+    private fun openGuardianRoom(intent: Intent): Boolean {
+        val roomUrl = intent.getStringExtra("roomUrl")?.takeIf { it.startsWith("https://") } ?: return false
+        runCatching { startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse(roomUrl))) }
+        return true
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        openGuardianRoom(intent)
         signedIn = tokens.accessToken() != null
         if (intent.getBooleanExtra("resume", false) && settings.incidentActive()) {
             controller.start(
@@ -82,16 +92,21 @@ class MainActivity : ComponentActivity() {
         setContent {
             GuardianTheme {
                 val nav = rememberNavController()
+                fun roleHome(): String = when (tokens.userRole()) {
+                    "GUARDIAN" -> "guardian-home"
+                    "RESPONDER" -> "responder-home"
+                    else -> "home"
+                }
+                fun signedInDestination(): String = if (tokens.userRole() == "USER" && !settings.onboarded()) "onboarding" else roleHome()
                 val start = when {
                     !signedIn -> "welcome"
-                    !settings.onboarded() -> "onboarding"
-                    settings.incidentActive() -> "active"
-                    else -> "home"
+                    tokens.userRole() == "USER" && !settings.onboarded() -> "onboarding"
+                    tokens.userRole() == "USER" && settings.incidentActive() -> "active"
+                    else -> roleHome()
                 }
                 fun afterAuth() {
                     signedIn = true
-                    val dest = if (settings.onboarded()) "home" else "onboarding"
-                    nav.navigate(dest) { popUpTo("welcome") { inclusive = true } }
+                    nav.navigate(signedInDestination()) { popUpTo("welcome") { inclusive = true } }
                 }
                 fun signOut() {
                     signedIn = false
@@ -100,12 +115,23 @@ class MainActivity : ComponentActivity() {
                 androidx.compose.runtime.LaunchedEffect(pendingDeepLink, signedIn) {
                     val link = pendingDeepLink ?: return@LaunchedEffect
                     when (link.destination) {
-                        "verify" -> nav.navigate("verify/${android.net.Uri.encode(link.token)}")
-                        "reset" -> nav.navigate("reset/${android.net.Uri.encode(link.token)}")
-                        "invite" -> if (signedIn) nav.navigate("invite/${android.net.Uri.encode(link.token)}")
-                            else nav.navigate("login")
+                        "verify" -> {
+                            nav.navigate("verify/${android.net.Uri.encode(link.token)}")
+                            pendingDeepLink = null
+                        }
+                        "reset" -> {
+                            nav.navigate("reset/${android.net.Uri.encode(link.token)}")
+                            pendingDeepLink = null
+                        }
+                        "invite" -> {
+                            if (signedIn) {
+                                nav.navigate("invite/${android.net.Uri.encode(link.token)}")
+                                pendingDeepLink = null
+                            } else {
+                                nav.navigate("login")
+                            }
+                        }
                     }
-                    pendingDeepLink = null
                 }
                 NavHost(nav, startDestination = start) {
                     composable("welcome") {
@@ -166,7 +192,7 @@ class MainActivity : ComponentActivity() {
                         arguments = listOf(navArgument("token") { type = NavType.StringType }),
                     ) { entry ->
                         GuardiansScreen(
-                            onHome = { nav.popBackStack("home", false) },
+                            onHome = { nav.navigate(roleHome()) },
                             onProtect = { nav.navigate("protect") },
                             onActivity = { nav.navigate("activity") },
                             onProfile = { nav.navigate("profile") },
@@ -175,6 +201,17 @@ class MainActivity : ComponentActivity() {
                     }
                     composable("onboarding") {
                         OnboardingScreen(onDone = { nav.navigate("home") { popUpTo("onboarding") { inclusive = true } } })
+                    }
+                    composable("guardian-home") {
+                        GuardianHomeScreen(
+                            onProfile = { nav.navigate("profile") },
+                            onSignedOut = { signOut() },
+                        )
+                    }
+                    composable("responder-home") {
+                        ResponderHomeScreen(
+                            onProfile = { nav.navigate("profile") },
+                        )
                     }
                     composable("home") {
                         HomeScreen(
