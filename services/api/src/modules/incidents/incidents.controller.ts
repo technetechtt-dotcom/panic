@@ -128,6 +128,14 @@ export class IncidentsController {
     return this.incidents.resolve(actorFrom(request), id, input.note, requestId()).then((data) => ({ data }));
   }
 
+  @Post(":id/false-alarm")
+  @HttpCode(200)
+  @RequirePermissions(Permission.IncidentResolve)
+  falseAlarm(@Param("id") id: string, @Body() body: unknown, @Req() request: RequestWithUser) {
+    const input = parseBody(operatorActionSchema, body ?? {});
+    return this.incidents.markFalseAlarm(actorFrom(request), id, input.note, requestId()).then((data) => ({ data }));
+  }
+
   private async enforce(key: string, limit: number, windowMs: number): Promise<void> {
     const allowed = await allowShared(this.redis.client, this.limiter, key, limit, windowMs, "open");
     if (!allowed) {
