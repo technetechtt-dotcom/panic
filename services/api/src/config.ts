@@ -42,6 +42,14 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     if (twilioBits.length > 0 && twilioBits.length < 3) {
       throw new Error("Production Twilio is incomplete. Set TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, and TWILIO_FROM together.");
     }
+    if (env.GUARDIAN_REQUIRE_DELIVERY_PROVIDER === "true") {
+      const smsReady = twilioBits.length === 3;
+      const fcmReady = fcmBits.length === 3;
+      const apnsReady = apnsBits.length === 3 && Boolean(env.APNS_BUNDLE_ID?.trim());
+      if (!smsReady && !fcmReady && !apnsReady) {
+        throw new Error("Production launch requires at least one complete Guardian delivery provider: Twilio, FCM, or APNs.");
+      }
+    }
     if (!env.REDIS_URL?.trim()) {
       throw new Error("Production requires REDIS_URL so both API replicas share locks and rate limits.");
     }
