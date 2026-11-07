@@ -44,10 +44,12 @@ services:
       S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID:?Set S3_ACCESS_KEY_ID}
       S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:?Set S3_SECRET_ACCESS_KEY}
       GEOCODER_URL: ${GEOCODER_URL:?Set approved production GEOCODER_URL}
+      BACKUP_STATUS_DIR: /app/data/backups
       TRUST_PROXY: "true"
       SMTP_URL: ${SMTP_URL:?Set SMTP_URL to an smtp:// or smtps:// URL}
     volumes:
       - guardian_evidence:/app/data/evidence-vault
+      - guardian_backups:/app/data/backups:ro
     depends_on:
       postgres:
         condition: service_healthy
