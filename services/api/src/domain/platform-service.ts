@@ -1199,11 +1199,135 @@ export class PlatformService {
       throw new AppError("FORBIDDEN", 403, "You cannot manage accounts.");
     }
     const rows = await this.prisma.user.findMany({
-      select: { id: true, email: true, displayName: true, role: true, createdAt: true },
+      select: {
+        id: true,
+        email: true,
+        displayName: true,
+        role: true,
+        createdAt: true,
+        suspendedAt: true,
+        lastLoginAt: true,
+        mfa: { select: { enabled: true } },
+        _count: { select: { devices: true, refreshTokens: true } },
+      },
       orderBy: { createdAt: "desc" },
-      take: 200,
+      take: 500,
     });
-    return rows.map((row) => ({ ...row, createdAt: row.createdAt.toISOString() }));
+    return rows.map((row) => ({
+      id: row.id,
+      email: row.email,
+      displayName: row.displayName,
+      role: row.role,
+      createdAt: row.createdAt.toISOString(),
+      suspendedAt: row.suspendedAt?.toISOString() ?? null,
+      lastLoginAt: row.lastLoginAt?.toISOString() ?? null,
+      mfaEnabled: row.mfa?.enabled === true,
+      deviceCount: row._count.devices,
+      sessionCount: row._count.refreshTokens,
+    }));
+  }
+
+  private async manageableUser(actor: Actor, userId: string) {
+    if (!hasPermission(actor.role, Permission.UserManage)) throw new AppError("FORBIDDEN", 403, "You cannot manage accounts.");
+    if (actor.id === userId) throw new AppError("FORBIDDEN", 403, "Use your own security page for self-service changes.");
+    const target = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!target) throw new AppError("NOT_FOUND", 404, "That account was not found.");
+    if (target.role === "ADMIN" && actor.role !== "ADMIN") throw new AppError("FORBIDDEN", 403, "A supervisor cannot manage an administrator.");
+    return target;
+  }
+
+  private async auditAdmin(actor: Actor, action: string, entityId: string, metadata: Record<string, unknown> = {}) {
+    const now = this.clock.now();
+    await this.prisma.auditEvent.create({
+      data: {
+        id: this.ids.uuid(),
+        actorId: actor.id,
+        action,
+        entityType: "User",
+        entityId,
+        correlationId: null,
+        requestId: null,
+        metadata,
+        createdAt: now,
+        updatedAt: now,
+      },
+    });
+  }
+
+  async userDetail(actor: Actor, userId: string) {
+    if (!hasPermission(actor.role, Permission.UserManage)) throw new AppError("FORBIDDEN", 403, "You cannot manage accounts.");
+    const row = await this.prisma.user.findUnique({
+      where: { id: userId },
+      include: {
+        devices: { orderBy: { lastSeenAt: "desc" }, take: 50 },
+        refreshTokens: { orderBy: { createdAt: "desc" }, take: 50 },
+        mfa: true,
+        mfaRecoveryCodes: { select: { usedAt: true } },
+      },
+    });
+    if (!row) throw new AppError("NOT_FOUND", 404, "That account was not found.");
+    return {
+      id: row.id,
+      email: row.email,
+      displayName: row.displayName,
+      role: row.role,
+      createdAt: row.createdAt.toISOString(),
+      lastLoginAt: row.lastLoginAt?.toISOString() ?? null,
+      suspendedAt: row.suspendedAt?.toISOString() ?? null,
+      emailVerifiedAt: row.emailVerifiedAt?.toISOString() ?? null,
+      mfaEnabled: row.mfa?.enabled === true,
+      unusedMfaRecoveryCodes: row.mfaRecoveryCodes.filter((code) => !code.usedAt).length,
+      devices: row.devices.map((device) => ({
+        id: device.id,
+        nickname: device.nickname,
+        model: device.model,
+        platform: device.platform,
+        osVersion: device.osVersion,
+        appVersion: device.appVersion,
+        revokedAt: device.revokedAt?.toISOString() ?? null,
+        lastSeenAt: device.lastSeenAt?.toISOString() ?? null,
+        pushReady: Boolean(device.fcmToken),
+        emergencyCredentialProvisioned: Boolean(device.emergencyTokenHash),
+      })),
+      sessions: row.refreshTokens.map((token) => ({
+        id: token.id,
+        familyId: token.familyId,
+        createdAt: token.createdAt.toISOString(),
+        expiresAt: token.expiresAt.toISOString(),
+        revokedAt: token.revokedAt?.toISOString() ?? null,
+      })),
+    };
+  }
+
+  async suspendUser(actor: Actor, userId: string, suspended: boolean) {
+    const target = await this.manageableUser(actor, userId);
+    const now = this.clock.now();
+    await this.prisma.$transaction([
+      this.prisma.user.update({ where: { id: userId }, data: { suspendedAt: suspended ? now : null, updatedAt: now } }),
+      ...(suspended
+        ? [this.prisma.refreshToken.updateMany({ where: { userId, revokedAt: null }, data: { revokedAt: now, updatedAt: now } })]
+        : []),
+    ]);
+    await this.auditAdmin(actor, suspended ? "user.suspended" : "user.reactivated", userId, { previousRole: target.role });
+    return { id: userId, suspendedAt: suspended ? now.toISOString() : null };
+  }
+
+  async revokeUserSessions(actor: Actor, userId: string) {
+    await this.manageableUser(actor, userId);
+    const now = this.clock.now();
+    const result = await this.prisma.refreshToken.updateMany({ where: { userId, revokedAt: null }, data: { revokedAt: now, updatedAt: now } });
+    await this.auditAdmin(actor, "user.sessions_revoked", userId, { count: result.count });
+    return { id: userId, revoked: result.count };
+  }
+
+  async resetUserMfa(actor: Actor, userId: string) {
+    await this.manageableUser(actor, userId);
+    const result = await this.prisma.$transaction([
+      this.prisma.operatorMfaRecoveryCode.deleteMany({ where: { userId } }),
+      this.prisma.operatorMfa.deleteMany({ where: { userId } }),
+    ]);
+    await this.auditAdmin(actor, "user.mfa_reset", userId);
+    return { id: userId, reset: true, deletedRecoveryCodes: result[0].count };
   }
 
   async setRole(actor: Actor, userId: string, role: Role) {
