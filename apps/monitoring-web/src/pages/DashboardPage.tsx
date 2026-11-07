@@ -1,9 +1,15 @@
 import { FormEvent, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
+import { CircleMarker, MapContainer, Popup, TileLayer } from "react-leaflet";
+import "leaflet/dist/leaflet.css";
 import { api, type Incident, type IncidentSummary } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
 import { Badge } from "./IncidentsPage";
+
+const tileUrl = import.meta.env.VITE_MAP_TILE_URL || "https://tile.openstreetmap.org/{z}/{x}/{y}.png";
+const tileAttribution = import.meta.env.VITE_MAP_TILE_ATTRIBUTION || "© OpenStreetMap contributors";
+interface LiveResponder { id:string; displayName:string; status:string; latitude:number|null; longitude:number|null; locationAt:string|null; activeIncidentId:string|null; assignmentStatus:string|null; workload:number }
 
 interface Shift {
   id: string;
@@ -16,17 +22,19 @@ interface Shift {
 export function DashboardPage() {
   const { session } = useAuth();
   const token = session?.accessToken ?? null;
+  const isResponder = session?.user.role === "RESPONDER";
   const queryClient = useQueryClient();
   const [handoverNote, setHandoverNote] = useState("");
   const [shiftError, setShiftError] = useState<string | null>(null);
   const shift = useQuery({
     queryKey: ["shift"],
     queryFn: () => api<Shift | null>("/api/v1/operators/shifts/current", token),
+    enabled: !isResponder,
     refetchInterval: 15_000,
   });
   const handover = useQuery({
     queryKey: ["handover"],
-    enabled: Boolean(shift.data),
+    enabled: !isResponder && Boolean(shift.data),
     queryFn: () => api<{ summary: string }>("/api/v1/operators/shifts/brief", token),
   });
   const incidents = useQuery({
@@ -37,6 +45,13 @@ export function DashboardPage() {
   const summary = useQuery({
     queryKey: ["summary"],
     queryFn: () => api<IncidentSummary>("/api/v1/incidents/summary", token),
+    enabled: !isResponder,
+    refetchInterval: 5_000,
+  });
+  const responders = useQuery({
+    queryKey: ["responders-live"],
+    queryFn: () => api<LiveResponder[]>("/api/v1/responders", token),
+    enabled: !isResponder,
     refetchInterval: 5_000,
   });
   const live = useMemo(
@@ -136,16 +151,34 @@ export function DashboardPage() {
           </form>
           {shiftError ? <p className="mt-2 text-sm text-sos">{shiftError}</p> : null}
         </article>
-        <article className="rounded-2xl border border-line bg-panel p-4">
-          <h2 className="text-lg font-semibold">Live map</h2>
-          <p className="mt-2 text-sm text-slate-300">
-            Open an incident for the last confirmed point. This dashboard does not guess a current track.
-          </p>
-          <p className="mt-4 text-sm">
-            {oldest
-              ? `Oldest unacknowledged SOS is ${oldest.userDisplayName}, waiting ${ackWait}s.`
-              : "No acknowledgement SLA is running."}
-          </p>
+        <article className="rounded-2xl border border-line bg-panel p-4 lg:col-span-2">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div><h2 className="text-lg font-semibold">Live operations map</h2><p className="mt-1 text-xs text-slate-400">Markers are last confirmed reports, not inferred current positions.</p></div>
+            <span className="text-xs text-slate-300">{live.filter(row=>row.lastLatitude!=null && row.lastLongitude!=null).length} incidents · {(responders.data??[]).filter(row=>row.latitude!=null && row.longitude!=null).length} responders located</span>
+          </div>
+          <div className="mt-3 h-[28rem] overflow-hidden rounded-xl">
+            <MapContainer
+              center={(live.find(row=>row.lastLatitude!=null && row.lastLongitude!=null)
+                ? [live.find(row=>row.lastLatitude!=null && row.lastLongitude!=null)!.lastLatitude!, live.find(row=>row.lastLatitude!=null && row.lastLongitude!=null)!.lastLongitude!]
+                : [-30.5595, 22.9375]) as [number, number]}
+              zoom={live.some(row=>row.lastLatitude!=null) ? 11 : 5}
+              scrollWheelZoom
+              className="h-full w-full"
+            >
+              <TileLayer attribution={tileAttribution} url={tileUrl} />
+              {live.filter(row=>row.lastLatitude!=null && row.lastLongitude!=null).map(row=>(
+                <CircleMarker key={row.id} center={[row.lastLatitude!,row.lastLongitude!]} radius={row.state==="SOS"?10:8} pathOptions={{ color: row.state==="SOS"?"#e23b3b":row.state==="HIGH_RISK"?"#f59e0b":"#f5c451" }}>
+                  <Popup><strong>{row.userDisplayName}</strong><br/>{row.state} · {row.contactStatus}<br/><Link to={`/incidents/${row.id}`}>Open incident</Link></Popup>
+                </CircleMarker>
+              ))}
+              {(responders.data??[]).filter(row=>row.latitude!=null && row.longitude!=null).map(row=>(
+                <CircleMarker key={`responder-${row.id}`} center={[row.latitude!,row.longitude!]} radius={7} pathOptions={{ color:"#7eb6ff" }}>
+                  <Popup><strong>{row.displayName}</strong><br/>{row.assignmentStatus??row.status} · workload {row.workload}{row.activeIncidentId?<><br/><Link to={`/incidents/${row.activeIncidentId}`}>Open assignment</Link></>:null}</Popup>
+                </CircleMarker>
+              ))}
+            </MapContainer>
+          </div>
+          <p className="mt-3 text-sm">{oldest ? `Oldest unacknowledged SOS is ${oldest.userDisplayName}, waiting ${ackWait}s.` : "No acknowledgement SLA is running."}</p>
         </article>
       </section>
     </main>
