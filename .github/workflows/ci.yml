@@ -62,6 +62,7 @@ jobs:
           set -euo pipefail
           for file in services/api/scripts/*.mjs; do node --check "$file"; done
           sh -n infrastructure/docker/nginx-entrypoint.sh
+          : > .env
           docker compose -f infrastructure/docker/docker-compose.prod.yml config >/dev/null
       - name: Test API, validation, and dashboard
         run: npm test
