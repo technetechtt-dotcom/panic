@@ -1139,6 +1139,264 @@ export class PlatformService {
     return { id: userId, role };
   }
 
+  private demoConfig() {
+    if (process.env.GUARDIAN_DEMO_MODE !== "true") {
+      throw new AppError("NOT_AVAILABLE", 404, "Competition Demo Mode is disabled.");
+    }
+    const password = process.env.GUARDIAN_DEMO_PASSWORD ?? "";
+    if (password.length < 12) {
+      throw new AppError("NOT_CONFIGURED", 503, "GUARDIAN_DEMO_PASSWORD must be at least 12 characters.");
+    }
+    return {
+      password,
+      userId: "00000000-0000-4000-8000-000000000101",
+      guardianId: "00000000-0000-4000-8000-000000000102",
+      responderId: "00000000-0000-4000-8000-000000000103",
+      deviceId: "00000000-0000-4000-8000-000000000201",
+      devicePublicId: "00000000-0000-4000-8000-000000000202",
+      contactId: "00000000-0000-4000-8000-000000000301",
+    };
+  }
+
+  async demoStatus(actor: Actor) {
+    if (!hasPermission(actor.role, Permission.UserManage)) throw new AppError("FORBIDDEN", 403, "Demo controls require supervisor or administrator access.");
+    const cfg = this.demoConfig();
+    const incident = await this.prisma.incident.findFirst({
+      where: { userId: cfg.userId, isTest: true },
+      orderBy: { createdAt: "desc" },
+      include: { timeline: { where: { type: { startsWith: "demo.stage." } }, orderBy: { occurredAt: "desc" }, take: 1 } },
+    });
+    return {
+      enabled: true,
+      accounts: {
+        protectedUser: "demo.user@demo.guardian.app",
+        guardian: "demo.guardian@demo.guardian.app",
+        responder: "demo.responder@demo.guardian.app",
+      },
+      incidentId: incident?.id ?? null,
+      state: incident?.state ?? null,
+      stage: incident?.timeline[0]?.type ?? null,
+    };
+  }
+
+  async resetDemo(actor: Actor) {
+    if (!hasPermission(actor.role, Permission.UserManage)) throw new AppError("FORBIDDEN", 403, "Demo controls require supervisor or administrator access.");
+    const cfg = this.demoConfig();
+    const now = this.clock.now();
+    const passwordHash = await this.passwords.hash(cfg.password);
+    const accounts = [
+      { id: cfg.userId, email: "demo.user@demo.guardian.app", displayName: "Thandi Demo", role: "USER" as const },
+      { id: cfg.guardianId, email: "demo.guardian@demo.guardian.app", displayName: "Lerato Guardian", role: "GUARDIAN" as const },
+      { id: cfg.responderId, email: "demo.responder@demo.guardian.app", displayName: "Unit 04 Demo", role: "RESPONDER" as const },
+    ];
+    for (const account of accounts) {
+      await this.prisma.user.upsert({
+        where: { email: account.email },
+        create: { ...account, passwordHash, emailVerifiedAt: now },
+        update: { displayName: account.displayName, role: account.role, passwordHash, emailVerifiedAt: now },
+      });
+    }
+    await this.prisma.incident.deleteMany({ where: { userId: cfg.userId, isTest: true } });
+    await this.prisma.device.upsert({
+      where: { userId_devicePublicId: { userId: cfg.userId, devicePublicId: cfg.devicePublicId } },
+      create: {
+        id: cfg.deviceId,
+        userId: cfg.userId,
+        devicePublicId: cfg.devicePublicId,
+        platform: "ANDROID",
+        manufacturer: "Guardian Demo",
+        model: "Competition handset",
+        osVersion: "Android 15",
+        appVersion: "demo",
+        nickname: "Demo phone",
+        lastSeenAt: now,
+      },
+      update: { revokedAt: null, lastSeenAt: now, nickname: "Demo phone" },
+    });
+    await this.prisma.trustedContact.upsert({
+      where: { id: cfg.contactId },
+      create: {
+        id: cfg.contactId,
+        userId: cfg.userId,
+        displayName: "Lerato Guardian",
+        email: "demo.guardian@demo.guardian.app",
+        canViewLocation: true,
+        canViewEvidence: true,
+        relationship: "FAMILY",
+        priority: 1,
+        notificationMethods: "PUSH,SMS",
+        guardianUserId: cfg.guardianId,
+        invitationStatus: "ACCEPTED",
+        verifiedAt: now,
+        active: true,
+      },
+      update: {
+        guardianUserId: cfg.guardianId,
+        invitationStatus: "ACCEPTED",
+        verifiedAt: now,
+        active: true,
+        canViewLocation: true,
+        canViewEvidence: true,
+      },
+    });
+    await this.prisma.responderProfile.upsert({
+      where: { userId: cfg.responderId },
+      create: {
+        id: this.ids.uuid(),
+        userId: cfg.responderId,
+        team: "Competition Response",
+        region: "Demo Zone",
+        capabilities: "FIRST_AID,SEARCH,VEHICLE_RESPONSE",
+        vehicle: "Response Unit 04",
+        phone: "+27000000004",
+        availability: "AVAILABLE",
+      },
+      update: { availability: "AVAILABLE", team: "Competition Response", region: "Demo Zone", capabilities: "FIRST_AID,SEARCH,VEHICLE_RESPONSE", vehicle: "Response Unit 04" },
+    });
+    const incidentId = this.ids.uuid();
+    const triggerId = this.ids.uuid();
+    const correlationId = this.ids.uuid();
+    const latitude = -28.7383;
+    const longitude = 24.7636;
+    const capsule = {
+      timestamp: now.toISOString(),
+      latitude,
+      longitude,
+      locationAccuracy: 8,
+      speed: 16,
+      heading: 210,
+      batteryLevel: 68,
+      chargingStatus: false,
+      networkType: "LTE",
+      protectionMode: "DRIVE",
+      duress: false,
+      lastKnownLocation: { latitude, longitude, recordedAt: now.toISOString() },
+      appProtectionStatus: "PROTECTED",
+    };
+    await this.prisma.incident.create({
+      data: {
+        id: incidentId,
+        userId: cfg.userId,
+        deviceId: cfg.deviceId,
+        triggerId,
+        triggerType: "VOLUME_BUTTON",
+        requestHash: sha256(`demo:${triggerId}`),
+        state: "SOS",
+        isTest: true,
+        duress: false,
+        correlationId,
+        protectionMode: "DRIVE",
+        contactStatus: "ONLINE",
+        capsuleJson: capsule,
+        lastHeartbeatAt: now,
+        lastPositionAt: now,
+        lastLatitude: latitude,
+        lastLongitude: longitude,
+        lastAccuracy: 8,
+        lastSpeed: 16,
+        lastHeading: 210,
+        lastBattery: 68,
+        createdAt: now,
+        updatedAt: now,
+      },
+    });
+    await this.prisma.incidentLocation.create({
+      data: {
+        id: this.ids.uuid(),
+        incidentId,
+        clientPointId: this.ids.uuid(),
+        latitude,
+        longitude,
+        accuracy: 8,
+        speed: 16,
+        bearing: 210,
+        altitude: null,
+        recordedAt: now,
+      },
+    });
+    await this.prisma.timelineEvent.createMany({
+      data: [
+        { id: this.ids.uuid(), incidentId, type: "trigger.received", message: "TEST volume-button SOS triggered for the competition scenario.", occurredAt: now, actorId: cfg.userId },
+        { id: this.ids.uuid(), incidentId, type: "demo.stage.0", message: "Demo reset: protected journey SOS is active.", occurredAt: now, actorId: actor.id },
+      ],
+    });
+    await this.prisma.notificationDelivery.create({
+      data: {
+        id: this.ids.uuid(),
+        incidentId,
+        trustedContactId: cfg.contactId,
+        channel: "ROOM",
+        destination: "Lerato Guardian",
+        status: "SENT",
+        detail: "TEST private Guardian Room created. No external message was transmitted.",
+        queuedAt: now,
+        sentAt: now,
+      },
+    });
+    if (this.ai) await this.ai.assess(incidentId).catch(() => undefined);
+    return this.demoStatus(actor);
+  }
+
+  async advanceDemo(actor: Actor) {
+    if (!hasPermission(actor.role, Permission.UserManage)) throw new AppError("FORBIDDEN", 403, "Demo controls require supervisor or administrator access.");
+    const cfg = this.demoConfig();
+    const incident = await this.prisma.incident.findFirst({
+      where: { userId: cfg.userId, isTest: true },
+      orderBy: { createdAt: "desc" },
+      include: { timeline: { where: { type: { startsWith: "demo.stage." } }, orderBy: { occurredAt: "desc" }, take: 1 } },
+    });
+    if (!incident) throw new AppError("NOT_FOUND", 404, "Reset the demo scenario first.");
+    const currentStage = Number(incident.timeline[0]?.type.split(".").pop() ?? "0");
+    const stage = Math.min(5, currentStage + 1);
+    const now = this.clock.now();
+    if (stage === 1) {
+      const latitude = (incident.lastLatitude ?? -28.7383) - 0.009;
+      const longitude = (incident.lastLongitude ?? 24.7636) - 0.007;
+      await this.prisma.incident.update({
+        where: { id: incident.id },
+        data: {
+          contactStatus: "DEVICE_CONTACT_LOST",
+          contactLostAt: now,
+          lastLatitude: latitude,
+          lastLongitude: longitude,
+          lastPositionAt: now,
+          updatedAt: now,
+        },
+      });
+      await this.prisma.incidentLocation.create({
+        data: { id: this.ids.uuid(), incidentId: incident.id, clientPointId: this.ids.uuid(), latitude, longitude, accuracy: 12, speed: 18, bearing: 215, altitude: null, recordedAt: now },
+      });
+      await this.prisma.timelineEvent.create({ data: { id: this.ids.uuid(), incidentId: incident.id, type: "device.contact_lost", message: "TEST device contact lost after route deviation.", occurredAt: now } });
+    } else if (stage === 2) {
+      await this.prisma.incident.update({ where: { id: incident.id }, data: { state: "ACKNOWLEDGED", acknowledgedAt: now, acknowledgedById: actor.id, updatedAt: now } });
+      await this.prisma.notificationDelivery.updateMany({ where: { incidentId: incident.id, trustedContactId: cfg.contactId }, data: { status: "ACKNOWLEDGED", acknowledgedAt: now } });
+      await this.prisma.trustedContact.update({ where: { id: cfg.contactId }, data: { lastAcknowledgedAt: now } });
+      await this.prisma.timelineEvent.create({ data: { id: this.ids.uuid(), incidentId: incident.id, type: "guardian.acknowledged", message: "TEST Guardian acknowledged the alert.", occurredAt: now, actorId: cfg.guardianId } });
+    } else if (stage === 3) {
+      await this.prisma.incident.update({ where: { id: incident.id }, data: { state: "RESPONDING", updatedAt: now } });
+      await this.prisma.responderAssignment.upsert({
+        where: { incidentId_responderId: { incidentId: incident.id, responderId: cfg.responderId } },
+        create: { id: this.ids.uuid(), incidentId: incident.id, responderId: cfg.responderId, status: "EN_ROUTE", assignedAt: now, acceptedAt: now, enRouteAt: now, assignedBy: actor.id, lastLatitude: -28.7305, lastLongitude: 24.771, lastLocationAt: now, speedMps: 14 },
+        update: { status: "EN_ROUTE", assignedAt: now, acceptedAt: now, enRouteAt: now, assignedBy: actor.id, lastLatitude: -28.7305, lastLongitude: 24.771, lastLocationAt: now, speedMps: 14 },
+      });
+      await this.prisma.timelineEvent.create({ data: { id: this.ids.uuid(), incidentId: incident.id, type: "responder.dispatched", message: "TEST Unit 04 dispatched and en route.", occurredAt: now, actorId: actor.id } });
+    } else if (stage === 4) {
+      await this.prisma.incident.update({ where: { id: incident.id }, data: { state: "USER_LOCATED", updatedAt: now } });
+      await this.prisma.responderAssignment.update({
+        where: { incidentId_responderId: { incidentId: incident.id, responderId: cfg.responderId } },
+        data: { status: "USER_LOCATED", arrivedAt: now, locatedAt: now, lastLatitude: incident.lastLatitude, lastLongitude: incident.lastLongitude, lastLocationAt: now },
+      });
+      await this.prisma.timelineEvent.create({ data: { id: this.ids.uuid(), incidentId: incident.id, type: "responder.user_located", message: "TEST responder reported the protected person located.", occurredAt: now, actorId: cfg.responderId } });
+    } else if (stage === 5) {
+      await this.prisma.incident.update({ where: { id: incident.id }, data: { state: "RESOLVED", resolvedAt: now, resolvedById: actor.id, updatedAt: now } });
+      await this.prisma.responderAssignment.updateMany({ where: { incidentId: incident.id }, data: { status: "COMPLETED", completedAt: now } });
+      await this.prisma.timelineEvent.create({ data: { id: this.ids.uuid(), incidentId: incident.id, type: "incident.resolved", message: "TEST scenario resolved.", occurredAt: now, actorId: actor.id } });
+    }
+    await this.prisma.timelineEvent.create({ data: { id: this.ids.uuid(), incidentId: incident.id, type: `demo.stage.${stage}`, message: `Competition demo advanced to stage ${stage}.`, occurredAt: now, actorId: actor.id } });
+    if (this.ai) await this.ai.assess(incident.id).catch(() => undefined);
+    return this.demoStatus(actor);
+  }
+
   async integrationTest(actor: Actor, kind: string) {
     if (!hasPermission(actor.role, Permission.UserManage)) {
       throw new AppError("FORBIDDEN", 403, "Only supervisors or administrators can run integration tests.");
