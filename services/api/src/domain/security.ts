@@ -1,4 +1,4 @@
-import { createHash, createPublicKey, randomBytes, scrypt as scryptCallback, timingSafeEqual, verify } from "node:crypto";
+import { createCipheriv, createDecipheriv, createHash, createPublicKey, randomBytes, scrypt as scryptCallback, scryptSync, timingSafeEqual, verify } from "node:crypto";
 import { SignJWT, jwtVerify } from "jose";
 import type { Role } from "@guardian/shared-types";
 
@@ -64,6 +64,28 @@ export function generateRefreshToken(): string {
 
 export function hashToken(token: string): string {
   return createHash("sha256").update(token).digest("hex");
+}
+
+export function sealSecret(value: string, keyMaterial: string): string {
+  const key = scryptSync(keyMaterial, "guardian-mfa-at-rest", 32);
+  const iv = randomBytes(12);
+  const cipher = createCipheriv("aes-256-gcm", key, iv);
+  const body = Buffer.concat([cipher.update(value, "utf8"), cipher.final()]);
+  const tag = cipher.getAuthTag();
+  return `enc:v1:${Buffer.concat([iv, tag, body]).toString("base64url")}`;
+}
+
+export function openSecret(value: string, keyMaterial: string): string {
+  if (!value.startsWith("enc:v1:")) return value;
+  const raw = Buffer.from(value.slice("enc:v1:".length), "base64url");
+  if (raw.length < 29) throw new Error("Invalid encrypted secret.");
+  const key = scryptSync(keyMaterial, "guardian-mfa-at-rest", 32);
+  const iv = raw.subarray(0, 12);
+  const tag = raw.subarray(12, 28);
+  const body = raw.subarray(28);
+  const decipher = createDecipheriv("aes-256-gcm", key, iv);
+  decipher.setAuthTag(tag);
+  return Buffer.concat([decipher.update(body), decipher.final()]).toString("utf8");
 }
 
 export function deviceProofMessage(triggerId: string, devicePublicId: string, signedAt: string): string {
