@@ -8,6 +8,7 @@ import {
   profileSchema,
   responderAssignSchema,
   responderLocationSchema,
+  responderProfileSchema,
   responderStatusSchema,
   roleChangeSchema,
 } from "@guardian/shared-validation";
@@ -256,6 +257,19 @@ export class PlatformController {
   @RequirePermissions(Permission.UserReadSelf)
   guardianInbox(@Req() request: RequestWithUser) {
     return this.platform.guardianInbox(actorFrom(request)).then((data) => ({ data }));
+  }
+
+  @Get("responders/me/profile")
+  @RequirePermissions(Permission.IncidentReadAssigned)
+  responderProfile(@Req() request: RequestWithUser) {
+    return this.platform.responderProfile(actorFrom(request)).then((data) => ({ data }));
+  }
+
+  @Post("responders/me/profile")
+  @HttpCode(200)
+  @RequirePermissions(Permission.IncidentReadAssigned)
+  updateResponderProfile(@Body() body: unknown, @Req() request: RequestWithUser) {
+    return this.platform.updateResponderProfile(actorFrom(request), parseBody(responderProfileSchema, body)).then((data) => ({ data }));
   }
 
   @Get("responders")
