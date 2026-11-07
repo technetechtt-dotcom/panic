@@ -180,8 +180,7 @@ services:
       - |
         set -eu
         apk add --no-cache nodejs openssl >/dev/null
-        latest=$(ls -1 /backups/guardian-*.sql.enc | tail -n 1)
-        node /verify.mjs "$latest"
+        ls -1 /backups/guardian-*.sql.enc | tail -n 1 | xargs node /verify.mjs
 
 volumes:
   guardian_postgres:
