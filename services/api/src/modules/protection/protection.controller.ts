@@ -1,8 +1,9 @@
-import { Body, Controller, Delete, Get, HttpCode, Inject, Param, Post, Req } from "@nestjs/common";
+import { Body, Controller, Delete, Get, HttpCode, Inject, Param, Patch, Post, Req } from "@nestjs/common";
 import {
   cancelIncidentSchema,
   evidenceChunkSchema,
   guardianSchema,
+  guardianUpdateSchema,
   journeyExtendSchema,
   journeyPreviewSchema,
   journeySchema,
@@ -40,6 +41,15 @@ export class ProtectionController {
   @RequirePermissions(Permission.ProtectionManageOwn)
   guardians(@Req() request: RequestWithUser) {
     return this.protection.listGuardians(actorFrom(request)).then((data) => ({ data }));
+  }
+
+  @Patch("guardians/:id")
+  @HttpCode(200)
+  @RequirePermissions(Permission.ProtectionManageOwn)
+  updateGuardian(@Param("id") id: string, @Body() body: unknown, @Req() request: RequestWithUser) {
+    return this.protection
+      .updateGuardian(actorFrom(request), id, parseBody(guardianUpdateSchema, body), requestContext.getStore()?.requestId ?? null)
+      .then((data) => ({ data }));
   }
 
   @Delete("guardians/:id")
