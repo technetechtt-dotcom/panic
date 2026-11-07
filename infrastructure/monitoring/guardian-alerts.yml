@@ -68,3 +68,12 @@ groups:
           severity: warning
         annotations:
           summary: "Guardian API server error rate increased"
+
+      - alert: GuardianBackupMissingOrStale
+        expr: guardian_backup_age_seconds < 0 or guardian_backup_age_seconds > 90000
+        for: 15m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Guardian encrypted database backup is missing or older than 25 hours"
+          description: "Inspect the production backup container and run an isolated restore verification after recovery."
