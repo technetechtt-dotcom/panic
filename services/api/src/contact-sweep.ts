@@ -55,6 +55,9 @@ export class ContactSweep implements OnModuleInit, OnModuleDestroy {
       await this.protection.sweepJourneys().catch((error: unknown) => {
         console.error(JSON.stringify({ level: "error", message: "journey sweep failed", detail: String(error) }));
       });
+      await this.platform.queueOpenIncidentAssessments().catch((error: unknown) => {
+        console.error(JSON.stringify({ level: "error", message: "AI reassessment enqueue failed", detail: String(error) }));
+      });
       await this.platform.sweepUnackedSos().catch((error: unknown) => {
         console.error(JSON.stringify({ level: "error", message: "unacked SOS sweep failed", detail: String(error) }));
       });
