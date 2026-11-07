@@ -85,6 +85,9 @@ export interface EvidenceRecord {
   byteLength: number;
   contentType?: string;
   storageKey?: string | null;
+  retentionUntil?: Date | null;
+  legalHold?: boolean;
+  retentionPolicy?: string;
 }
 
 export interface EvidenceStore {
@@ -442,6 +445,9 @@ export class ProtectionService {
       contentType: input.contentType,
       byteLength: payload.length,
       storageKey,
+      retentionUntil: new Date(this.clock.now().getTime() + Number(process.env.EVIDENCE_RETENTION_DAYS ?? 365) * 24 * 60 * 60 * 1000),
+      legalHold: false,
+      retentionPolicy: process.env.EVIDENCE_RETENTION_POLICY?.trim() || "STANDARD",
       payload: storedPayload,
       createdAt: this.clock.now(),
     });
