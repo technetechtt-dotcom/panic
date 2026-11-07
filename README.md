@@ -91,9 +91,16 @@ GitHub Actions runs:
 The repository is production-shaped, but broad commercial production still requires external evidence that cannot be created by source code alone: physical-device/OEM testing, real provider tests using production credentials, independent penetration testing, infrastructure failover/load exercises, legal/privacy review and operational pilot validation.
 
 See:
+- [Production readiness gate](docs/PRODUCTION_READINESS.md)
 - [Roadmap](docs/ROADMAP.md)
 - [External validation gate](docs/EXTERNAL_VALIDATION.md)
 - [Competition demo runbook](docs/COMPETITION_DEMO.md)
+- [Competition architecture](docs/COMPETITION_ARCHITECTURE.md)
+- [Competition positioning & pilot strategy](docs/COMPETITION_POSITIONING.md)
+- [Pilot KPI measurement](docs/PILOT_METRICS.md)
+- [Safe Word validation](docs/SAFE_WORD_VALIDATION.md)
+- [Observability](docs/OBSERVABILITY.md)
+- [POPIA operations checklist](docs/POPIA_OPERATIONS.md)
 - [Architecture](docs/ARCHITECTURE.md)
 - [Security](docs/SECURITY.md)
 - [Privacy](docs/PRIVACY.md)
