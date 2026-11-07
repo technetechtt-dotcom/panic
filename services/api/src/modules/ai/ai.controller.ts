@@ -35,6 +35,11 @@ export class AiController {
     return this.ai.search(actorFrom(request), id).then((data) => ({ data }));
   }
 
+  @Get("incidents/:id/ai/post-incident-report")
+  report(@Param("id") id: string, @Req() request: RequestWithUser) {
+    return this.ai.postIncidentReport(actorFrom(request), id).then((data) => ({ data }));
+  }
+
   @Post("incidents/:id/ai/query")
   @HttpCode(200)
   query(@Param("id") id: string, @Body() body: unknown, @Req() request: RequestWithUser) {
