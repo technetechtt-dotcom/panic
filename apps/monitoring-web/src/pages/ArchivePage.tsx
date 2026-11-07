@@ -51,7 +51,7 @@ export function ArchivePage() {
         </label>
         <label className="text-sm">State
           <select value={state} onChange={(e) => { setState(e.target.value); setPage(1); }} className="mt-1 w-full rounded-lg border border-line bg-ink px-3 py-2">
-            {["ALL","PROTECTED","CONCERN","HIGH_RISK","SOS","ACKNOWLEDGED","RESPONDING","USER_LOCATED","RESOLVED","ARCHIVED"].map(v=><option key={v}>{v}</option>)}
+            {["ALL","PROTECTED","CONCERN","HIGH_RISK","SOS","ACKNOWLEDGED","RESPONDING","USER_LOCATED","RESOLVED","FALSE_ALARM","ARCHIVED"].map(v=><option key={v}>{v}</option>)}
           </select>
         </label>
         <label className="text-sm">Trigger
