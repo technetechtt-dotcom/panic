@@ -232,6 +232,17 @@ export const positionSchema = z
   })
   .strict();
 
+export const responderProfileSchema = z
+  .object({
+    availability: z.enum(["AVAILABLE", "BUSY", "OFF_DUTY", "UNAVAILABLE"]),
+    team: z.string().trim().max(80).optional(),
+    region: z.string().trim().max(80).optional(),
+    capabilities: z.string().trim().max(300).optional(),
+    vehicle: z.string().trim().max(120).optional(),
+    phone: z.string().trim().max(30).optional(),
+  })
+  .strict();
+
 export const responderAssignSchema = z
   .object({
     responderId: z.string().uuid(),
