@@ -584,8 +584,8 @@ export class PlatformService {
       averageResponderArrivalSeconds: avg(arrivals),
       guardianDeliverySuccessRate: deliveries.length ? Math.round((delivered / deliveries.length) * 1000) / 10 : null,
       guardianAcknowledgementRate: deliveries.length ? Math.round((acknowledged / deliveries.length) * 1000) / 10 : null,
-      falseAlarmRate: null,
-      falseAlarmNote: "A dedicated false-alarm outcome is not yet stored; Guardian does not infer false alarms from a quick resolution.",
+      falseAlarmRate: rows.length ? Math.round((rows.filter((row) => row.state === "FALSE_ALARM").length / rows.length) * 1000) / 10 : null,
+      falseAlarmNote: "False alarms are counted only when an authorised operator explicitly closes an incident with the FALSE_ALARM outcome.",
       byTrigger,
       byState,
     };
@@ -648,7 +648,7 @@ export class PlatformService {
             id: true,
             displayName: true,
             incidents: {
-              where: { state: { notIn: ["RESOLVED", "ARCHIVED"] } },
+              where: { state: { notIn: ["RESOLVED", "FALSE_ALARM", "ARCHIVED"] } },
               orderBy: { createdAt: "desc" },
               take: 5,
               select: {
