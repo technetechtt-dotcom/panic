@@ -272,7 +272,7 @@ export const operatorHandoverSchema = z
 
 export const mfaCodeSchema = z
   .object({
-    code: z.string().regex(/^\d{6}$/),
+    code: z.string().trim().regex(/^(?:\d{6}|[A-Fa-f0-9]{6}-[A-Fa-f0-9]{6})$/),
     mfaToken: z.string().min(20).max(2000).optional(),
   })
   .strict();
