@@ -75,6 +75,8 @@ services:
     environment:
       GUARDIAN_TLS_SELF_SIGNED: ${GUARDIAN_TLS_SELF_SIGNED:-}
       GUARDIAN_TLS_CN: ${GUARDIAN_TLS_CN:-localhost}
+      GUARDIAN_ANDROID_CERT_SHA256: ${GUARDIAN_ANDROID_CERT_SHA256:?Set SHA-256 fingerprint of the production Android signing certificate}
+      GUARDIAN_ANDROID_PACKAGE: ${GUARDIAN_ANDROID_PACKAGE:-za.co.guardian.app}
     volumes:
       - ./nginx.prod.conf:/etc/nginx/conf.d/default.conf:ro
       - ./nginx-entrypoint.sh:/nginx-entrypoint.sh:ro
