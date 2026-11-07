@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import type { PrismaClient } from "@prisma/client";
+import type { Prisma, PrismaClient } from "@prisma/client";
 import type { Role } from "@guardian/shared-types";
 import type { AppConfig } from "../config";
 import { FileEvidenceVault, s3Configured } from "./evidence-vault";
@@ -317,6 +317,169 @@ export class PlatformService {
     return { bytes, contentType: row.contentType };
   }
 
+  async incidentArchive(
+    actor: Actor,
+    input: {
+      page?: number;
+      pageSize?: number;
+      state?: string;
+      trigger?: string;
+      query?: string;
+      from?: string;
+      to?: string;
+      isTest?: boolean;
+      responderId?: string;
+      operatorId?: string;
+    },
+  ) {
+    this.operator(actor);
+    const page = Math.max(1, input.page ?? 1);
+    const pageSize = Math.min(100, Math.max(10, input.pageSize ?? 25));
+    const where: Prisma.IncidentWhereInput = {};
+    if (input.state && input.state !== "ALL") where.state = input.state as Prisma.EnumIncidentStateFilter["equals"];
+    if (input.trigger && input.trigger !== "ALL") where.triggerType = input.trigger as Prisma.EnumTriggerTypeFilter["equals"];
+    if (typeof input.isTest === "boolean") where.isTest = input.isTest;
+    if (input.operatorId) where.claimedBy = input.operatorId;
+    if (input.responderId) where.assignments = { some: { responderId: input.responderId } };
+    if (input.from || input.to) {
+      where.createdAt = {
+        ...(input.from ? { gte: new Date(input.from) } : {}),
+        ...(input.to ? { lte: new Date(input.to) } : {}),
+      };
+    }
+    const needle = input.query?.trim();
+    if (needle) {
+      where.OR = [
+        { id: { contains: needle, mode: "insensitive" } },
+        { user: { displayName: { contains: needle, mode: "insensitive" } } },
+      ];
+    }
+    const [total, rows] = await Promise.all([
+      this.prisma.incident.count({ where }),
+      this.prisma.incident.findMany({
+        where,
+        include: {
+          user: { select: { displayName: true } },
+          assignments: { select: { responderId: true, status: true, assignedAt: true, arrivedAt: true } },
+        },
+        orderBy: { createdAt: "desc" },
+        skip: (page - 1) * pageSize,
+        take: pageSize,
+      }),
+    ]);
+    return {
+      page,
+      pageSize,
+      total,
+      pages: Math.max(1, Math.ceil(total / pageSize)),
+      items: rows.map((row) => ({
+        id: row.id,
+        userDisplayName: row.user.displayName,
+        triggerType: row.triggerType,
+        state: row.state,
+        isTest: row.isTest,
+        duress: row.duress,
+        contactStatus: row.contactStatus,
+        createdAt: row.createdAt.toISOString(),
+        acknowledgedAt: row.acknowledgedAt?.toISOString() ?? null,
+        resolvedAt: row.resolvedAt?.toISOString() ?? null,
+        claimedBy: row.claimedBy,
+        responders: row.assignments.map((assignment) => ({
+          responderId: assignment.responderId,
+          status: assignment.status,
+          assignedAt: assignment.assignedAt?.toISOString() ?? null,
+          arrivedAt: assignment.arrivedAt?.toISOString() ?? null,
+        })),
+      })),
+    };
+  }
+
+  async reportsOverview(actor: Actor, days = 30) {
+    this.operator(actor);
+    const boundedDays = Math.min(365, Math.max(1, days));
+    const since = new Date(this.clock.now().getTime() - boundedDays * 24 * 60 * 60 * 1000);
+    const rows = await this.prisma.incident.findMany({
+      where: { createdAt: { gte: since }, isTest: false },
+      include: {
+        assignments: true,
+        deliveries: true,
+      },
+      orderBy: { createdAt: "desc" },
+      take: 5000,
+    });
+    const acknowledgements = rows
+      .filter((row) => row.acknowledgedAt)
+      .map((row) => row.acknowledgedAt!.getTime() - row.createdAt.getTime());
+    const dispatches = rows
+      .flatMap((row) => row.assignments.filter((a) => a.assignedAt).map((a) => a.assignedAt!.getTime() - row.createdAt.getTime()));
+    const arrivals = rows
+      .flatMap((row) => row.assignments.filter((a) => a.arrivedAt).map((a) => a.arrivedAt!.getTime() - row.createdAt.getTime()));
+    const deliveries = rows.flatMap((row) => row.deliveries).filter((row) => ["SMS", "FCM", "APNS", "ROOM"].includes(row.channel));
+    const delivered = deliveries.filter((row) => row.deliveredAt || row.status === "DELIVERED" || row.status === "ACKNOWLEDGED").length;
+    const acknowledged = deliveries.filter((row) => row.acknowledgedAt).length;
+    const byTrigger = Object.fromEntries(
+      [...new Set(rows.map((row) => row.triggerType))].map((trigger) => [trigger, rows.filter((row) => row.triggerType === trigger).length]),
+    );
+    const byState = Object.fromEntries(
+      [...new Set(rows.map((row) => row.state))].map((state) => [state, rows.filter((row) => row.state === state).length]),
+    );
+    const avg = (values: number[]) => values.length ? Math.round(values.reduce((sum, value) => sum + value, 0) / values.length / 1000) : null;
+    return {
+      windowDays: boundedDays,
+      incidentCount: rows.length,
+      averageAcknowledgementSeconds: avg(acknowledgements),
+      averageDispatchSeconds: avg(dispatches),
+      averageResponderArrivalSeconds: avg(arrivals),
+      guardianDeliverySuccessRate: deliveries.length ? Math.round((delivered / deliveries.length) * 1000) / 10 : null,
+      guardianAcknowledgementRate: deliveries.length ? Math.round((acknowledged / deliveries.length) * 1000) / 10 : null,
+      falseAlarmRate: null,
+      falseAlarmNote: "A dedicated false-alarm outcome is not yet stored; Guardian does not infer false alarms from a quick resolution.",
+      byTrigger,
+      byState,
+    };
+  }
+
+  async incidentEmergencyProfile(actor: Actor, incidentId: string) {
+    await this.incidents.get(actor, incidentId);
+    const incident = await this.prisma.incident.findUnique({ where: { id: incidentId }, select: { userId: true } });
+    if (!incident) throw new AppError("NOT_FOUND", 404, "That incident was not found.");
+    const profile = await this.prisma.emergencyProfile.findUnique({ where: { userId: incident.userId } });
+    return profile
+      ? {
+          bloodType: profile.bloodType,
+          allergies: profile.allergies,
+          medications: profile.medications,
+          notes: profile.notes,
+        }
+      : { bloodType: null, allergies: null, medications: null, notes: null };
+  }
+
+  async incidentCommunications(actor: Actor, incidentId: string) {
+    await this.incidents.get(actor, incidentId);
+    const [timeline, deliveries] = await Promise.all([
+      this.prisma.timelineEvent.findMany({ where: { incidentId }, orderBy: { occurredAt: "asc" }, take: 500 }),
+      this.prisma.notificationDelivery.findMany({ where: { incidentId }, orderBy: { createdAt: "asc" }, take: 500 }),
+    ]);
+    return [
+      ...timeline.map((row) => ({
+        id: row.id,
+        at: row.occurredAt.toISOString(),
+        kind: row.type,
+        channel: "INTERNAL",
+        message: row.message,
+        status: null as string | null,
+      })),
+      ...deliveries.map((row) => ({
+        id: row.id,
+        at: (row.acknowledgedAt ?? row.deliveredAt ?? row.sentAt ?? row.createdAt).toISOString(),
+        kind: "guardian.delivery",
+        channel: row.channel,
+        message: `${maskDestination(row.destination)} · ${row.detail}`,
+        status: row.status,
+      })),
+    ].sort((a, b) => a.at.localeCompare(b.at));
+  }
+
   async guardianInbox(actor: Actor) {
     if (actor.role !== "GUARDIAN" && !hasPermission(actor.role, Permission.IncidentReadActive)) {
       throw new AppError("FORBIDDEN", 403, "This inbox is only available to Guardian or monitoring accounts.");
@@ -379,12 +542,27 @@ export class PlatformService {
     }).catch(() => []);
     const profileByUser = new Map(profiles.map((row) => [row.userId, row]));
     const busy = await this.prisma.responderAssignment.findMany({
-      where: { status: { in: ["ASSIGNED", "RESPONDING"] } },
-      select: { responderId: true, incidentId: true },
+      where: { status: { notIn: ["COMPLETED", "DECLINED"] } },
+      select: {
+        responderId: true,
+        incidentId: true,
+        status: true,
+        lastLatitude: true,
+        lastLongitude: true,
+        lastLocationAt: true,
+      },
+      orderBy: { updatedAt: "desc" },
     });
     const busyIds = new Set(busy.map((row) => row.responderId));
+    const activeByResponder = new Map<string, (typeof busy)[number]>();
+    const workloadByResponder = new Map<string, number>();
+    for (const assignment of busy) {
+      if (!activeByResponder.has(assignment.responderId)) activeByResponder.set(assignment.responderId, assignment);
+      workloadByResponder.set(assignment.responderId, (workloadByResponder.get(assignment.responderId) ?? 0) + 1);
+    }
     return rows.map((row) => {
       const profile = profileByUser.get(row.id);
+      const active = activeByResponder.get(row.id);
       return {
         id: row.id,
         displayName: row.displayName,
@@ -395,6 +573,12 @@ export class PlatformService {
         capabilities: profile?.capabilities ?? null,
         vehicle: profile?.vehicle ?? null,
         phone: profile?.phone ?? null,
+        latitude: active?.lastLatitude ?? null,
+        longitude: active?.lastLongitude ?? null,
+        locationAt: active?.lastLocationAt?.toISOString() ?? null,
+        activeIncidentId: active?.incidentId ?? null,
+        assignmentStatus: active?.status ?? null,
+        workload: workloadByResponder.get(row.id) ?? 0,
       };
     });
   }
