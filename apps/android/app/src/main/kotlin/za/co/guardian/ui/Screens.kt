@@ -88,8 +88,8 @@ class HomeViewModel @Inject constructor(
     private val practiceMode: PracticeModeReader,
     private val tokens: za.co.guardian.data.TokenStore? = null,
     private val api: za.co.guardian.data.GuardianApi? = null,
-    private val settingsStore: za.co.guardian.data.SettingsStore,
-    @dagger.hilt.android.qualifiers.ApplicationContext private val appContext: android.content.Context,
+    private val settingsStore: za.co.guardian.data.SettingsStore? = null,
+    @dagger.hilt.android.qualifiers.ApplicationContext private val appContext: android.content.Context? = null,
 ) : ViewModel() {
     private val healthState = MutableStateFlow(healthSource.current())
     val health: StateFlow<ProtectionHealth> = healthState
@@ -160,12 +160,15 @@ class HomeViewModel @Inject constructor(
                 client.responderStatus(incidentId, za.co.guardian.data.ResponderStatusBody(status))
                 when (status) {
                     "ACCEPTED", "EN_ROUTE", "ON_SCENE", "RESPONDING", "USER_LOCATED" -> {
-                        settingsStore.setResponderIncidentId(incidentId)
-                        za.co.guardian.service.ProtectionTrackingService.ensureRunning(appContext)
+                        settingsStore?.setResponderIncidentId(incidentId)
+                        appContext?.let(za.co.guardian.service.ProtectionTrackingService::ensureRunning)
                     }
                     "COMPLETED", "DECLINED" -> {
-                        if (settingsStore.responderIncidentId() == incidentId) settingsStore.setResponderIncidentId(null)
-                        za.co.guardian.service.ProtectionTrackingService.stopIfIdle(appContext, settingsStore)
+                        val stored = settingsStore
+                        if (stored?.responderIncidentId() == incidentId) stored.setResponderIncidentId(null)
+                        if (stored != null && appContext != null) {
+                            za.co.guardian.service.ProtectionTrackingService.stopIfIdle(appContext, stored)
+                        }
                     }
                 }
                 messageState.value = success
