@@ -319,6 +319,112 @@ export class PlatformService {
     return { bytes, contentType: row.contentType };
   }
 
+  async evidenceManifest(actor: Actor, incidentId: string) {
+    this.operator(actor);
+    const incident = await this.incidents.get(actor, incidentId);
+    const [chunks, access] = await Promise.all([
+      this.prisma.evidenceChunk.findMany({
+        where: { incidentId },
+        orderBy: { sequence: "asc" },
+        select: {
+          id: true,
+          clientChunkId: true,
+          sequence: true,
+          sha256: true,
+          contentType: true,
+          byteLength: true,
+          storageKey: true,
+          retentionUntil: true,
+          legalHold: true,
+          retentionPolicy: true,
+          createdAt: true,
+          updatedAt: true,
+        },
+      }),
+      this.prisma.evidenceAccessLog.findMany({
+        where: { incidentId },
+        orderBy: { createdAt: "asc" },
+        take: 5000,
+      }),
+    ]);
+    return {
+      manifestVersion: 1,
+      generatedAt: this.clock.now().toISOString(),
+      incident: {
+        id: incident.id,
+        userId: incident.userId,
+        triggerType: incident.triggerType,
+        state: incident.state,
+        isTest: incident.isTest,
+        correlationId: incident.correlationId,
+        createdAt: incident.createdAt,
+      },
+      evidence: chunks.map((row) => ({
+        ...row,
+        retentionUntil: row.retentionUntil?.toISOString() ?? null,
+        createdAt: row.createdAt.toISOString(),
+        updatedAt: row.updatedAt.toISOString(),
+      })),
+      accessLog: access.map((row) => ({
+        id: row.id,
+        evidenceId: row.evidenceId,
+        actorId: row.actorId,
+        action: row.action,
+        createdAt: row.createdAt.toISOString(),
+      })),
+    };
+  }
+
+  async setEvidenceGovernance(
+    actor: Actor,
+    incidentId: string,
+    input: { retentionDays?: number; legalHold: boolean; policy: string },
+  ) {
+    if (!hasPermission(actor.role, Permission.UserManage)) {
+      throw new AppError("FORBIDDEN", 403, "Only supervisors or administrators can change evidence retention.");
+    }
+    await this.incidents.get(actor, incidentId);
+    const now = this.clock.now();
+    const retentionDays = input.retentionDays ?? Number(process.env.EVIDENCE_RETENTION_DAYS ?? 365);
+    const retentionUntil = input.legalHold ? null : new Date(now.getTime() + retentionDays * 24 * 60 * 60 * 1000);
+    const updated = await this.prisma.evidenceChunk.updateMany({
+      where: { incidentId },
+      data: {
+        legalHold: input.legalHold,
+        retentionUntil,
+        retentionPolicy: input.policy,
+      },
+    });
+    await this.prisma.auditEvent.create({
+      data: {
+        id: this.ids.uuid(),
+        actorId: actor.id,
+        action: "evidence.governance_updated",
+        entityType: "Incident",
+        entityId: incidentId,
+        correlationId: incidentId,
+        requestId: null,
+        metadata: {
+          legalHold: input.legalHold,
+          retentionDays,
+          retentionUntil: retentionUntil?.toISOString() ?? null,
+          policy: input.policy,
+          chunks: updated.count,
+        } as Prisma.InputJsonValue,
+        createdAt: now,
+        updatedAt: now,
+      },
+    });
+    return {
+      incidentId,
+      evidenceCount: updated.count,
+      legalHold: input.legalHold,
+      retentionDays,
+      retentionUntil: retentionUntil?.toISOString() ?? null,
+      policy: input.policy,
+    };
+  }
+
   async incidentArchive(
     actor: Actor,
     input: {
