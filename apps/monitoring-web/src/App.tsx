@@ -4,6 +4,7 @@ import { useAuth } from "./auth/AuthContext";
 import { Shell } from "./components/Shell";
 import { DashboardPage } from "./pages/DashboardPage";
 import { IncidentDetailPage } from "./pages/IncidentDetailPage";
+import { IntegrationsPage } from "./pages/IntegrationsPage";
 import { IncidentsPage } from "./pages/IncidentsPage";
 import { AuditPage } from "./pages/AuditPage";
 import { ArchivePage } from "./pages/ArchivePage";
@@ -41,6 +42,7 @@ export function App() {
         <Route path="/audit" element={<RolePage allow={MANAGE_ROLES}><AuditPage /></RolePage>} />
         <Route path="/archive" element={<RolePage allow={PLATFORM_ROLES}><ArchivePage /></RolePage>} />
         <Route path="/reports" element={<RolePage allow={PLATFORM_ROLES}><ReportsPage /></RolePage>} />
+        <Route path="/integrations" element={<RolePage allow={PLATFORM_ROLES}><IntegrationsPage /></RolePage>} />
         <Route path="/403" element={<ForbiddenPage />} />
         <Route path="*" element={<NotFoundPage />} />
       </Route>
