@@ -1,0 +1,70 @@
+groups:
+  - name: guardian-safety
+    rules:
+      - alert: GuardianUnacknowledgedSos
+        expr: guardian_unacknowledged_sos > 0
+        for: 30s
+        labels:
+          severity: critical
+        annotations:
+          summary: "Guardian has an unacknowledged live SOS"
+          description: "At least one non-test SOS has remained unacknowledged for 30 seconds."
+
+      - alert: GuardianDeadLetters
+        expr: guardian_outbox_dead_letters_total > 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Guardian notification/AI work reached the dead-letter queue"
+          description: "Inspect Platform > Dead letters and recover or resolve the failed event."
+
+      - alert: GuardianOutboxStale
+        expr: guardian_outbox_oldest_age_seconds > 60
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Guardian durable outbox is delayed"
+          description: "The oldest retryable event has been pending for more than 60 seconds."
+
+      - alert: GuardianPostgresDown
+        expr: guardian_postgres_up == 0
+        for: 15s
+        labels:
+          severity: critical
+        annotations:
+          summary: "Guardian Postgres probe is failing"
+
+      - alert: GuardianRedisDown
+        expr: guardian_redis_up == 0
+        for: 30s
+        labels:
+          severity: critical
+        annotations:
+          summary: "Guardian Redis is unavailable"
+          description: "Production rate limits, scheduler coordination and realtime fan-out require Redis."
+
+      - alert: GuardianPostgresLatencyHigh
+        expr: guardian_postgres_probe_latency_ms > 500
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Guardian Postgres probe latency is high"
+
+      - alert: GuardianEvidenceExpiryBacklog
+        expr: guardian_evidence_expired_pending > 0
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Expired evidence is waiting for retention cleanup"
+
+      - alert: GuardianServerErrors
+        expr: rate(guardian_http_server_errors_total[5m]) > 0.05
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Guardian API server error rate increased"
