@@ -1,5 +1,5 @@
 import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes, scryptSync } from "node:crypto";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 export interface StoredObject {
@@ -23,6 +23,31 @@ export class FileEvidenceVault {
     await writeFile(path.join(this.directory, `${storageKey}.bin`), sealed);
     const s3 = await putObjectIfConfigured(storageKey, sealed);
     return { storageKey, byteLength: plain.length, duplicatedToS3: s3.stored, s3Detail: s3.detail };
+  }
+
+  async probeLocal(): Promise<{ ok: boolean; detail: string }> {
+    const storageKey = `health-${randomBytes(8).toString("hex")}`;
+    await mkdir(this.directory, { recursive: true });
+    const target = path.join(this.directory, `${storageKey}.bin`);
+    try {
+      const plain = Buffer.from("guardian-evidence-health");
+      const iv = randomBytes(12);
+      const cipher = createCipheriv("aes-256-gcm", this.key(), iv);
+      const sealed = Buffer.concat([iv, cipher.update(plain), cipher.final(), cipher.getAuthTag()]);
+      await writeFile(target, sealed);
+      const stored = await readFile(target);
+      const storedIv = stored.subarray(0, 12);
+      const tag = stored.subarray(stored.length - 16);
+      const data = stored.subarray(12, stored.length - 16);
+      const decipher = createDecipheriv("aes-256-gcm", this.key(), storedIv);
+      decipher.setAuthTag(tag);
+      const opened = Buffer.concat([decipher.update(data), decipher.final()]);
+      return { ok: opened.equals(plain), detail: opened.equals(plain) ? "Encrypted local evidence write/read succeeded." : "Evidence probe did not round-trip." };
+    } catch (error) {
+      return { ok: false, detail: error instanceof Error ? error.message : "Evidence probe failed." };
+    } finally {
+      await unlink(target).catch(() => undefined);
+    }
   }
 
   async get(storageKey: string): Promise<Buffer | null> {
