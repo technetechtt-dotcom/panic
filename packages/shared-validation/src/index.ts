@@ -313,6 +313,14 @@ export const evidenceChunkSchema = z
   })
   .strict();
 
+export const evidenceGovernanceSchema = z
+  .object({
+    retentionDays: z.number().int().min(1).max(3650).optional(),
+    legalHold: z.boolean(),
+    policy: z.string().trim().min(1).max(40).default("STANDARD"),
+  })
+  .strict();
+
 export const aiQuerySchema = z
   .object({
     question: z.string().trim().min(1).max(500),
