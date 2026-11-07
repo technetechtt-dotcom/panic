@@ -1,6 +1,7 @@
 import { Body, Controller, Get, HttpCode, Inject, Param, Post, Query, Req } from "@nestjs/common";
 import {
   eraseAccountSchema,
+  evidenceGovernanceSchema,
   fusionSignalSchema,
   mfaCodeSchema,
   operatorHandoverSchema,
@@ -44,6 +45,20 @@ export class PlatformController {
   @RequirePermissions(Permission.IncidentReadActive)
   evidence(@Param("id") id: string, @Req() request: RequestWithUser) {
     return this.platform.evidence(actorFrom(request), id).then((data) => ({ data }));
+  }
+
+  @Get("incidents/:id/evidence-manifest")
+  @RequirePermissions(Permission.IncidentReadActive)
+  evidenceManifest(@Param("id") id: string, @Req() request: RequestWithUser) {
+    return this.platform.evidenceManifest(actorFrom(request), id).then((data) => ({ data }));
+  }
+
+  @Post("admin/incidents/:id/evidence/governance")
+  @HttpCode(200)
+  @RequirePermissions(Permission.UserManage)
+  evidenceGovernance(@Param("id") id: string, @Body() body: unknown, @Req() request: RequestWithUser) {
+    const input = parseBody(evidenceGovernanceSchema, body);
+    return this.platform.setEvidenceGovernance(actorFrom(request), id, input).then((data) => ({ data }));
   }
 
   @Get("incidents/:id/evidence/:chunkId")
