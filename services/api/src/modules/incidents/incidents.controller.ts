@@ -78,6 +78,7 @@ export class IncidentsController {
       parseBody(locationBatchSchema, body),
       requestId(),
     );
+    void this.platform.queueAiAssessment(id).catch(() => undefined);
     return { data };
   }
 
@@ -92,6 +93,7 @@ export class IncidentsController {
       parseBody(heartbeatSchema, body),
       requestId(),
     );
+    void this.platform.queueAiAssessment(id).catch(() => undefined);
     return { data };
   }
 
@@ -117,7 +119,10 @@ export class IncidentsController {
     const input = parseBody(operatorActionSchema, body ?? {});
     return this.incidents
       .acknowledge(actorFrom(request), id, input.note, requestId())
-      .then((data) => ({ data }));
+      .then((data) => {
+        void this.platform.queueAiAssessment(id).catch(() => undefined);
+        return { data };
+      });
   }
 
   @Post(":id/resolve")
@@ -125,7 +130,10 @@ export class IncidentsController {
   @RequirePermissions(Permission.IncidentResolve)
   resolve(@Param("id") id: string, @Body() body: unknown, @Req() request: RequestWithUser) {
     const input = parseBody(operatorActionSchema, body ?? {});
-    return this.incidents.resolve(actorFrom(request), id, input.note, requestId()).then((data) => ({ data }));
+    return this.incidents.resolve(actorFrom(request), id, input.note, requestId()).then((data) => {
+      void this.platform.queueAiAssessment(id).catch(() => undefined);
+      return { data };
+    });
   }
 
   @Post(":id/false-alarm")
@@ -133,7 +141,10 @@ export class IncidentsController {
   @RequirePermissions(Permission.IncidentResolve)
   falseAlarm(@Param("id") id: string, @Body() body: unknown, @Req() request: RequestWithUser) {
     const input = parseBody(operatorActionSchema, body ?? {});
-    return this.incidents.markFalseAlarm(actorFrom(request), id, input.note, requestId()).then((data) => ({ data }));
+    return this.incidents.markFalseAlarm(actorFrom(request), id, input.note, requestId()).then((data) => {
+      void this.platform.queueAiAssessment(id).catch(() => undefined);
+      return { data };
+    });
   }
 
   private async enforce(key: string, limit: number, windowMs: number): Promise<void> {
