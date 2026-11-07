@@ -317,6 +317,56 @@ export class PlatformService {
     return { bytes, contentType: row.contentType };
   }
 
+  async guardianInbox(actor: Actor) {
+    if (actor.role !== "GUARDIAN" && !hasPermission(actor.role, Permission.IncidentReadActive)) {
+      throw new AppError("FORBIDDEN", 403, "This inbox is only available to Guardian or monitoring accounts.");
+    }
+    const contacts = await this.prisma.trustedContact.findMany({
+      where: {
+        guardianUserId: actor.id,
+        invitationStatus: "ACCEPTED",
+        active: true,
+      },
+      include: {
+        user: {
+          select: {
+            id: true,
+            displayName: true,
+            incidents: {
+              where: { state: { notIn: ["RESOLVED", "ARCHIVED", "FALSE_ALARM"] } },
+              orderBy: { createdAt: "desc" },
+              take: 5,
+              select: {
+                id: true,
+                state: true,
+                triggerType: true,
+                contactStatus: true,
+                createdAt: true,
+                lastLatitude: true,
+                lastLongitude: true,
+              },
+            },
+          },
+        },
+      },
+      orderBy: [{ priority: "asc" }, { createdAt: "asc" }],
+    });
+    return contacts.map((contact) => ({
+      trustedContactId: contact.id,
+      protectedUserId: contact.user.id,
+      displayName: contact.user.displayName,
+      relationship: contact.relationship,
+      priority: contact.priority,
+      canViewLocation: contact.canViewLocation,
+      canViewEvidence: contact.canViewEvidence,
+      lastAcknowledgedAt: contact.lastAcknowledgedAt?.toISOString() ?? null,
+      activeIncidents: contact.user.incidents.map((incident) => ({
+        ...incident,
+        createdAt: incident.createdAt.toISOString(),
+      })),
+    }));
+  }
+
   async listResponders(actor: Actor) {
     this.operator(actor);
     const rows = await this.prisma.user.findMany({
