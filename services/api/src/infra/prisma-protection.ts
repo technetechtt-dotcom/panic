@@ -28,6 +28,11 @@ export class PrismaGuardianStore implements GuardianStore {
     return result.count > 0;
   }
 
+  async findForUser(id: string, userId: string): Promise<TrustedContactRecord | null> {
+    const row = await this.prisma.trustedContact.findFirst({ where: { id, userId } });
+    return row ? toGuardian(row) : null;
+  }
+
   async findByInvitationToken(token: string): Promise<TrustedContactRecord | null> {
     const row = await this.prisma.trustedContact.findUnique({ where: { invitationToken: token } });
     return row ? toGuardian(row) : null;
