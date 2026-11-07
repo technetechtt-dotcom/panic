@@ -48,6 +48,19 @@ export class PlatformService {
     private readonly ai: AiService | null = null,
   ) {}
 
+  async queueAiAssessment(incidentId: string): Promise<void> {
+    if (this.outbox) {
+      await this.outbox.enqueue({
+        type: "AI_ASSESS",
+        aggregateType: "Incident",
+        aggregateId: incidentId,
+        payload: { incidentId },
+      });
+      return;
+    }
+    await this.ai?.assess(incidentId);
+  }
+
   async notifyIncident(incident: { id: string; userId: string; userDisplayName: string; state: string; isTest: boolean }): Promise<void> {
     if (this.outbox) {
       if (!incident.isTest) {
@@ -877,7 +890,9 @@ export class PlatformService {
       },
     });
     if (mapped === "USER_LOCATED" || mapped === "EN_ROUTE" || mapped === "ACCEPTED" || mapped === "ON_SCENE") {
-      return this.incidents.responderUpdate(actor, incidentId, mapped === "USER_LOCATED" ? "USER_LOCATED" : "RESPONDING", requestId);
+      const result = await this.incidents.responderUpdate(actor, incidentId, mapped === "USER_LOCATED" ? "USER_LOCATED" : "RESPONDING", requestId);
+      void this.queueAiAssessment(incidentId).catch(() => undefined);
+      return result;
     }
     return this.incidents.get(actor, incidentId);
   }
@@ -1076,6 +1091,7 @@ export class PlatformService {
       undefined,
       row.trustedContactId ?? undefined,
     );
+    void this.queueAiAssessment(row.incidentId).catch(() => undefined);
     return { acknowledgedAt: now.toISOString() };
   }
 
@@ -1108,6 +1124,7 @@ export class PlatformService {
     if (guardian) {
       await this.prisma.trustedContact.update({ where: { id: guardian.id }, data: { lastAcknowledgedAt: now } });
     }
+    void this.queueAiAssessment(row.incidentId).catch(() => undefined);
     return { acknowledgedAt: now.toISOString() };
   }
 
@@ -1125,6 +1142,7 @@ export class PlatformService {
         updatedAt: now,
       },
     });
+    void this.queueAiAssessment(incidentId).catch(() => undefined);
     return this.liveCompanion(actor, incidentId);
   }
 
