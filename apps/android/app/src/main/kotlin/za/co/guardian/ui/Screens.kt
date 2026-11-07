@@ -169,11 +169,11 @@ class HomeViewModel @Inject constructor(
                 responderProfile = client.updateResponderProfile(
                     za.co.guardian.data.ResponderProfileBody(
                         availability = availability,
-                        team = team.ifBlank { null },
-                        region = region.ifBlank { null },
-                        capabilities = capabilities.ifBlank { null },
-                        vehicle = vehicle.ifBlank { null },
-                        phone = phone.ifBlank { null },
+                        team = team.trim().takeIf { it.isNotEmpty() },
+                        region = region.trim().takeIf { it.isNotEmpty() },
+                        capabilities = capabilities.trim().takeIf { it.isNotEmpty() },
+                        vehicle = vehicle.trim().takeIf { it.isNotEmpty() },
+                        phone = phone.trim().takeIf { it.isNotEmpty() },
                     ),
                 ).data
                 messageState.value = "Responder profile updated."
