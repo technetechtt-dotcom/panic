@@ -1015,7 +1015,7 @@ export class PlatformService {
       where: { tokenHash: sha256(token) },
       include: { incident: { include: { user: true } } },
     });
-    if (!row || row.expiresAt.getTime() < this.clock.now().getTime()) {
+    if (!row || row.expiresAt.getTime() < this.clock.now().getTime() || ["RESOLVED", "ARCHIVED", "FALSE_ALARM"].includes(row.incident.state)) {
       throw new AppError("NOT_FOUND", 404, "This incident room is closed.");
     }
     const evidence = row.canViewEvidence
@@ -1041,8 +1041,11 @@ export class PlatformService {
   }
 
   async acknowledgeRoom(token: string) {
-    const row = await this.prisma.incidentRoom.findUnique({ where: { tokenHash: sha256(token) } });
-    if (!row || row.expiresAt.getTime() < this.clock.now().getTime()) {
+    const row = await this.prisma.incidentRoom.findUnique({
+      where: { tokenHash: sha256(token) },
+      include: { incident: { select: { state: true } } },
+    });
+    if (!row || row.expiresAt.getTime() < this.clock.now().getTime() || ["RESOLVED", "ARCHIVED", "FALSE_ALARM"].includes(row.incident.state)) {
       throw new AppError("NOT_FOUND", 404, "This room is closed.");
     }
     const now = this.clock.now();
