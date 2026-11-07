@@ -454,6 +454,21 @@ export function IncidentDetailPage() {
               {operator ? (
                 <button
                   type="button"
+                  disabled={!canResolve(current.state) || action.isPending}
+                  onClick={() => {
+                    void api(`/api/v1/incidents/${id}/false-alarm`, token, {
+                      method: "POST",
+                      body: JSON.stringify(note.trim() ? { note: note.trim() } : {}),
+                    }).then(() => queryClient.invalidateQueries()).catch((caught: unknown) => setError(caught instanceof Error ? caught.message : "False-alarm closure failed."));
+                  }}
+                  className="rounded-lg border border-warn px-4 py-3 font-semibold text-warn disabled:opacity-40"
+                >
+                  Close as false alarm
+                </button>
+              ) : null}
+              {operator ? (
+                <button
+                  type="button"
                   disabled={action.isPending}
                   onClick={() => {
                     void api(`/api/v1/incidents/${id}/emergency-services`, token, { method: "POST", body: JSON.stringify({}) })
