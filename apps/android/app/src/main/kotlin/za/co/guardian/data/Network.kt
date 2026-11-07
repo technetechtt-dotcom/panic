@@ -120,6 +120,7 @@ data class IncidentWire(
     val lastAccuracy: Double? = null,
     val lastBattery: Double? = null,
     val claimedBy: String? = null,
+    val emergencyProfile: ProfileWire? = null,
 )
 
 @Serializable
