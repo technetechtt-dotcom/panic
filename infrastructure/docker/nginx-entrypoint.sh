@@ -14,4 +14,23 @@ if [ ! -f "$cert" ] || [ ! -f "$key" ]; then
     exit 1
   fi
 fi
+if [ -n "${GUARDIAN_ANDROID_CERT_SHA256:-}" ]; then
+  mkdir -p /usr/share/nginx/html/.well-known
+  package="${GUARDIAN_ANDROID_PACKAGE:-za.co.guardian.app}"
+  fingerprint=$(printf "%s" "$GUARDIAN_ANDROID_CERT_SHA256" | tr "[:lower:]" "[:upper:]")
+  cat > /usr/share/nginx/html/.well-known/assetlinks.json <<EOF
+[
+  {
+    "relation": ["delegate_permission/common.handle_all_urls"],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "$package",
+      "sha256_cert_fingerprints": ["$fingerprint"]
+    }
+  }
+]
+EOF
+else
+  echo "GUARDIAN_ANDROID_CERT_SHA256 is not set; verified Android App Links cannot be established." >&2
+fi
 exec nginx -g "daemon off;"
