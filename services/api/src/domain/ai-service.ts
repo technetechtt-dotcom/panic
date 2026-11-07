@@ -124,6 +124,40 @@ export class AiService {
     };
   }
 
+  async operations() {
+    await this.ensureModels();
+    const [models, decisionsByLevel, decisionsByMode, recommendations, reviews, recent] = await Promise.all([
+      this.prisma.aiModel.findMany({ orderBy: [{ name: "asc" }, { version: "desc" }] }),
+      this.prisma.aiDecision.groupBy({ by: ["level"], _count: { _all: true } }),
+      this.prisma.aiDecision.groupBy({ by: ["mode"], _count: { _all: true } }),
+      this.prisma.aiRecommendation.groupBy({ by: ["status"], _count: { _all: true } }),
+      this.prisma.aiReview.groupBy({ by: ["status"], _count: { _all: true } }),
+      this.prisma.aiDecision.findMany({
+        orderBy: { createdAt: "desc" },
+        take: 20,
+        select: { id: true, incidentId: true, modelName: true, modelVersion: true, mode: true, level: true, confidence: true, createdAt: true },
+      }),
+    ]);
+    return {
+      modelLifecycle: "CODE_RELEASE_GATED",
+      lifecycleNote: "Guardian's current threat engine is deterministic rules. Promotion or rollback changes require a reviewed code release; this dashboard does not hot-swap safety logic.",
+      models: models.map((row) => ({
+        id: row.id,
+        name: row.name,
+        version: row.version,
+        purpose: row.purpose,
+        status: row.status,
+        datasetNote: row.datasetNote,
+        updatedAt: row.updatedAt.toISOString(),
+      })),
+      decisionsByLevel: Object.fromEntries(decisionsByLevel.map((row) => [row.level, row._count._all])),
+      decisionsByMode: Object.fromEntries(decisionsByMode.map((row) => [row.mode, row._count._all])),
+      recommendations: Object.fromEntries(recommendations.map((row) => [row.status, row._count._all])),
+      reviews: Object.fromEntries(reviews.map((row) => [row.status, row._count._all])),
+      recent: recent.map((row) => ({ ...row, createdAt: row.createdAt.toISOString() })),
+    };
+  }
+
   async counts() {
     const [decisions, shadow, pending] = await Promise.all([
       this.prisma.aiDecision.count({ where: { mode: "PRODUCTION" } }),
