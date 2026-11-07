@@ -56,6 +56,15 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     if (!geocoderUrl.startsWith("https://") || geocoderUrl.includes("nominatim.openstreetmap.org")) {
       throw new Error("Production requires an approved HTTPS GEOCODER_URL; the public Nominatim service is development/demo only.");
     }
+    if (env.EVIDENCE_REMOTE_REQUIRED === "true") {
+      const evidenceStorage = [env.S3_BUCKET, env.S3_ENDPOINT, env.S3_ACCESS_KEY_ID, env.S3_SECRET_ACCESS_KEY].filter((value) => value?.trim());
+      if (evidenceStorage.length < 4) {
+        throw new Error("Authoritative production evidence storage requires S3_BUCKET, S3_ENDPOINT, S3_ACCESS_KEY_ID, and S3_SECRET_ACCESS_KEY.");
+      }
+      if (!env.S3_ENDPOINT!.trim().startsWith("https://")) {
+        throw new Error("Production S3_ENDPOINT must use HTTPS.");
+      }
+    }
   }
   const redisUrl = env.REDIS_URL?.trim() ? env.REDIS_URL.trim() : null;
   return {
