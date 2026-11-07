@@ -1116,6 +1116,33 @@ export class PlatformService {
     return { id: userId, role };
   }
 
+  async recoverDeadLetter(actor: Actor, id: string, action: "RETRY" | "RESOLVE") {
+    if (!hasPermission(actor.role, Permission.UserManage)) {
+      throw new AppError("FORBIDDEN", 403, "Only supervisors or administrators can change dead-letter state.");
+    }
+    if (!this.outbox) throw new AppError("NOT_CONFIGURED", 503, "The durable outbox is not configured.");
+    const changed = action === "RETRY"
+      ? await this.outbox.requeueDeadLetter(id)
+      : await this.outbox.resolveDeadLetter(id);
+    if (!changed) throw new AppError("NOT_FOUND", 404, "That dead letter was not found.");
+    const now = this.clock.now();
+    await this.prisma.auditEvent.create({
+      data: {
+        id: this.ids.uuid(),
+        actorId: actor.id,
+        action: action === "RETRY" ? "outbox.dead_letter_requeued" : "outbox.dead_letter_resolved",
+        entityType: "OutboxDeadLetter",
+        entityId: id,
+        correlationId: null,
+        requestId: null,
+        metadata: { action },
+        createdAt: now,
+        updatedAt: now,
+      },
+    });
+    return { id, action, changed: true };
+  }
+
   async platformStatus(actor: Actor) {
     if (!hasPermission(actor.role, Permission.PlatformRead)) {
       throw new AppError("FORBIDDEN", 403, "You cannot view platform status.");
