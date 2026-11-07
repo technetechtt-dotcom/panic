@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Link } from "react-router-dom";
 import { api } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
 
@@ -9,6 +10,11 @@ interface Account {
   displayName: string;
   role: string;
   createdAt: string;
+  suspendedAt: string | null;
+  lastLoginAt: string | null;
+  mfaEnabled: boolean;
+  deviceCount: number;
+  sessionCount: number;
 }
 
 const ROLES = ["USER", "GUARDIAN", "MONITOR_OPERATOR", "SUPERVISOR", "RESPONDER", "ADMIN"];
@@ -55,11 +61,15 @@ export function PeoplePage() {
           Supervisors can assign user, guardian, operator, and responder roles. Only an administrator can assign an administrator. You cannot change your own role. Passwords and PINs are not shown here.
         </p>
         <div className="mt-4 grid gap-3 md:grid-cols-2">
-          <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search name or email" className="rounded-lg border border-line bg-ink px-3 py-2" />
-          <select value={roleFilter} onChange={(event) => setRoleFilter(event.target.value)} className="rounded-lg border border-line bg-ink px-3 py-2">
+          <label className="text-sm">Search
+            <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Name, email, ID or role" className="mt-1 w-full rounded-lg border border-line bg-ink px-3 py-2" />
+          </label>
+          <label className="text-sm">Role
+          <select value={roleFilter} onChange={(event) => setRoleFilter(event.target.value)} className="mt-1 w-full rounded-lg border border-line bg-ink px-3 py-2">
             <option value="ALL">All roles</option>
             {ROLES.map((role) => <option key={role} value={role}>{role}</option>)}
           </select>
+          </label>
         </div>
         {users.isError ? <p className="mt-4 text-sos">The account list could not be loaded.</p> : null}
         {error ? <p className="mt-4 text-sos">{error}</p> : null}
@@ -78,9 +88,10 @@ export function PeoplePage() {
           {rows.map((account) => (
             <li key={account.id} className="grid gap-3 px-4 py-4 md:grid-cols-[1fr_220px]">
               <div>
-                <p className="text-lg font-semibold">{account.displayName}</p>
+                <Link to={`/people/${account.id}`} className="text-lg font-semibold underline">{account.displayName}</Link>
                 <p className="break-all text-sm text-slate-300">{account.email}</p>
                 <p className="break-all text-xs text-slate-400">{account.id}</p>
+                <p className="mt-1 text-xs text-slate-400">{account.suspendedAt ? "SUSPENDED" : "ACTIVE"} · MFA {account.mfaEnabled ? "ON" : "OFF"} · devices {account.deviceCount} · sessions {account.sessionCount} · last login {account.lastLoginAt ? new Date(account.lastLoginAt).toLocaleString() : "never"}</p>
               </div>
               <label className="text-sm">
                 Role
