@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { FormEvent, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../api/client";
@@ -74,4 +75,4 @@ export function ShiftPage(){
     {error?<p className="mt-4 text-sos" role="alert">{error}</p>:null}
   </main>
 }
-function Check({label,ok,detail,action}:{label:string;ok:boolean;detail:string;action?:React.ReactNode}){return <article className="rounded-2xl border border-line bg-panel p-4"><p className="text-sm text-slate-300">{label}</p><p className="mt-2 text-xl font-semibold">{ok?"READY":"NOT READY"}</p><p className="mt-1 text-xs text-slate-400">{detail}</p>{action?<div className="mt-2 text-sm">{action}</div>:null}</article>}
+function Check({label,ok,detail,action}:{label:string;ok:boolean;detail:string;action?:ReactNode}){return <article className="rounded-2xl border border-line bg-panel p-4"><p className="text-sm text-slate-300">{label}</p><p className="mt-2 text-xl font-semibold">{ok?"READY":"NOT READY"}</p><p className="mt-1 text-xs text-slate-400">{detail}</p>{action?<div className="mt-2 text-sm">{action}</div>:null}</article>}
