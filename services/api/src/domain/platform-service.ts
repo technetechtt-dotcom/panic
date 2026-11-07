@@ -333,7 +333,7 @@ export class PlatformService {
             id: true,
             displayName: true,
             incidents: {
-              where: { state: { notIn: ["RESOLVED", "ARCHIVED", "FALSE_ALARM"] } },
+              where: { state: { notIn: ["RESOLVED", "ARCHIVED"] } },
               orderBy: { createdAt: "desc" },
               take: 5,
               select: {
