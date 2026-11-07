@@ -319,6 +319,49 @@ export class PlatformService {
     return { bytes, contentType: row.contentType };
   }
 
+  async purgeExpiredEvidence(limit = 100): Promise<{ deleted: number; failed: number }> {
+    const now = this.clock.now();
+    const rows = await this.prisma.evidenceChunk.findMany({
+      where: {
+        legalHold: false,
+        retentionUntil: { lte: now },
+      },
+      orderBy: { retentionUntil: "asc" },
+      take: Math.max(1, Math.min(500, limit)),
+      select: { id: true, incidentId: true, storageKey: true },
+    });
+    let deleted = 0;
+    let failed = 0;
+    for (const row of rows) {
+      try {
+        if (row.storageKey) {
+          const outcome = await this.vault.delete(row.storageKey);
+          if (!outcome.localDeleted || !outcome.remoteDeleted) {
+            failed += 1;
+            continue;
+          }
+        }
+        await this.prisma.$transaction([
+          this.prisma.evidenceAccessLog.create({
+            data: {
+              id: this.ids.uuid(),
+              incidentId: row.incidentId,
+              evidenceId: row.id,
+              actorId: null,
+              action: "retention_delete",
+              createdAt: now,
+            },
+          }),
+          this.prisma.evidenceChunk.delete({ where: { id: row.id } }),
+        ]);
+        deleted += 1;
+      } catch {
+        failed += 1;
+      }
+    }
+    return { deleted, failed };
+  }
+
   async evidenceManifest(actor: Actor, incidentId: string) {
     this.operator(actor);
     const incident = await this.incidents.get(actor, incidentId);
