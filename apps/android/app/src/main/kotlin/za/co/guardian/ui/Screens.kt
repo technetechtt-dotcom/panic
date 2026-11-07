@@ -422,7 +422,7 @@ class SettingsViewModel @Inject constructor(
             runCatching { devices = protection.listDevices() }
             runCatching { profile = protection.loadProfile() }
             runCatching { journeys = protection.listJourneys() }
-            val open = database.incidents().list().firstOrNull { it.serverId != null && it.state != "RESOLVED" && it.state != "ARCHIVED" }
+            val open = database.incidents().list().firstOrNull { it.serverId != null && it.state != "RESOLVED" && it.state != "FALSE_ALARM" && it.state != "ARCHIVED" }
             val serverId = open?.serverId
             if (serverId != null) {
                 runCatching {
@@ -704,7 +704,7 @@ class SettingsViewModel @Inject constructor(
     }
     fun saveCaptureFile(type: String, file: java.io.File) {
         viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
-            val incident = database.incidents().list().firstOrNull { it.state != "RESOLVED" && it.state != "ARCHIVED" }
+            val incident = database.incidents().list().firstOrNull { it.state != "RESOLVED" && it.state != "FALSE_ALARM" && it.state != "ARCHIVED" }
             if (incident == null) {
                 status = "Send SOS before saving evidence."
                 file.delete()
@@ -752,7 +752,7 @@ class SettingsViewModel @Inject constructor(
     }
 
     fun saveCapture(type: String, bytes: ByteArray) = run {
-        val incident = database.incidents().list().firstOrNull { it.state != "RESOLVED" && it.state != "ARCHIVED" }
+        val incident = database.incidents().list().firstOrNull { it.state != "RESOLVED" && it.state != "FALSE_ALARM" && it.state != "ARCHIVED" }
             ?: return@run "Send SOS before saving a photo or video. The camera is not used in the background."
         val battery = signals.deviceState().batteryLevel ?: 100
         if (!za.co.guardian.core.captureEvidence(type, battery)) {
