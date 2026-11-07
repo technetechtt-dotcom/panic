@@ -8,7 +8,7 @@ docker compose --env-file .env -f infrastructure/docker/docker-compose.prod.yml 
 
 The API container runs `prisma migrate deploy` before it listens. Compose sets `DATABASE_URL` to the Postgres service, so a localhost URL in `.env` does not override it. Production also requires `REDIS_URL` (set by Compose to the Redis service), `TRUST_PROXY=true`, and `SMTP_URL`. Both API processes share Postgres, Redis, and the `guardian_evidence` volume. WebSocket fan-out uses the Redis adapter. Nginx listens on port 443 and redirects port 80 to HTTPS. Mount a public certificate, or set `GUARDIAN_TLS_SELF_SIGNED=1` only for a private lab. A self-signed certificate is not a launch certificate. Set `EVIDENCE_VAULT_KEY`, Twilio, FCM, and S3 variables only when those providers are real. A missing provider records that the message or object was not sent. An incomplete provider set stops the process. Without S3, evidence stays on the shared volume as AES-GCM files. With S3, a replica that does not have the local file reads the sealed object back.
 
-A database backup is `node --env-file=.env services/api/scripts/backup-restore.mjs`. Restore with `psql` against the dump file. This is a single-database procedure, not a multi-region disaster-recovery exercise.
+Production Compose creates encrypted PostgreSQL backups using AES-256-CBC with PBKDF2 and `BACKUP_ENCRYPTION_KEY`, writes a SHA-256 checksum over the encrypted artifact, and uploads that encrypted artifact to the configured S3-compatible target. Restore verification decrypts only into a temporary file and restores into the dedicated throwaway verification database. This is still a single-database recovery design, not a multi-region disaster-recovery claim.
 
 Local development can still run the API with `npm run dev:api` and Postgres in Docker. The Dockerfiles above are the container path. They have not been load-tested as a multi-region deployment.
 
@@ -66,7 +66,7 @@ Local dump:
 node --env-file=.env services/api/scripts/backup-restore.mjs
 ```
 
-Off-host dump (S3-compatible when `BACKUP_S3_*` is set):
+Encrypted off-host dump (requires `BACKUP_ENCRYPTION_KEY`; S3-compatible when `BACKUP_S3_*` is set):
 
 ```powershell
 node --env-file=.env services/api/scripts/backup-offhost.mjs
@@ -76,10 +76,10 @@ Restore verification against a **throwaway** database only:
 
 ```powershell
 $env:BACKUP_VERIFY_DATABASE_URL="postgresql://guardian:change-me@127.0.0.1:5432/guardian_restore_verify"
-node --env-file=.env services/api/scripts/backup-restore-verify.mjs data/backups/guardian-....sql
+node --env-file=.env services/api/scripts/backup-restore-verify.mjs data/backups/guardian-....sql.enc
 ```
 
-Schedule off-host backups outside the API process (cron/systemd/cloud scheduler). The API platform status reads `LAST_BACKUP_AT` when the operator sets it after a successful off-host run. This workspace does not claim a managed multi-region DR exercise.
+Schedule off-host backups outside the API process (cron/systemd/cloud scheduler). Keep `BACKUP_ENCRYPTION_KEY` in the deployment secret manager and test recovery after key rotation. The API platform status reads `LAST_BACKUP_AT` when the operator sets it after a successful off-host run. This workspace does not claim a managed multi-region DR exercise.
 
 ## Load / failover
 
