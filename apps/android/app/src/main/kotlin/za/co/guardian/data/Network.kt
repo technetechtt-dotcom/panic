@@ -127,6 +127,16 @@ data class IncidentListEnvelope(val data: List<IncidentWire>)
 data class ResponderStatusBody(val status: String)
 
 @Serializable
+data class JourneyPositionBody(val latitude: Double, val longitude: Double)
+
+@Serializable
+data class ResponderLocationBody(
+    val latitude: Double,
+    val longitude: Double,
+    @OptIn(ExperimentalSerializationApi::class) @EncodeDefault(EncodeDefault.Mode.NEVER) val speedMps: Double? = null,
+)
+
+@Serializable
 data class IncidentEnvelope(val data: IncidentWire, val replayed: Boolean = false, val escalated: Boolean = false)
 
 @Serializable
@@ -206,6 +216,9 @@ interface GuardianApi {
     @POST("incidents/{id}/responder-status")
     suspend fun responderStatus(@Path("id") id: String, @Body body: ResponderStatusBody)
 
+    @POST("incidents/{id}/responder-location")
+    suspend fun responderLocation(@Path("id") id: String, @Body body: ResponderLocationBody)
+
     @POST("incidents/{id}/locations")
     suspend fun locations(@Path("id") id: String, @Body body: LocationBatchBody)
 
@@ -232,6 +245,9 @@ interface GuardianApi {
 
     @GET("incidents/{id}/live")
     suspend fun liveIncident(@Path("id") id: String): LiveIncidentEnvelope
+
+    @POST("journeys/{id}/position")
+    suspend fun journeyPosition(@Path("id") id: String, @Body body: JourneyPositionBody)
 
     @POST("journeys/{id}/extend")
     suspend fun extendJourney(@Path("id") id: String, @Body body: JourneyExtendBody): JourneyEnvelope
