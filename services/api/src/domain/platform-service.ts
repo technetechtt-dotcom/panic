@@ -533,6 +533,68 @@ export class PlatformService {
     }));
   }
 
+  async responderProfile(actor: Actor) {
+    if (actor.role !== "RESPONDER") throw new AppError("FORBIDDEN", 403, "Responder profile is only available to responder accounts.");
+    const row = await this.prisma.responderProfile.findUnique({ where: { userId: actor.id } });
+    return row ?? {
+      id: null,
+      userId: actor.id,
+      team: null,
+      region: null,
+      capabilities: null,
+      vehicle: null,
+      phone: null,
+      availability: "AVAILABLE",
+    };
+  }
+
+  async updateResponderProfile(
+    actor: Actor,
+    input: { availability: "AVAILABLE" | "BUSY" | "OFF_DUTY" | "UNAVAILABLE"; team?: string; region?: string; capabilities?: string; vehicle?: string; phone?: string },
+  ) {
+    if (actor.role !== "RESPONDER") throw new AppError("FORBIDDEN", 403, "Responder profile is only available to responder accounts.");
+    const now = this.clock.now();
+    const row = await this.prisma.responderProfile.upsert({
+      where: { userId: actor.id },
+      create: {
+        id: this.ids.uuid(),
+        userId: actor.id,
+        availability: input.availability,
+        team: input.team || null,
+        region: input.region || null,
+        capabilities: input.capabilities || null,
+        vehicle: input.vehicle || null,
+        phone: input.phone || null,
+        createdAt: now,
+        updatedAt: now,
+      },
+      update: {
+        availability: input.availability,
+        team: input.team || null,
+        region: input.region || null,
+        capabilities: input.capabilities || null,
+        vehicle: input.vehicle || null,
+        phone: input.phone || null,
+        updatedAt: now,
+      },
+    });
+    await this.prisma.auditEvent.create({
+      data: {
+        id: this.ids.uuid(),
+        actorId: actor.id,
+        action: "responder.profile_updated",
+        entityType: "ResponderProfile",
+        entityId: row.id,
+        correlationId: null,
+        requestId: null,
+        metadata: { availability: row.availability, region: row.region, capabilities: row.capabilities },
+        createdAt: now,
+        updatedAt: now,
+      },
+    });
+    return row;
+  }
+
   async listResponders(actor: Actor) {
     this.operator(actor);
     const rows = await this.prisma.user.findMany({
