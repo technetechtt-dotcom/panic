@@ -609,6 +609,25 @@ class SettingsViewModel @Inject constructor(
     fun checkConnection() = run { "Backend ${auth.checkConnection()}" }
     fun addGuardian(name: String, phone: String, email: String = "", onSuccess: (() -> Unit)? = null) = run(onSuccess) { protection.addGuardian(name, phone, email) }
     fun acceptInvitation(token: String, onSuccess: (() -> Unit)? = null) = run(onSuccess) { protection.acceptInvitation(token) }
+    fun updateGuardian(
+        id: String,
+        priority: Int,
+        notificationMethods: String,
+        canViewLocation: Boolean,
+        canViewEvidence: Boolean,
+    ) = run {
+        val saved = api.updateGuardian(
+            id,
+            za.co.guardian.data.GuardianUpdateBody(
+                priority = priority.coerceIn(1, 20),
+                notificationMethods = notificationMethods,
+                canViewLocation = canViewLocation,
+                canViewEvidence = canViewEvidence,
+            ),
+        ).data
+        guardians = protection.listGuardians()
+        "Guardian ${saved.displayName} preferences updated."
+    }
     fun removeGuardian(id: String) = run { protection.removeGuardian(id) }
     fun revokeDevice(id: String) = run { protection.revokeDevice(id) }
     fun extendJourney(minutes: String) = run { protection.extendJourney(minutes.toIntOrNull() ?: 15) }
@@ -1235,10 +1254,37 @@ fun GuardiansScreen(
             OutlinedTextField(inviteToken, { inviteToken = it }, label = { Text("Invitation token to accept") }, modifier = Modifier.fillMaxWidth().padding(top = 12.dp))
             Button(onClick = { viewModel.acceptInvitation(inviteToken) }, modifier = Modifier.fillMaxWidth()) { Text("Accept invitation on this account") }
             viewModel.guardians.forEach { row ->
-                Text("${row.displayName} · ${row.relationship} · priority ${row.priority} · ${row.invitationStatus}", modifier = Modifier.padding(top = 8.dp))
-                if (!row.phone.isNullOrBlank()) Text(row.phone, color = Color(0xFFB7C0CC))
-                if (row.lastAcknowledgedAt != null) Text("Last acknowledged ${row.lastAcknowledgedAt}")
-                Button(onClick = { viewModel.removeGuardian(row.id) }, modifier = Modifier.fillMaxWidth()) { Text("Remove ${row.displayName}") }
+                var priority by remember(row.id, row.priority) { mutableStateOf(row.priority.toString()) }
+                var push by remember(row.id, row.notificationMethods) { mutableStateOf(row.notificationMethods.contains("PUSH")) }
+                var sms by remember(row.id, row.notificationMethods) { mutableStateOf(row.notificationMethods.contains("SMS")) }
+                var emailMethod by remember(row.id, row.notificationMethods) { mutableStateOf(row.notificationMethods.contains("EMAIL")) }
+                var location by remember(row.id, row.canViewLocation) { mutableStateOf(row.canViewLocation) }
+                var evidence by remember(row.id, row.canViewEvidence) { mutableStateOf(row.canViewEvidence) }
+                Surface(modifier = Modifier.fillMaxWidth().padding(top = 12.dp), color = Color(0xFF171C24)) {
+                    Column(Modifier.padding(14.dp)) {
+                        Text("${row.displayName} · ${row.relationship} · ${row.invitationStatus}", fontWeight = FontWeight.SemiBold)
+                        if (!row.phone.isNullOrBlank()) Text(row.phone, color = Color(0xFFB7C0CC))
+                        if (row.lastAcknowledgedAt != null) Text("Last acknowledged ${row.lastAcknowledgedAt}")
+                        OutlinedTextField(priority, { priority = it.filter(Char::isDigit).take(2) }, label = { Text("Escalation priority (1 first)") }, modifier = Modifier.fillMaxWidth())
+                        Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) { Switch(push, { push = it }); Text("Push", Modifier.padding(start = 8.dp)) }
+                        Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) { Switch(sms, { sms = it }); Text("SMS", Modifier.padding(start = 8.dp)) }
+                        Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) { Switch(emailMethod, { emailMethod = it }); Text("Email", Modifier.padding(start = 8.dp)) }
+                        Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) { Switch(location, { location = it }); Text("May view location", Modifier.padding(start = 8.dp)) }
+                        Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) { Switch(evidence, { evidence = it }); Text("May view shared evidence", Modifier.padding(start = 8.dp)) }
+                        Button(
+                            onClick = {
+                                val methods = buildList {
+                                    if (push) add("PUSH")
+                                    if (sms) add("SMS")
+                                    if (emailMethod) add("EMAIL")
+                                }.ifEmpty { listOf("PUSH") }.joinToString(",")
+                                viewModel.updateGuardian(row.id, priority.toIntOrNull() ?: row.priority, methods, location, evidence)
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                        ) { Text("Save preferences") }
+                        Button(onClick = { viewModel.removeGuardian(row.id) }, modifier = Modifier.fillMaxWidth()) { Text("Remove ${row.displayName}") }
+                    }
+                }
             }
             if (viewModel.guardians.isEmpty()) Text("No guardians saved yet.", modifier = Modifier.padding(top = 12.dp))
             viewModel.status?.let { Text(it, modifier = Modifier.padding(top = 8.dp)) }
