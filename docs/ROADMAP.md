@@ -1,42 +1,80 @@
-# Roadmap
+# Guardian roadmap
 
-Status words mean what is in the repository and what tests have run. A designed interface with no caller is not complete.
+This file separates what exists in the repository from work that still requires external validation or future R&D.
 
-## Milestone 1 — in the repository
+## COMPLETED / IMPLEMENTED
 
-Completed for the manual SOS path:
+- Offline-first deliberate SOS and device-bound emergency credentials.
+- Manual, volume, Safe Word and duress triggers; explicit SOS does not wait for AI.
+- Location, heartbeat, contact-loss, test mode and incident state machine.
+- Role-aware Android USER / GUARDIAN / RESPONDER experiences.
+- Trusted Circle invitation flow, Guardian notification preferences and escalation priority.
+- Continuous protected-journey location upload with retry queue.
+- Responder assignment workflow and visible responder location sharing.
+- Guardian private-room identity tied to TrustedContact IDs.
+- Actionable Guardian push payloads and foreground notification handling.
+- Full-size visible photo capture, visible video capture and encrypted chunked local evidence queue.
+- Monitoring Incident Command with map, evidence, Guardians, responders, communications, emergency profile, timeline and Intelligence.
+- Durable notification/AI outbox, dead letters and scheduler locks.
+- Operator shifts/readiness/handover.
+- Archive, Reports, Integrations, People/User Detail, Audit and Competition Demo Mode.
+- Account suspension, session revocation, MFA reset, encrypted TOTP secret storage and one-time recovery codes.
+- Explainable Guardian Safety Intelligence: production/shadow rules, recommendations, reviews, search predictions and audit records.
+- TLS/reverse-proxy production shape, Redis-backed rate limiting/realtime fan-out, SMTP production gate and off-host backup support.
 
-- Android registration, login, device registration, home protection screen, manual, volume, and safe-word SOS, `EmergencyTriggerEngine`, location breadcrumbs, a 10 minute test session, local incident history, distress capsule, heartbeat, guardians, journey watch, evidence chunks, duress PIN, and an offline queue.
-- API authentication, users, devices, incidents, locations, heartbeats, audit log, WebSocket events, PostgreSQL schema and migration, Redis health, Docker Compose for Postgres and Redis.
-- Monitoring login, active list, incident detail, map of the last confirmed location, heartbeat, timeline, acknowledge, and resolve.
+## PILOT GATE — MUST BE PROVEN OUTSIDE SOURCE CODE
 
-Still thin inside milestone 1:
+- Signed pilot APK/AAB installed and upgrade-tested on physical devices.
+- Real Firebase/FCM production delivery tests.
+- Real Twilio SMS and callback tests through the deployed reverse proxy.
+- APNs tests when iOS becomes launch scope.
+- OEM matrix: Samsung, Pixel, Xiaomi/Redmi, Oppo, Honor, Motorola and supported Huawei devices.
+- Screen-off, Doze, low-battery, reboot, app-killed, permission-revocation, weak-network and fully offline recovery tests.
+- Independent penetration test covering auth, device credentials, Guardian Rooms, evidence, WebSockets and uploads.
+- Load/failover drills against deployed infrastructure.
+- Backup restore drill with measured RPO/RTO.
+- POPIA/privacy/legal review and operating procedures.
+- Controlled user/responder/monitoring pilot with measured KPIs.
 
-- The API container is `services/api/Dockerfile`, exercised by `infrastructure/docker/docker-compose.prod.yml`. That compose file is not a multi-region deployment.
-- HTTP tests do not use a real database. The migration exists and must be applied before a deployment.
-- Dashboard navigation does not include guardians, evidence, responders, reports, or audit browsing. Audit is an API route for supervisors only.
-- Onboarding is welcome, register, and login, then the home checklist. It is not the ten-screen flow.
+## NEXT PRODUCTION ENGINEERING
 
-## Milestone 2 — partial
+- Verified Android App Links using production signing certificate and hosted assetlinks.json.
+- Production-approved/self-hosted map tiles and geocoder.
+- Authoritative replicated object storage, lifecycle/versioning and managed KMS.
+- Managed/replicated PostgreSQL and highly available Redis across failure domains.
+- Central logs, dashboards, alerting and distributed tracing.
+- Stronger GitHub governance: required PR reviews/CODEOWNERS, admin protection and signed release provenance.
+- Formal evidence retention, expiry, legal hold and chain-of-custody export.
+- Automated scheduled off-site backup + isolated restore verification.
 
-Implemented: configurable volume patterns, an on-device safe-word sample matcher, guardian records with an optional phone number, and journey, ride, drive, meeting, and high-risk watches. A live SOS creates a private room link and attempts SMS and FCM. SMS is sent only when `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, and `TWILIO_FROM` are set. Push is sent only when `FCM_SERVER_KEY` and a device `fcmToken` are set. Otherwise the delivery row says the message was not transmitted.
+## AI / INTELLIGENCE R&D
 
-## Milestone 3 — partial
+The current production-safe intelligence layer is explainable and rules-first. Future models must run in shadow/pilot before production.
 
-Implemented: encrypted audio, a photo taken in the camera UI, and a short video the person starts. Chunks are encrypted on the API host. A copy is sent to S3 only when `S3_BUCKET`, `S3_ENDPOINT`, `S3_ACCESS_KEY_ID`, and `S3_SECRET_ACCESS_KEY` are set. The monitoring hub lists evidence. It does not play a video timeline.
+- Safe Word neural keyword spotting after FAR/FRR benchmark validation.
+- Speech-to-text and multilingual transcription.
+- OCR, road/street-sign extraction and vehicle attributes.
+- Licence-plate candidates with confidence and mandatory human verification.
+- Video keyframe extraction and semantic evidence search.
+- Grounded Incident Copilot with source references.
+- Model registry promotion/rollback, evaluation metrics and drift monitoring.
+- Road-network-aware search probability zones.
+- Smarter responder ranking by ETA, availability, capability, region and workload.
+- Optional personalised behaviour intelligence with explicit consent.
 
-## Milestone 4 — partial
+## FUTURE PRODUCT EXPANSION
 
-Fusion scores the same explainable rules as the phone. A missed check-in or a high score can open a concern or high-risk incident from the server. A deliberate SOS still does not wait for that score. Battery survival slows location updates and blocks photo and video before audio. Impact detection is an opt-in foreground notification with a 20 second cancel. A same-signed companion can send `za.co.guardian.action.WEARABLE_SOS`. There is no watch app binary in this repository.
+- iOS production client.
+- Wearable companion and dedicated hardware.
+- Multi-tenant enterprise/security/campus/fleet deployments.
+- Tenant RBAC, organisations, regions, policies, SLAs and commercial billing.
+- Vehicle/IoT safety integrations.
+- Approved emergency-service/security-partner integrations.
 
-## Milestone 5 — partial
+## Rules that remain permanent
 
-The hub shows a rules brief and a search corridor around the last confirmed point. The brief cannot cancel an incident, accuse a person, or dispatch by itself. An operator can assign a responder account. The responder uses the same hub or the Android responder buttons and can move ASSIGNED → ACCEPTED → EN_ROUTE → ON_SCENE → USER_LOCATED → COMPLETED, or DECLINE. There is no separate responder store binary.
-
-## Still not a production claim
-
-iOS source in `apps/ios` has not been compiled and is not a launch requirement. Operator MFA is enforced only after that operator enrolls. Redis rate limits are used when Redis is up, and the process falls back to memory when it is not. PostgreSQL integration coverage runs when `GUARDIAN_PG_TEST=1`. The production compose file runs `api` and `api-replica` behind nginx; that is not a tested multi-region deployment. Backup is `pg_dump` via `services/api/scripts/backup-restore.mjs`. Observability is `/api/v1/health`, `/ready`, and Prometheus text at `/metrics`. Account export and erasure remove profile and guardian contact data and keep incident rows. No penetration test engagement has been run. No model is connected. Launch remains Android-first.
-
-## Product rules that stay in force
-
-A deliberate trigger sends immediately. Fusion and any future model stay off that path. Contact loss is an incident signal. Test incidents stay out of summary metrics. Permissions and system indicators are not bypassed.
+1. Explicit SOS always wins.
+2. AI cannot cancel or suppress an SOS.
+3. Predictions are never presented as confirmed facts.
+4. TEST incidents stay separate from live metrics.
+5. Privacy/system indicators are not bypassed.
