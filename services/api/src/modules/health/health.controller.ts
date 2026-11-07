@@ -1,4 +1,6 @@
 import { Controller, Get, Inject, Res } from "@nestjs/common";
+import { readdir, stat } from "node:fs/promises";
+import { join } from "node:path";
 import type { Response } from "express";
 import type { AppConfig } from "../../config";
 import { Public } from "../../common/guards";
@@ -76,6 +78,9 @@ export class HealthController {
         "# HELP guardian_postgres_probe_latency_ms Latest Postgres SELECT probe latency.",
         "# TYPE guardian_postgres_probe_latency_ms gauge",
         `guardian_postgres_probe_latency_ms ${snapshot.postgresLatencyMs}`,
+        "# HELP guardian_backup_age_seconds Age of newest encrypted database backup; -1 means unavailable.",
+        "# TYPE guardian_backup_age_seconds gauge",
+        `guardian_backup_age_seconds ${operations.backupAgeSeconds}`,
 
         "",
       ].join("\n"),
@@ -130,6 +135,21 @@ export class HealthController {
       oldestOutboxAgeSeconds: oldestOutbox ? Math.max(0, Math.floor((now.getTime() - oldestOutbox.createdAt.getTime()) / 1000)) : 0,
       deadLetters,
       expiredEvidence,
+      backupAgeSeconds: await this.backupAgeSeconds(),
     };
+  }
+
+  private async backupAgeSeconds(): Promise<number> {
+    const directory = process.env.BACKUP_STATUS_DIR?.trim();
+    if (!directory) return -1;
+    try {
+      const names = (await readdir(directory)).filter((name) => name.startsWith("guardian-") && name.endsWith(".sql.enc"));
+      if (!names.length) return -1;
+      const rows = await Promise.all(names.map(async (name) => stat(join(directory, name))));
+      const newest = Math.max(...rows.map((row) => row.mtimeMs));
+      return Math.max(0, Math.floor((Date.now() - newest) / 1000));
+    } catch {
+      return -1;
+    }
   }
 }
