@@ -135,19 +135,58 @@ export class OutboxService {
     return "retry";
   }
 
-  async recentDead(limit = 8): Promise<Array<{ type: string; aggregateId: string; attempts: number; lastError: string; failedAt: string }>> {
+  async recentDead(limit = 8): Promise<Array<{ id: string; outboxEventId: string; type: string; aggregateId: string; attempts: number; lastError: string; failedAt: string }>> {
     const rows = await this.prisma.outboxDeadLetter.findMany({
       orderBy: { failedAt: "desc" },
       take: limit,
-      select: { type: true, aggregateId: true, attempts: true, lastError: true, failedAt: true },
+      select: { id: true, outboxEventId: true, type: true, aggregateId: true, attempts: true, lastError: true, failedAt: true },
     });
     return rows.map((row) => ({
+      id: row.id,
+      outboxEventId: row.outboxEventId,
       type: row.type,
       aggregateId: row.aggregateId,
       attempts: row.attempts,
       lastError: row.lastError,
       failedAt: row.failedAt.toISOString(),
     }));
+  }
+
+  async requeueDeadLetter(id: string): Promise<boolean> {
+    const row = await this.prisma.outboxDeadLetter.findUnique({ where: { id } });
+    if (!row) return false;
+    const now = this.clock.now();
+    await this.prisma.$transaction([
+      this.prisma.outboxDeadLetter.delete({ where: { id } }),
+      this.prisma.outboxEvent.update({
+        where: { id: row.outboxEventId },
+        data: {
+          status: "PENDING",
+          attempts: 0,
+          nextAttemptAt: now,
+          lastError: null,
+          lockedBy: null,
+          lockedAt: null,
+          sentAt: null,
+          updatedAt: now,
+        },
+      }),
+    ]);
+    return true;
+  }
+
+  async resolveDeadLetter(id: string): Promise<boolean> {
+    const row = await this.prisma.outboxDeadLetter.findUnique({ where: { id } });
+    if (!row) return false;
+    const now = this.clock.now();
+    await this.prisma.$transaction([
+      this.prisma.outboxDeadLetter.delete({ where: { id } }),
+      this.prisma.outboxEvent.update({
+        where: { id: row.outboxEventId },
+        data: { status: "RESOLVED", lockedBy: null, lockedAt: null, updatedAt: now },
+      }),
+    ]);
+    return true;
   }
 
   async backlog(): Promise<{ pending: number; failed: number; dead: number; processing: number }> {
