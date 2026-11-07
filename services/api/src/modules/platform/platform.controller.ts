@@ -1,4 +1,4 @@
-import { Body, Controller, Get, HttpCode, Inject, Param, Post, Req } from "@nestjs/common";
+import { Body, Controller, Get, HttpCode, Inject, Param, Post, Query, Req } from "@nestjs/common";
 import {
   eraseAccountSchema,
   fusionSignalSchema,
@@ -136,6 +136,51 @@ export class PlatformController {
   setRole(@Param("id") id: string, @Body() body: unknown, @Req() request: RequestWithUser) {
     const input = parseBody(roleChangeSchema, body);
     return this.platform.setRole(actorFrom(request), id, input.role).then((data) => ({ data }));
+  }
+
+  @Get("admin/incidents/archive")
+  @RequirePermissions(Permission.IncidentReadActive)
+  archive(
+    @Req() request: RequestWithUser,
+    @Query("page") page?: string,
+    @Query("pageSize") pageSize?: string,
+    @Query("state") state?: string,
+    @Query("trigger") trigger?: string,
+    @Query("query") query?: string,
+    @Query("from") from?: string,
+    @Query("to") to?: string,
+    @Query("isTest") isTest?: string,
+    @Query("responderId") responderId?: string,
+    @Query("operatorId") operatorId?: string,
+  ) {
+    return this.platform.incidentArchive(actorFrom(request), {
+      page: Number(page || 1),
+      pageSize: Number(pageSize || 25),
+      state,
+      trigger,
+      query,
+      from,
+      to,
+      isTest: isTest === undefined || isTest === "" ? undefined : isTest === "true",
+      responderId,
+      operatorId,
+    }).then((data) => ({ data }));
+  }
+
+  @Get("admin/reports/overview")
+  @RequirePermissions(Permission.IncidentReadActive)
+  reports(@Req() request: RequestWithUser, @Query("days") days?: string) {
+    return this.platform.reportsOverview(actorFrom(request), Number(days || 30)).then((data) => ({ data }));
+  }
+
+  @Get("incidents/:id/emergency-profile")
+  emergencyProfile(@Param("id") id: string, @Req() request: RequestWithUser) {
+    return this.platform.incidentEmergencyProfile(actorFrom(request), id).then((data) => ({ data }));
+  }
+
+  @Get("incidents/:id/communications")
+  communications(@Param("id") id: string, @Req() request: RequestWithUser) {
+    return this.platform.incidentCommunications(actorFrom(request), id).then((data) => ({ data }));
   }
 
   @Get("admin/platform")
