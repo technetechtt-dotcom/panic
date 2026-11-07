@@ -49,6 +49,7 @@ export class IncidentService {
     private readonly clock: Clock,
     private readonly staleAfterSeconds: number,
     private readonly users: UserStore | null = null,
+    private readonly assignedReader: ((responderId: string, incidentId: string) => Promise<boolean>) | null = null,
   ) {}
 
   async create(actor: Actor, input: CreateIncidentInput, requestId: string | null, serverOriginated = false): Promise<CreateIncidentResult> {
@@ -637,7 +638,10 @@ export class IncidentService {
     const incident = await this.requireKnown(incidentId);
     const operator = hasPermission(actor.role, Permission.IncidentReadActive);
     const owner = incident.userId === actor.id && hasPermission(actor.role, Permission.IncidentReadOwn);
-    if (!operator && !owner) throw new AppError("FORBIDDEN", 403, "You cannot view this incident.");
+    const assigned = hasPermission(actor.role, Permission.IncidentReadAssigned) && this.assignedReader
+      ? await this.assignedReader(actor.id, incidentId)
+      : false;
+    if (!operator && !owner && !assigned) throw new AppError("FORBIDDEN", 403, "You cannot view this incident.");
     return incident;
   }
 
