@@ -72,7 +72,13 @@ function apnsReady(env: NodeJS.ProcessEnv): boolean {
   return Boolean(env.APNS_KEY_ID?.trim() && env.APNS_TEAM_ID?.trim() && env.APNS_KEY_P8?.trim());
 }
 
-export async function sendApns(token: string, title: string, body: string, env: NodeJS.ProcessEnv = process.env): Promise<SmsSendResult> {
+export async function sendApns(
+  token: string,
+  title: string,
+  body: string,
+  data: Record<string, string> = {},
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<SmsSendResult> {
   if (!token) return { delivered: false, simulated: true, reason: "No Apple device token was stored." };
   if (!apnsReady(env)) {
     if (env.APNS_KEY_ID?.trim() && env.APNS_TEAM_ID?.trim()) {
@@ -95,7 +101,7 @@ export async function sendApns(token: string, title: string, body: string, env: 
       .sign(key);
     const host = env.APNS_PRODUCTION === "true" ? "api.push.apple.com" : "api.sandbox.push.apple.com";
     const topic = env.APNS_BUNDLE_ID?.trim() || "za.co.guardian.app";
-    const payload = JSON.stringify({ aps: { alert: { title, body }, sound: "default" } });
+    const payload = JSON.stringify({ aps: { alert: { title, body }, sound: "default" }, ...data });
     const client = connect(`https://${host}`);
     const result = await new Promise<SmsSendResult>((resolve) => {
       const request = client.request({
@@ -137,7 +143,13 @@ export async function sendApns(token: string, title: string, body: string, env: 
   }
 }
 
-export async function sendFcm(token: string, title: string, body: string, env: NodeJS.ProcessEnv = process.env): Promise<SmsSendResult> {
+export async function sendFcm(
+  token: string,
+  title: string,
+  body: string,
+  data: Record<string, string> = {},
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<SmsSendResult> {
   if (!token) return { delivered: false, simulated: true, reason: "No FCM token was stored." };
   if (!fcmV1Ready(env)) {
     if (env.FCM_SERVER_KEY?.trim()) {
@@ -159,6 +171,7 @@ export async function sendFcm(token: string, title: string, body: string, env: N
         message: {
           token,
           notification: { title, body },
+          data,
           android: { priority: "HIGH" },
         },
       }),
