@@ -302,6 +302,7 @@ class SettingsViewModel @Inject constructor(
     private val database: za.co.guardian.data.GuardianDatabase,
     private val signals: za.co.guardian.data.PhoneSignals,
     private val api: za.co.guardian.data.GuardianApi,
+    private val healthSource: ProtectionStatusSource,
     @dagger.hilt.android.qualifiers.ApplicationContext private val context: android.content.Context,
 ) : ViewModel() {
     var testRemaining by mutableStateOf(settings.remainingMs())
@@ -603,8 +604,8 @@ class SettingsViewModel @Inject constructor(
     }
 
     fun checkConnection() = run { "Backend ${auth.checkConnection()}" }
-    fun addGuardian(name: String, phone: String, email: String = "") = run { protection.addGuardian(name, phone, email) }
-    fun acceptInvitation(token: String) = run { protection.acceptInvitation(token) }
+    fun addGuardian(name: String, phone: String, email: String = "", onSuccess: (() -> Unit)? = null) = run(onSuccess) { protection.addGuardian(name, phone, email) }
+    fun acceptInvitation(token: String, onSuccess: (() -> Unit)? = null) = run(onSuccess) { protection.acceptInvitation(token) }
     fun removeGuardian(id: String) = run { protection.removeGuardian(id) }
     fun revokeDevice(id: String) = run { protection.revokeDevice(id) }
     fun extendJourney(minutes: String) = run { protection.extendJourney(minutes.toIntOrNull() ?: 15) }
@@ -658,14 +659,23 @@ class SettingsViewModel @Inject constructor(
         vault.store(incident.triggerId, type, bytes)
         "Saved on this phone. It uploads with the open emergency."
     }
-    fun saveProfile(blood: String, allergies: String, medications: String, notes: String) = run {
+    fun saveProfile(blood: String, allergies: String, medications: String, notes: String, onSuccess: (() -> Unit)? = null) = run(onSuccess) {
         protection.saveProfile(blood, allergies, medications, notes)
     }
-    fun savePins(cancelPin: String, duressPin: String) = run { protection.setPins(cancelPin, duressPin) }
+    fun savePins(cancelPin: String, duressPin: String, onSuccess: (() -> Unit)? = null) = run(onSuccess) { protection.setPins(cancelPin, duressPin) }
     fun cancel(pin: String) = run { protection.cancel(pin) }
 
+    fun protectionReadiness(): ProtectionHealth = healthSource.current()
+
     fun finishOnboarding(onDone: () -> Unit) {
+        val readiness = healthSource.current()
         settings.setOnboarded(true)
+        status = if (readiness.level == ProtectionLevel.PROTECTED) {
+            "PROTECTED · core Guardian checks are ready."
+        } else {
+            val failed = readiness.checks.filter { it.status != CheckStatus.PASS }.joinToString(", ") { it.label }
+            "LIMITED PROTECTION · finish setup, then fix: $failed"
+        }
         onDone()
     }
 
@@ -676,10 +686,12 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
-    private fun run(block: suspend () -> String) {
+    private fun run(onSuccess: (() -> Unit)? = null, block: suspend () -> String) {
         viewModelScope.launch {
             status = try {
-                block()
+                val result = block()
+                onSuccess?.invoke()
+                result
             } catch (error: Exception) {
                 error.userMessage()
             }
