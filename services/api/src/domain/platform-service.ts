@@ -945,6 +945,11 @@ export class PlatformService {
         isTest: incident.isTest,
         duress: incident.duress,
         contactStatus: incident.contactStatus,
+        protectionMode: incident.protectionMode,
+        lastLatitude: incident.lastLatitude,
+        lastLongitude: incident.lastLongitude,
+        lastAccuracy: incident.lastAccuracy,
+        lastPositionAt: incident.lastPositionAt?.toISOString() ?? null,
         assignment: row.status,
       });
     }
