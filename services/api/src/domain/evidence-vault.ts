@@ -67,6 +67,14 @@ export class FileEvidenceVault {
     return Buffer.concat([decipher.update(data), decipher.final()]);
   }
 
+  async delete(storageKey: string): Promise<{ localDeleted: boolean; remoteDeleted: boolean }> {
+    const localDeleted = await unlink(path.join(this.directory, `${storageKey}.bin`))
+      .then(() => true)
+      .catch((error: NodeJS.ErrnoException) => error?.code === "ENOENT");
+    const remoteDeleted = await deleteObjectIfConfigured(storageKey);
+    return { localDeleted, remoteDeleted };
+  }
+
   private key(): Buffer {
     return scryptSync(this.keyMaterial, "guardian-evidence", 32);
   }
@@ -149,6 +157,35 @@ export async function getObjectIfConfigured(storageKey: string, env: NodeJS.Proc
   }).catch(() => null);
   if (!response?.ok) return null;
   return Buffer.from(await response.arrayBuffer());
+}
+
+export async function deleteObjectIfConfigured(storageKey: string, env: NodeJS.ProcessEnv = process.env): Promise<boolean> {
+  if (!s3Configured(env)) return true;
+  const bucket = env.S3_BUCKET!.trim();
+  const endpoint = new URL(env.S3_ENDPOINT!.trim());
+  const region = env.S3_REGION?.trim() || "us-east-1";
+  const amzDate = new Date().toISOString().replace(/[:-]|\.\d{3}/g, "");
+  const date = amzDate.slice(0, 8);
+  const payloadHash = createHash("sha256").update("").digest("hex");
+  const canonicalUri = `/${bucket}/${storageKey}.bin`;
+  const canonicalHeaders = `host:${endpoint.host}\nx-amz-content-sha256:${payloadHash}\nx-amz-date:${amzDate}\n`;
+  const signedHeaders = "host;x-amz-content-sha256;x-amz-date";
+  const canonical = ["DELETE", canonicalUri, "", canonicalHeaders, signedHeaders, payloadHash].join("\n");
+  const scope = `${date}/${region}/s3/aws4_request`;
+  const stringToSign = ["AWS4-HMAC-SHA256", amzDate, scope, createHash("sha256").update(canonical).digest("hex")].join("\n");
+  const signingKey = hmac(hmac(hmac(hmac(`AWS4${env.S3_SECRET_ACCESS_KEY!.trim()}`, date), region), "s3"), "aws4_request");
+  const signature = createHmac("sha256", signingKey).update(stringToSign).digest("hex");
+  const authorization = `AWS4-HMAC-SHA256 Credential=${env.S3_ACCESS_KEY_ID!.trim()}/${scope}, SignedHeaders=${signedHeaders}, Signature=${signature}`;
+  const response = await fetch(`${endpoint.origin}${canonicalUri}`, {
+    method: "DELETE",
+    headers: {
+      Host: endpoint.host,
+      Authorization: authorization,
+      "x-amz-date": amzDate,
+      "x-amz-content-sha256": payloadHash,
+    },
+  }).catch(() => null);
+  return Boolean(response?.ok || response?.status === 404);
 }
 
 function hmac(key: string | Buffer, value: string): Buffer {
