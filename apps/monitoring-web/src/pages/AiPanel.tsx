@@ -26,6 +26,7 @@ export function AiPanel({ id, token, canDecide }: { id: string; token: string | 
   const queryClient = useQueryClient();
   const [question, setQuestion] = useState("");
   const [answer, setAnswer] = useState<string | null>(null);
+  const [answerSources, setAnswerSources] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   const bundle = useQuery({
     queryKey: ["ai", id],
@@ -53,11 +54,12 @@ export function AiPanel({ id, token, canDecide }: { id: string; token: string | 
     event.preventDefault();
     setError(null);
     try {
-      const result = await api<{ answer: string }>(`/api/v1/incidents/${id}/ai/query`, token, {
+      const result = await api<{ answer: string; sources?: string[] }>(`/api/v1/incidents/${id}/ai/query`, token, {
         method: "POST",
         body: JSON.stringify({ question }),
       });
       setAnswer(result.answer);
+      setAnswerSources(result.sources ?? []);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "The question could not be answered.");
     }
@@ -204,6 +206,7 @@ export function AiPanel({ id, token, canDecide }: { id: string; token: string | 
           Ask
         </button>
         {answer ? <p className="mt-3 text-sm">{answer}</p> : null}
+        {answerSources.length ? <p className="mt-2 text-xs text-slate-400">Grounded in: {answerSources.join(" · ")}</p> : null}
         {error ? <p className="mt-2 text-sm text-sos">{error}</p> : null}
       </form>
     </section>
