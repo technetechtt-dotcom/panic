@@ -237,6 +237,9 @@ interface GuardianApi {
     @GET("guardians")
     suspend fun guardians(): GuardianListEnvelope
 
+    @retrofit2.http.PATCH("guardians/{id}")
+    suspend fun updateGuardian(@Path("id") id: String, @Body body: GuardianUpdateBody): GuardianEnvelope
+
     @POST("guardians/invitations/{token}/accept")
     suspend fun acceptInvitation(@Path("token") token: String): GuardianEnvelope
 
@@ -354,7 +357,18 @@ data class GuardianWire(
     val email: String? = null,
     val relationship: String = "FRIEND",
     val priority: Int = 1,
+    val notificationMethods: String = "PUSH,SMS",
+    val canViewLocation: Boolean = false,
+    val canViewEvidence: Boolean = false,
     val lastAcknowledgedAt: String? = null,
+)
+
+@Serializable
+data class GuardianUpdateBody(
+    val priority: Int,
+    val notificationMethods: String,
+    val canViewLocation: Boolean,
+    val canViewEvidence: Boolean,
 )
 
 @Serializable
