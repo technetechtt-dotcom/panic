@@ -61,6 +61,21 @@ export class PlatformService {
     await this.ai?.assess(incidentId);
   }
 
+  async queueOpenIncidentAssessments(limit = 200): Promise<number> {
+    const rows = await this.prisma.incident.findMany({
+      where: {
+        state: { in: ["CONCERN", "HIGH_RISK", "SOS", "ACKNOWLEDGED", "RESPONDING", "USER_LOCATED"] },
+      },
+      orderBy: { updatedAt: "desc" },
+      take: Math.max(1, Math.min(500, limit)),
+      select: { id: true },
+    });
+    for (const row of rows) {
+      await this.queueAiAssessment(row.id);
+    }
+    return rows.length;
+  }
+
   async notifyIncident(incident: { id: string; userId: string; userDisplayName: string; state: string; isTest: boolean }): Promise<void> {
     if (this.outbox) {
       if (!incident.isTest) {
@@ -921,7 +936,17 @@ export class PlatformService {
   }
 
   async position(actor: Actor, journeyId: string, latitude: number, longitude: number) {
-    return this.protection.notePosition(actor, journeyId, latitude, longitude);
+    const result = await this.protection.notePosition(actor, journeyId, latitude, longitude);
+    const incident = await this.prisma.incident.findFirst({
+      where: {
+        userId: actor.id,
+        state: { in: ["CONCERN", "HIGH_RISK", "SOS", "ACKNOWLEDGED", "RESPONDING", "USER_LOCATED"] },
+      },
+      orderBy: { createdAt: "desc" },
+      select: { id: true },
+    });
+    if (incident) void this.queueAiAssessment(incident.id).catch(() => undefined);
+    return result;
   }
 
   async signals(actor: Actor, signals: string[]) {
