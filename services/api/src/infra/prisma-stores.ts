@@ -94,6 +94,8 @@ export class PrismaUserStore implements UserStore {
           role: user.role,
           phone: user.phone ?? null,
           emailVerifiedAt: user.emailVerifiedAt ?? null,
+          suspendedAt: user.suspendedAt ?? null,
+          lastLoginAt: user.lastLoginAt ?? null,
           createdAt: user.createdAt,
           updatedAt: user.updatedAt,
         },
@@ -111,6 +113,8 @@ export class PrismaUserStore implements UserStore {
         displayName: user.displayName,
         phone: user.phone ?? null,
         emailVerifiedAt: user.emailVerifiedAt ?? null,
+        suspendedAt: user.suspendedAt ?? null,
+        lastLoginAt: user.lastLoginAt ?? null,
         updatedAt: user.updatedAt,
       },
     });
