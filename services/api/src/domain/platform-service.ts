@@ -1059,6 +1059,7 @@ export class PlatformService {
       displayName: contact.user.displayName,
       relationship: contact.relationship,
       priority: contact.priority,
+      notificationMethods: contact.notificationMethods || "PUSH,SMS",
       canViewLocation: contact.canViewLocation,
       canViewEvidence: contact.canViewEvidence,
       lastAcknowledgedAt: contact.lastAcknowledgedAt?.toISOString() ?? null,
@@ -1067,6 +1068,38 @@ export class PlatformService {
         createdAt: incident.createdAt.toISOString(),
       })),
     }));
+  }
+
+  async updateGuardianRecipientPreferences(actor: Actor, trustedContactId: string, notificationMethods: string) {
+    if (actor.role !== "GUARDIAN") throw new AppError("FORBIDDEN", 403, "This action is only available to Guardian accounts.");
+    const contact = await this.prisma.trustedContact.findFirst({
+      where: {
+        id: trustedContactId,
+        guardianUserId: actor.id,
+        invitationStatus: "ACCEPTED",
+        active: true,
+      },
+    });
+    if (!contact) throw new AppError("NOT_FOUND", 404, "That Guardian relationship was not found.");
+    const updated = await this.prisma.trustedContact.update({
+      where: { id: contact.id },
+      data: { notificationMethods },
+    });
+    await this.prisma.auditEvent.create({
+      data: {
+        id: this.ids.uuid(),
+        actorId: actor.id,
+        action: "guardian.notification_preferences_updated",
+        entityType: "TrustedContact",
+        entityId: contact.id,
+        correlationId: null,
+        requestId: null,
+        metadata: { notificationMethods },
+        createdAt: this.clock.now(),
+        updatedAt: this.clock.now(),
+      },
+    });
+    return { trustedContactId: updated.id, notificationMethods: updated.notificationMethods };
   }
 
   async guardianRoomForIncident(actor: Actor, incidentId: string) {
