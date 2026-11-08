@@ -1175,19 +1175,41 @@ export class PlatformService {
       throw new AppError("INVALID_CREDENTIALS", 401, "The password was not accepted.");
     }
     const now = this.clock.now();
-    await this.prisma.trustedContact.deleteMany({ where: { userId: actor.id } });
-    await this.prisma.emergencyProfile.deleteMany({ where: { userId: actor.id } });
-    await this.prisma.operatorMfa.deleteMany({ where: { userId: actor.id } });
-    await this.prisma.refreshToken.updateMany({ where: { userId: actor.id, revokedAt: null }, data: { revokedAt: now } });
-    await this.prisma.user.update({
-      where: { id: actor.id },
-      data: {
-        email: `erased-${actor.id}@invalid.guardian`,
-        displayName: "Erased account",
-        passwordHash: await this.passwords.hash(randomBytes(24).toString("hex")),
-        updatedAt: now,
-      },
-    });
+    await this.prisma.$transaction([
+      this.prisma.trustedContact.deleteMany({ where: { userId: actor.id } }),
+      this.prisma.trustedContact.updateMany({
+        where: { guardianUserId: actor.id },
+        data: {
+          guardianUserId: null,
+          invitationStatus: "PENDING",
+          verifiedAt: null,
+          lastAcknowledgedAt: null,
+        },
+      }),
+      this.prisma.emergencyProfile.deleteMany({ where: { userId: actor.id } }),
+      this.prisma.operatorMfa.deleteMany({ where: { userId: actor.id } }),
+      this.prisma.refreshToken.updateMany({ where: { userId: actor.id, revokedAt: null }, data: { revokedAt: now } }),
+      this.prisma.device.updateMany({
+        where: { userId: actor.id },
+        data: {
+          revokedAt: now,
+          emergencyTokenHash: null,
+          fcmToken: null,
+          pushTokenUpdatedAt: null,
+        },
+      }),
+      this.prisma.user.update({
+        where: { id: actor.id },
+        data: {
+          email: `erased-${actor.id}@invalid.guardian`,
+          displayName: "Erased account",
+          phone: null,
+          suspendedAt: now,
+          passwordHash: await this.passwords.hash(randomBytes(24).toString("hex")),
+          updatedAt: now,
+        },
+      }),
+    ]);
     return { erased: true, incidentsRetained: true };
   }
 
