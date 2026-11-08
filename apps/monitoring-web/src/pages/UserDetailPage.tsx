@@ -13,6 +13,8 @@ export function UserDetailPage(){
  const {id=""}=useParams(); const {session}=useAuth(); const token=session?.accessToken??null; const qc=useQueryClient();
  const user=useQuery({queryKey:["admin-user",id],queryFn:()=>api<UserDetail>(`/api/v1/admin/users/${id}`,token)});
  async function action(name:"suspend"|"reactivate"|"revoke-sessions"|"reset-mfa"){
+   const label = name === "suspend" ? "suspend this account" : name === "reactivate" ? "reactivate this account" : name === "revoke-sessions" ? "revoke every active sign-in session" : "reset MFA and recovery codes";
+   if (!window.confirm(`Confirm: ${label}?`)) return;
    await api(`/api/v1/admin/users/${id}/${name}`,token,{method:"POST",body:JSON.stringify({})});
    await Promise.all([qc.invalidateQueries({queryKey:["admin-user",id]}),qc.invalidateQueries({queryKey:["admin-users"]})]);
  }
