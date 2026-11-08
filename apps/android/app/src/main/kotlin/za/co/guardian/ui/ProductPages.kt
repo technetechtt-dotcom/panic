@@ -439,18 +439,43 @@ fun SetupOnboardingScreen(onDone: () -> Unit, viewModel: SettingsViewModel = hil
 
 @Composable
 fun DevicesPage(onBack: () -> Unit, viewModel: SettingsViewModel = hiltViewModel()) {
+    var pendingRevoke by remember { mutableStateOf<za.co.guardian.data.DeviceListItem?>(null) }
     androidx.compose.runtime.LaunchedEffect(Unit) { viewModel.refresh() }
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp)) {
         TextButton(onClick = onBack) { Text("Back") }
         Text("My devices", fontSize = 32.sp, fontWeight = FontWeight.SemiBold)
         Text("Revoke a lost or replaced phone. That device cannot send SOS until it signs in again.", modifier = Modifier.padding(vertical = 8.dp))
         viewModel.devices.forEach { device ->
+            val isCurrent = device.id == viewModel.currentDeviceId()
             val state = if (device.revokedAt != null) "revoked" else if (device.fcmToken != null) "push ready" else "no push token"
-            Text("${device.nickname ?: device.model ?: "Phone"}", fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 12.dp))
+            Text(
+                (device.nickname ?: device.model ?: "Phone") + if (isCurrent) " · THIS DEVICE" else "",
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.padding(top = 12.dp),
+            )
             Text("${device.osVersion} · $state")
+            Text(
+                "Emergency credential · " +
+                    if (isCurrent) {
+                        if (viewModel.currentEmergencyCredentialProvisioned()) "provisioned on this phone" else "missing on this phone"
+                    } else if (device.emergencyCredentialProvisioned) "provisioned" else "not provisioned",
+            )
             Text("Last seen ${device.lastSeenAt ?: "unknown"}")
             if (device.revokedAt == null) {
-                Button(onClick = { viewModel.revokeDevice(device.id) }, modifier = Modifier.fillMaxWidth()) { Text("Revoke this device") }
+                Button(onClick = { pendingRevoke = device }, modifier = Modifier.fillMaxWidth()) { Text(if (isCurrent) "Revoke THIS DEVICE" else "Revoke this device") }
+            }
+        }
+        pendingRevoke?.let { device ->
+            val current = device.id == viewModel.currentDeviceId()
+            Surface(modifier = Modifier.fillMaxWidth().padding(top = 16.dp), color = Color(0xFF2A1717)) {
+                Column(Modifier.padding(14.dp)) {
+                    Text(if (current) "Revoke THIS DEVICE?" else "Revoke device?", fontWeight = FontWeight.Bold)
+                    Text(if (current) "This phone will lose push and emergency credentials and must sign in/register again before it can send SOS." else "That phone will lose push and emergency credentials.")
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        TextButton(onClick = { pendingRevoke = null }) { Text("Cancel") }
+                        Button(onClick = { viewModel.revokeDevice(device.id); pendingRevoke = null }) { Text("Revoke") }
+                    }
+                }
             }
         }
         if (viewModel.devices.isEmpty()) Text("No devices on this account yet.")
