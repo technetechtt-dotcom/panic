@@ -5,8 +5,8 @@ import { hasPermission, Permission } from "./rbac";
 import type { PasswordHasher } from "./security";
 import type { FileEvidenceVault } from "./evidence-vault";
 import type { FusionBridge } from "./fusion-bridge";
-import { fusionEvaluate, routeDeviates } from "./operations";
-import { geocodeDestination } from "./geocode";
+import { fusionEvaluate, routeDeviates, routeDeviatesPolyline } from "./operations";
+import { geocodeDestination, routedPolyline } from "./geocode";
 import { ACTIVE_STATES, type Actor, type AuditStore, type Clock, type IdGenerator, type IncidentStore, type RealtimePublisher, type TimelineStore } from "./ports";
 
 export interface TrustedContactRecord {
@@ -51,6 +51,8 @@ export interface JourneyRecord {
   destinationLatitude: number | null;
   destinationLongitude: number | null;
   corridorMeters: number;
+  routeGeometry: Array<{ latitude: number; longitude: number }> | null;
+  routeSource: "ROUTED" | "STRAIGHT_FALLBACK" | "NONE";
 }
 
 export interface JourneyStore {
@@ -251,6 +253,27 @@ export class ProtectionService {
       destinationLatitude = geo?.latitude ?? null;
       destinationLongitude = geo?.longitude ?? null;
     }
+    let routeGeometry: Array<{ latitude: number; longitude: number }> | null = null;
+    let routeSource: JourneyRecord["routeSource"] = "NONE";
+    const originLatitude = input.originLatitude ?? null;
+    const originLongitude = input.originLongitude ?? null;
+    if (originLatitude != null && originLongitude != null && destinationLatitude != null && destinationLongitude != null) {
+      const routed = await routedPolyline(
+        { latitude: originLatitude, longitude: originLongitude },
+        { latitude: destinationLatitude, longitude: destinationLongitude },
+        mode === "WALK" ? "walking" : "driving",
+      );
+      if (routed?.length) {
+        routeGeometry = routed;
+        routeSource = "ROUTED";
+      } else if (mode !== "RIDE" && mode !== "DRIVE") {
+        routeGeometry = [
+          { latitude: originLatitude, longitude: originLongitude },
+          { latitude: destinationLatitude, longitude: destinationLongitude },
+        ];
+        routeSource = "STRAIGHT_FALLBACK";
+      }
+    }
     const journey: JourneyRecord = {
       id: this.ids.uuid(),
       userId: actor.id,
@@ -260,11 +283,13 @@ export class ProtectionService {
       lastCheckInAt: now,
       status: "ACTIVE",
       mode,
-      originLatitude: input.originLatitude ?? null,
-      originLongitude: input.originLongitude ?? null,
+      originLatitude,
+      originLongitude,
       destinationLatitude,
       destinationLongitude,
       corridorMeters: input.corridorMeters ?? (mode === "MEETING" ? 200 : mode === "RIDE" || mode === "DRIVE" ? 800 : mode === "HIGH_RISK" ? 250 : 400),
+      routeGeometry,
+      routeSource,
     };
     await this.journeys.insert(journey);
     return journey;
@@ -336,15 +361,19 @@ export class ProtectionService {
     ) {
       return { deviated: false, level: "NORMAL" };
     }
-    const deviated = routeDeviates(
-      latitude,
-      longitude,
-      journey.originLatitude,
-      journey.originLongitude,
-      journey.destinationLatitude,
-      journey.destinationLongitude,
-      journey.corridorMeters,
-    );
+    const deviated = journey.routeGeometry?.length
+      ? routeDeviatesPolyline(latitude, longitude, journey.routeGeometry, journey.corridorMeters)
+      : journey.mode === "RIDE" || journey.mode === "DRIVE"
+        ? false
+        : routeDeviates(
+            latitude,
+            longitude,
+            journey.originLatitude,
+            journey.originLongitude,
+            journey.destinationLatitude,
+            journey.destinationLongitude,
+            journey.corridorMeters,
+          );
     if (!deviated) return { deviated: false, level: "NORMAL" };
     const scored = fusionEvaluate(["ROUTE_DEVIATION"]);
     await this.risks.record({
