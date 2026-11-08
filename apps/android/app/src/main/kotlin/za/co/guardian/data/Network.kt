@@ -420,6 +420,7 @@ data class DeviceListItem(
     val fcmToken: String? = null,
     val lastSeenAt: String? = null,
     val nickname: String? = null,
+    val emergencyCredentialProvisioned: Boolean = false,
 )
 
 @Serializable
