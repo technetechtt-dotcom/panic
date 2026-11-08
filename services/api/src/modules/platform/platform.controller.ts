@@ -1,4 +1,5 @@
-import { Body, Controller, Get, HttpCode, Inject, Param, Post, Query, Req } from "@nestjs/common";
+import { Body, Controller, Get, HttpCode, Inject, Param, Post, Query, Req, Res } from "@nestjs/common";
+import type { Response } from "express";
 import {
   eraseAccountSchema,
   evidenceGovernanceSchema,
@@ -46,6 +47,45 @@ export class PlatformController {
   @RequirePermissions(Permission.IncidentReadActive)
   evidence(@Param("id") id: string, @Req() request: RequestWithUser) {
     return this.platform.evidence(actorFrom(request), id).then((data) => ({ data }));
+  }
+
+  @Get("incidents/:id/evidence-artifacts")
+  @RequirePermissions(Permission.IncidentReadActive)
+  evidenceArtifacts(@Param("id") id: string, @Req() request: RequestWithUser) {
+    return this.platform.evidenceArtifacts(actorFrom(request), id).then((data) => ({ data }));
+  }
+
+  @Get("incidents/:id/evidence-artifacts/:artifactId/content")
+  @RequirePermissions(Permission.IncidentReadActive)
+  async evidenceArtifactContent(
+    @Param("id") id: string,
+    @Param("artifactId") artifactId: string,
+    @Req() request: RequestWithUser,
+    @Res() response: Response,
+  ) {
+    const file = await this.platform.evidenceArtifactBytes(actorFrom(request), id, artifactId);
+    const total = file.bytes.length;
+    response.setHeader("Content-Type", file.contentType);
+    response.setHeader("Accept-Ranges", "bytes");
+    response.setHeader("Cache-Control", "no-store, private");
+    response.setHeader("X-Content-SHA256", file.sha256);
+    const range = request.headers.range;
+    if (range) {
+      const match = /^bytes=(\d*)-(\d*)$/.exec(range);
+      if (!match) return response.status(416).setHeader("Content-Range", `bytes */${total}`).end();
+      const start = match[1] ? Number(match[1]) : 0;
+      const end = match[2] ? Math.min(Number(match[2]), total - 1) : total - 1;
+      if (!Number.isFinite(start) || !Number.isFinite(end) || start < 0 || start > end || start >= total) {
+        return response.status(416).setHeader("Content-Range", `bytes */${total}`).end();
+      }
+      const slice = file.bytes.subarray(start, end + 1);
+      response.status(206);
+      response.setHeader("Content-Range", `bytes ${start}-${end}/${total}`);
+      response.setHeader("Content-Length", String(slice.length));
+      return response.send(slice);
+    }
+    response.setHeader("Content-Length", String(total));
+    return response.send(file.bytes);
   }
 
   @Get("incidents/:id/evidence-manifest")
