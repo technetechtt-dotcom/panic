@@ -385,12 +385,17 @@ export class AiService {
       },
     });
     if (!incident) throw new AppError("NOT_FOUND", 404, "That incident was not found.");
-    const [locationCount, evidenceCount, guardianTotal, guardianAcked] = await Promise.all([
+    const [locationCount, evidenceCount, guardianTotal, guardianAcknowledgementRows] = await Promise.all([
       this.prisma.incidentLocation.count({ where: { incidentId } }),
       this.prisma.evidenceChunk.count({ where: { incidentId } }),
       this.prisma.trustedContact.count({ where: { userId: incident.userId, active: true } }),
-      this.prisma.notificationDelivery.count({ where: { incidentId, acknowledgedAt: { not: null } } }),
+      this.prisma.notificationDelivery.findMany({
+        where: { incidentId, trustedContactId: { not: null }, acknowledgedAt: { not: null } },
+        distinct: ["trustedContactId"],
+        select: { trustedContactId: true },
+      }),
     ]);
+    const guardianAcked = guardianAcknowledgementRows.length;
     return {
       displayName: incident.user.displayName,
       triggerType: incident.triggerType,
