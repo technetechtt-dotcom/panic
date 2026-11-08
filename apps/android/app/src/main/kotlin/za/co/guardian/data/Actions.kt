@@ -409,8 +409,20 @@ class ProtectionActions @Inject constructor(
     suspend fun loadProfile(): ProfileWire = api.profile().data
 
     suspend fun exportAccount(): String {
-        api.exportAccount()
-        return "Account export was prepared on the server. It includes profile, guardians, devices, and incident metadata, not evidence bytes."
+        val payload = api.exportAccount().data.toString()
+        val directory = java.io.File(context.cacheDir, "guardian_exports").apply { mkdirs() }
+        val file = java.io.File(directory, "guardian-account-export-${System.currentTimeMillis()}.json")
+        file.writeText(payload, Charsets.UTF_8)
+        val uri = androidx.core.content.FileProvider.getUriForFile(context, "${context.packageName}.files", file)
+        val send = android.content.Intent(android.content.Intent.ACTION_SEND)
+            .setType("application/json")
+            .putExtra(android.content.Intent.EXTRA_STREAM, uri)
+            .putExtra(android.content.Intent.EXTRA_SUBJECT, "Guardian account data export")
+            .addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION or android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+        val chooser = android.content.Intent.createChooser(send, "Share Guardian data export")
+            .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+        context.startActivity(chooser)
+        return "Account export created and opened in the Android share sheet. It contains profile, guardians, devices and incident metadata, not evidence bytes."
     }
 
     suspend fun eraseAccount(password: String): String {
