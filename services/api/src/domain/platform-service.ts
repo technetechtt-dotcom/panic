@@ -2411,8 +2411,13 @@ export class PlatformService {
       return { kind: upper, ok: state.includes("up") || state === "single-process", detail: state };
     }
     if (upper === "EVIDENCE") {
-      const result = await this.vault.probeLocal();
-      return { kind: upper, ...result };
+      const local = await this.vault.probeLocal();
+      if (!local.ok) return { kind: upper, ...local };
+      if (s3Configured()) {
+        const remote = await this.vault.probeRemote();
+        return { kind: upper, ok: remote.ok, detail: `${local.detail} ${remote.detail}` };
+      }
+      return { kind: upper, ok: process.env.NODE_ENV !== "production", detail: `${local.detail} Remote object storage is not configured.` };
     }
     if (upper === "SMS") {
       const to = process.env.INTEGRATION_TEST_PHONE?.trim();
@@ -2438,8 +2443,16 @@ export class PlatformService {
     }
     if (upper === "MAPS") {
       const query = process.env.INTEGRATION_TEST_GEOCODE_QUERY?.trim() || "Kimberley, South Africa";
-      const result = await geocodeDestination(query).catch(() => null);
-      return { kind: upper, ok: Boolean(result), detail: result ? `Geocoding returned ${result.label}.` : "Geocoding did not return a result." };
+      const geocode = await geocodeDestination(query).catch(() => null);
+      const tileProbeUrl = process.env.MAP_TILE_HEALTH_URL?.trim();
+      const tile = tileProbeUrl
+        ? await fetch(tileProbeUrl, { method: "GET", signal: AbortSignal.timeout(5000) }).then((response) => response.ok).catch(() => false)
+        : false;
+      return {
+        kind: upper,
+        ok: Boolean(geocode) && tile,
+        detail: `Geocoding ${geocode ? "passed" : "failed"}; tile delivery ${tileProbeUrl ? (tile ? "passed" : "failed") : "not configured (MAP_TILE_HEALTH_URL)"}.`,
+      };
     }
     throw new AppError("VALIDATION", 422, "Unknown integration test.");
   }
@@ -2482,11 +2495,29 @@ export class PlatformService {
     } catch {
       postgres = "down";
     }
+    const providerRows = await this.prisma.notificationDelivery.findMany({
+      where: { channel: { in: ["SMS", "FCM", "APNS", "EMAIL"] } },
+      orderBy: { createdAt: "desc" },
+      take: 500,
+      select: { channel: true, status: true, sentAt: true, deliveredAt: true, failedAt: true, createdAt: true },
+    }).catch(() => []);
+    const providerTelemetry = Object.fromEntries(["SMS", "FCM", "APNS", "EMAIL"].map((channel) => {
+      const channelRows = providerRows.filter((row) => row.channel === channel);
+      const success = channelRows.find((row) => row.deliveredAt || row.sentAt || ["SENT", "DELIVERED"].includes(row.status));
+      const failure = channelRows.find((row) => row.failedAt || ["FAILED", "SKIPPED"].includes(row.status));
+      return [channel, {
+        lastSuccessAt: (success?.deliveredAt ?? success?.sentAt ?? success?.createdAt)?.toISOString() ?? null,
+        lastFailureAt: (failure?.failedAt ?? failure?.createdAt)?.toISOString() ?? null,
+      }];
+    }));
     return {
       postgres,
       sms: smsHealth(),
       fcm: fcmHealth(),
       apns: apnsHealth(),
+      smtp: process.env.SMTP_URL?.trim() ? "CONFIGURED" : "NOT_CONFIGURED",
+      maps: process.env.GEOCODER_URL?.trim() && process.env.MAP_TILE_HEALTH_URL?.trim() ? "CONFIGURED" : "INCOMPLETE",
+      providerTelemetry,
       s3: s3Configured() ? "CONFIGURED" : "NOT_CONFIGURED",
       vault: process.env.EVIDENCE_VAULT_KEY ? "independent-aes-gcm" : "dev-jwt-fallback",
       requests: requestMetrics.total,
