@@ -4,6 +4,7 @@ import {
   eraseAccountSchema,
   evidenceGovernanceSchema,
   fusionSignalSchema,
+  guardianRecipientPreferenceSchema,
   incidentCommunicationSchema,
   mfaCodeSchema,
   mfaSetupSchema,
@@ -367,6 +368,14 @@ export class PlatformController {
   @RequirePermissions(Permission.UserReadSelf)
   guardianInbox(@Req() request: RequestWithUser) {
     return this.platform.guardianInbox(actorFrom(request)).then((data) => ({ data }));
+  }
+
+  @Post("guardian/relationships/:id/preferences")
+  @HttpCode(200)
+  @RequirePermissions(Permission.UserReadSelf)
+  guardianPreferences(@Param("id") id: string, @Body() body: unknown, @Req() request: RequestWithUser) {
+    const input = parseBody(guardianRecipientPreferenceSchema, body);
+    return this.platform.updateGuardianRecipientPreferences(actorFrom(request), id, input.notificationMethods).then((data) => ({ data }));
   }
 
   @Get("guardian/incidents/:id/room")
