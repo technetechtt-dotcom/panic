@@ -78,7 +78,35 @@ class TokenStore @Inject constructor(@ApplicationContext context: Context) {
 
 @Singleton
 class SettingsStore @Inject constructor(@ApplicationContext context: Context) : PracticeModeReader {
-    private val prefs = context.getSharedPreferences("guardian_settings", Context.MODE_PRIVATE)
+    private val prefs: SharedPreferences
+
+    init {
+        val masterKeyAlias = MasterKeys.getOrCreate(MasterKeys.AES256_GCM_SPEC)
+        prefs = EncryptedSharedPreferences.create(
+            "guardian_settings_secure",
+            masterKeyAlias,
+            context,
+            EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+            EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM,
+        )
+        val legacy = context.getSharedPreferences("guardian_settings", Context.MODE_PRIVATE)
+        if (!prefs.getBoolean(SECURE_MIGRATED, false)) {
+            val editor = prefs.edit()
+            for ((key, value) in legacy.all) {
+                when (value) {
+                    is String -> editor.putString(key, value)
+                    is Boolean -> editor.putBoolean(key, value)
+                    is Int -> editor.putInt(key, value)
+                    is Long -> editor.putLong(key, value)
+                    is Float -> editor.putFloat(key, value)
+                    is Set<*> -> editor.putStringSet(key, value.filterIsInstance<String>().toSet())
+                }
+            }
+            if (editor.putBoolean(SECURE_MIGRATED, true).commit()) {
+                legacy.edit().clear().apply()
+            }
+        }
+    }
 
     override fun enabled(): Boolean = testSessionActive(System.currentTimeMillis())
     override fun remainingMs(): Long {
@@ -198,6 +226,7 @@ class SettingsStore @Inject constructor(@ApplicationContext context: Context) : 
     }
 
     private companion object {
+        const val SECURE_MIGRATED = "__secure_migrated_v1"
         const val PRACTICE = "practice"
         const val TEST_UNTIL = "test_until"
         const val ACTIVE = "incident_active"
