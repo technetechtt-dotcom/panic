@@ -388,6 +388,14 @@ class EmergencyUploader @Inject constructor(
                             else -> "audio/pcm"
                         },
                         EvidenceVault.base64(plain),
+                        captureId = row.captureId.ifBlank { row.evidenceId },
+                        chunkIndex = row.chunkIndex,
+                        chunkCount = row.chunkCount.coerceAtLeast(1),
+                        originalSha256 = row.originalSha256.ifBlank { row.sha256 },
+                        originalByteLength = if (row.originalSize > 0) row.originalSize else row.size.toLong(),
+                        capturedAt = java.time.Instant.ofEpochMilli(
+                            if (row.capturedAtEpochMs > 0) row.capturedAtEpochMs else row.createdAtEpochMs,
+                        ).toString(),
                     ),
                 )
                 vault.mark(row.evidenceId, "VERIFIED", row.retryCount)
