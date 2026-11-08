@@ -44,6 +44,8 @@ jobs:
         env:
           POSTGRES_PASSWORD: ci-postgres-password
           JWT_ACCESS_SECRET: ci-jwt-secret-that-is-long-enough-for-hs256
+          MFA_ENCRYPTION_KEY: ci-mfa-encryption-key-independent-2026
+          PUBLIC_WEB_URL: https://hub.guardian.test
           EVIDENCE_VAULT_KEY: ci-evidence-vault-key-that-is-long-enough
           PUBLIC_API_URL: https://api.guardian.test
           CORS_ORIGIN: https://hub.guardian.test
@@ -54,6 +56,8 @@ jobs:
           S3_ACCESS_KEY_ID: ci-access
           S3_SECRET_ACCESS_KEY: ci-secret
           GEOCODER_URL: https://geocoder.guardian.test/search
+          ROUTER_URL: https://router.guardian.test/route/v1
+          MAP_TILE_HEALTH_URL: https://tiles.guardian.test/0/0/0.png
           VITE_MAP_TILE_URL: https://tiles.guardian.test/{z}/{x}/{y}.png
           VITE_MAP_TILE_ATTRIBUTION: Guardian CI Tiles
           GUARDIAN_ANDROID_CERT_SHA256: AA:BB:CC:DD:EE:FF
@@ -69,7 +73,7 @@ jobs:
       - name: Build
         run: npm run build
       - name: Production dependency audit
-        run: npm audit --omit=dev --audit-level=critical
+        run: npm audit --omit=dev --audit-level=high
 
   android:
     name: Android unit tests, lint, debug APK
