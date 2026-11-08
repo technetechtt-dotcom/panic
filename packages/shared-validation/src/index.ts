@@ -316,8 +316,24 @@ export const evidenceChunkSchema = z
     sha256: z.string().regex(/^[a-f0-9]{64}$/),
     contentType: z.enum(["audio/pcm", "image/jpeg", "video/mp4"]),
     bytesBase64: z.string().regex(/^[A-Za-z0-9+/]+={0,2}$/).min(4).max(2_100_000),
+    captureId: z.string().uuid().optional(),
+    chunkIndex: z.number().int().min(0).max(100000).optional(),
+    chunkCount: z.number().int().min(1).max(100000).optional(),
+    originalSha256: z.string().regex(/^[a-f0-9]{64}$/).optional(),
+    originalByteLength: z.number().int().min(1).max(2_000_000_000).optional(),
+    capturedAt: isoTime.optional(),
   })
-  .strict();
+  .strict()
+  .superRefine((value, ctx) => {
+    const supplied = [value.captureId, value.chunkIndex, value.chunkCount, value.originalSha256, value.originalByteLength, value.capturedAt]
+      .filter((item) => item !== undefined).length;
+    if (supplied !== 0 && supplied !== 6) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Evidence artifact metadata must be supplied together." });
+    }
+    if (value.chunkIndex !== undefined && value.chunkCount !== undefined && value.chunkIndex >= value.chunkCount) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Evidence chunkIndex must be less than chunkCount." });
+    }
+  });
 
 export const evidenceGovernanceSchema = z
   .object({
