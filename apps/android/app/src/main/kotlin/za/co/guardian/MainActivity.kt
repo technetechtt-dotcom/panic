@@ -191,12 +191,14 @@ class MainActivity : ComponentActivity() {
                         "invite/{token}",
                         arguments = listOf(navArgument("token") { type = NavType.StringType }),
                     ) { entry ->
-                        GuardiansScreen(
-                            onHome = { nav.navigate(roleHome()) },
-                            onProtect = { nav.navigate("protect") },
-                            onActivity = { nav.navigate("activity") },
-                            onProfile = { nav.navigate("profile") },
-                            initialInviteToken = android.net.Uri.decode(entry.arguments?.getString("token").orEmpty()),
+                        AcceptGuardianInviteScreen(
+                            token = android.net.Uri.decode(entry.arguments?.getString("token").orEmpty()),
+                            onAccepted = {
+                                nav.navigate("guardian-home") {
+                                    popUpTo("invite/{token}") { inclusive = true }
+                                }
+                            },
+                            onBack = { nav.popBackStack() },
                         )
                     }
                     composable("onboarding") {
@@ -204,13 +206,33 @@ class MainActivity : ComponentActivity() {
                     }
                     composable("guardian-home") {
                         GuardianHomeScreen(
-                            onProfile = { nav.navigate("profile") },
+                            onProfile = { nav.navigate("guardian-profile") },
+                            onSignedOut = { signOut() },
+                        )
+                    }
+                    composable("guardian-profile") {
+                        RoleProfileScreen(
+                            title = "Guardian profile",
+                            onHome = { nav.navigate("guardian-home") { popUpTo("guardian-home") { inclusive = false } } },
+                            onPrivacy = { nav.navigate("privacy") },
+                            onDevices = { nav.navigate("devices") },
+                            onHelp = { nav.navigate("legal/help") },
                             onSignedOut = { signOut() },
                         )
                     }
                     composable("responder-home") {
                         ResponderHomeScreen(
-                            onProfile = { nav.navigate("profile") },
+                            onProfile = { nav.navigate("responder-profile") },
+                        )
+                    }
+                    composable("responder-profile") {
+                        RoleProfileScreen(
+                            title = "Responder profile",
+                            onHome = { nav.navigate("responder-home") { popUpTo("responder-home") { inclusive = false } } },
+                            onPrivacy = { nav.navigate("privacy") },
+                            onDevices = { nav.navigate("devices") },
+                            onHelp = { nav.navigate("legal/help") },
+                            onSignedOut = { signOut() },
                         )
                     }
                     composable("home") {
