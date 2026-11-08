@@ -4,6 +4,8 @@ import { loadConfig } from "./config";
 
 const base = {
   JWT_ACCESS_SECRET: "test-secret-that-is-long-enough-for-hs256",
+  MFA_ENCRYPTION_KEY: "independent-mfa-encryption-key-for-test-2026",
+  PUBLIC_WEB_URL: "https://hub.example.com",
   DATABASE_URL: "postgresql://guardian:change-me@127.0.0.1:5432/guardian",
 };
 
