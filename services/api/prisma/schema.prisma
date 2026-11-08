@@ -71,6 +71,7 @@ model User {
   mfaRecoveryCodes OperatorMfaRecoveryCode[]
   assignments     ResponderAssignment[]
   recoveries      RecoveryToken[]
+  communications      IncidentCommunication[] @relation("CommunicationActor")
 }
 
 model RecoveryToken {
@@ -185,6 +186,7 @@ model Incident {
   deliveries         NotificationDelivery[]
   rooms              IncidentRoom[]
   assignments        ResponderAssignment[]
+  communications      IncidentCommunication[]
 
   @@index([state, isTest, createdAt])
   @@index([userId, createdAt])
@@ -246,6 +248,23 @@ model TimelineEvent {
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
   incident   Incident @relation(fields: [incidentId], references: [id], onDelete: Cascade)
+
+  @@index([incidentId, occurredAt])
+}
+
+model IncidentCommunication {
+  id                String   @id @db.Uuid
+  incidentId        String   @db.Uuid
+  actorId           String?  @db.Uuid
+  channel           String
+  kind              String
+  note              String
+  externalReference String?
+  occurredAt        DateTime
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  incident          Incident @relation(fields: [incidentId], references: [id], onDelete: Cascade)
+  actor             User?    @relation("CommunicationActor", fields: [actorId], references: [id])
 
   @@index([incidentId, occurredAt])
 }
