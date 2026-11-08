@@ -364,6 +364,16 @@ export const aiRecommendationDecisionSchema = z
   })
   .strict();
 
+export const incidentCommunicationSchema = z
+  .object({
+    channel: z.enum(["PHONE", "SMS", "EMAIL", "RADIO", "IN_PERSON", "EMERGENCY_SERVICES", "OTHER"]),
+    kind: z.string().trim().min(1).max(80),
+    note: z.string().trim().min(1).max(2000),
+    occurredAt: isoTime.optional(),
+    externalReference: z.string().trim().max(200).optional(),
+  })
+  .strict();
+
 export const operatorActionSchema = z
   .object({
     note: z.string().trim().max(500).optional(),
