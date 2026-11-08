@@ -228,8 +228,8 @@ export class PlatformService {
       });
     }
 
-    const nextPriority = allContacts.find((contact) => contact.priority > priority)?.priority;
-    if (nextPriority !== undefined && this.outbox) {
+    if (this.outbox) {
+      const nextPriority = allContacts.find((contact) => contact.priority > priority)?.priority ?? null;
       const delaySeconds = Math.max(15, Number(process.env.GUARDIAN_ESCALATION_SECONDS ?? 45));
       await this.outbox.enqueue({
         type: "GUARDIAN_ESCALATE",
@@ -255,7 +255,7 @@ export class PlatformService {
     userDisplayName: string;
     state: string;
     previousPriority: number;
-    nextPriority: number;
+    nextPriority: number | null;
   }): Promise<void> {
     const incident = await this.prisma.incident.findUnique({
       where: { id: payload.incidentId },
@@ -271,21 +271,23 @@ export class PlatformService {
       select: { id: true },
     });
     if (acknowledged) return;
-    const exists = await this.prisma.trustedContact.findFirst({
-      where: { userId: payload.userId, active: true, invitationStatus: { not: "DECLINED" }, priority: payload.nextPriority },
-      select: { id: true },
-    });
-    if (exists) {
-      await this.dispatchGuardianNotify(
-        {
-          incidentId: payload.incidentId,
-          userId: payload.userId,
-          userDisplayName: payload.userDisplayName,
-          state: incident.state,
-        },
-        payload.nextPriority,
-      );
-      return;
+    if (payload.nextPriority !== null) {
+      const exists = await this.prisma.trustedContact.findFirst({
+        where: { userId: payload.userId, active: true, invitationStatus: { not: "DECLINED" }, priority: payload.nextPriority },
+        select: { id: true },
+      });
+      if (exists) {
+        await this.dispatchGuardianNotify(
+          {
+            incidentId: payload.incidentId,
+            userId: payload.userId,
+            userDisplayName: payload.userDisplayName,
+            state: incident.state,
+          },
+          payload.nextPriority,
+        );
+        return;
+      }
     }
     if (!incident.escalatedToSupervisorAt) {
       await this.prisma.incident.update({
@@ -1729,7 +1731,7 @@ export class PlatformService {
     const now = this.clock.now();
     await this.prisma.notificationDelivery.update({
       where: { id: deliveryId },
-      data: { acknowledgedAt: now, status: "ACKNOWLEDGED" },
+      data: { acknowledgedAt: now },
     });
     if (guardian) {
       await this.prisma.trustedContact.update({ where: { id: guardian.id }, data: { lastAcknowledgedAt: now } });
@@ -1874,7 +1876,7 @@ export class PlatformService {
             userDisplayName: string;
             state: string;
             previousPriority: number;
-            nextPriority: number;
+            nextPriority: number | null;
           });
         } else {
           throw new Error(`Unknown outbox type ${event.type}`);
@@ -2361,7 +2363,7 @@ export class PlatformService {
       await this.prisma.timelineEvent.create({ data: { id: this.ids.uuid(), incidentId: incident.id, type: "device.contact_lost", message: "TEST device contact lost after route deviation.", occurredAt: now } });
     } else if (stage === 2) {
       await this.prisma.incident.update({ where: { id: incident.id }, data: { state: "ACKNOWLEDGED", acknowledgedAt: now, acknowledgedById: actor.id, updatedAt: now } });
-      await this.prisma.notificationDelivery.updateMany({ where: { incidentId: incident.id, trustedContactId: cfg.contactId }, data: { status: "ACKNOWLEDGED", acknowledgedAt: now } });
+      await this.prisma.notificationDelivery.updateMany({ where: { incidentId: incident.id, trustedContactId: cfg.contactId }, data: { acknowledgedAt: now } });
       await this.prisma.trustedContact.update({ where: { id: cfg.contactId }, data: { lastAcknowledgedAt: now } });
       await this.prisma.timelineEvent.create({ data: { id: this.ids.uuid(), incidentId: incident.id, type: "guardian.acknowledged", message: "TEST Guardian acknowledged the alert.", occurredAt: now, actorId: cfg.guardianId } });
     } else if (stage === 3) {
