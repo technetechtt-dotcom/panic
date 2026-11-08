@@ -55,6 +55,24 @@ export class FileEvidenceVault {
     }
   }
 
+  async probeRemote(): Promise<{ ok: boolean; detail: string }> {
+    if (!s3Configured()) return { ok: false, detail: "Remote object storage is not configured." };
+    const storageKey = `health-remote-${randomBytes(8).toString("hex")}`;
+    const plain = Buffer.from("guardian-remote-evidence-health");
+    const iv = randomBytes(12);
+    const cipher = createCipheriv("aes-256-gcm", this.key(), iv);
+    const sealed = Buffer.concat([iv, cipher.update(plain), cipher.final(), cipher.getAuthTag()]);
+    const stored = await putObjectIfConfigured(storageKey, sealed);
+    if (!stored.stored) return { ok: false, detail: stored.detail };
+    try {
+      const opened = await getObjectIfConfigured(storageKey);
+      if (!opened?.equals(sealed)) return { ok: false, detail: "Remote object storage read did not match the written encrypted object." };
+      return { ok: true, detail: "Remote object storage write/read/delete probe succeeded." };
+    } finally {
+      await deleteObjectIfConfigured(storageKey);
+    }
+  }
+
   async get(storageKey: string): Promise<Buffer | null> {
     const remote = await getObjectIfConfigured(storageKey);
     const local = await readFile(path.join(this.directory, `${storageKey}.bin`)).catch(() => null);
