@@ -7,6 +7,7 @@ import android.util.Base64
 import java.io.File
 import java.security.KeyStore
 import java.security.MessageDigest
+import java.util.UUID
 import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
@@ -21,13 +22,87 @@ class EvidenceVault @Inject constructor(
 ) {
     suspend fun store(localIncidentId: String, type: String, bytes: ByteArray): EvidenceEntity? {
         if (bytes.isEmpty() || localIncidentId.isBlank()) return null
-        val id = java.util.UUID.randomUUID().toString()
+        val captureId = UUID.randomUUID().toString()
+        val hash = sha256(bytes)
+        return storeChunk(
+            localIncidentId = localIncidentId,
+            type = type,
+            bytes = bytes,
+            captureId = captureId,
+            chunkIndex = 0,
+            chunkCount = 1,
+            originalSha256 = hash,
+            originalSize = bytes.size.toLong(),
+            capturedAtEpochMs = System.currentTimeMillis(),
+        )
+    }
+
+    suspend fun storeFileChunks(
+        localIncidentId: String,
+        type: String,
+        file: File,
+        chunkBytes: Int = 900_000,
+    ): Int {
+        if (!file.exists() || file.length() <= 0L) return 0
+        val boundedChunk = chunkBytes.coerceIn(64 * 1024, 1_400_000)
+        val captureId = UUID.randomUUID().toString()
+        val capturedAt = System.currentTimeMillis()
+        val originalSize = file.length()
+        val originalHash = file.inputStream().buffered().use { input ->
+            val digest = MessageDigest.getInstance("SHA-256")
+            val buffer = ByteArray(128 * 1024)
+            while (true) {
+                val read = input.read(buffer)
+                if (read <= 0) break
+                digest.update(buffer, 0, read)
+            }
+            digest.digest().joinToString("") { "%02x".format(it) }
+        }
+        val chunkCount = ((originalSize + boundedChunk - 1) / boundedChunk).toInt()
+        var stored = 0
+        file.inputStream().buffered().use { input ->
+            val buffer = ByteArray(boundedChunk)
+            var index = 0
+            while (true) {
+                val read = input.read(buffer)
+                if (read <= 0) break
+                if (
+                    storeChunk(
+                        localIncidentId = localIncidentId,
+                        type = type,
+                        bytes = buffer.copyOf(read),
+                        captureId = captureId,
+                        chunkIndex = index,
+                        chunkCount = chunkCount,
+                        originalSha256 = originalHash,
+                        originalSize = originalSize,
+                        capturedAtEpochMs = capturedAt,
+                    ) != null
+                ) stored += 1
+                index += 1
+            }
+        }
+        return stored
+    }
+
+    private suspend fun storeChunk(
+        localIncidentId: String,
+        type: String,
+        bytes: ByteArray,
+        captureId: String,
+        chunkIndex: Int,
+        chunkCount: Int,
+        originalSha256: String,
+        originalSize: Long,
+        capturedAtEpochMs: Long,
+    ): EvidenceEntity? {
+        if (bytes.isEmpty() || localIncidentId.isBlank()) return null
+        val id = UUID.randomUUID().toString()
         val sequence = database.evidence().lastSequence(localIncidentId, type) + 1
-        val hash = MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
+        val hash = sha256(bytes)
         val directory = File(context.filesDir, "evidence").apply { mkdirs() }
         val file = File(directory, "$id.bin")
-        val sealed = encrypt(bytes)
-        file.writeBytes(sealed)
+        file.writeBytes(encrypt(bytes))
         val row = EvidenceEntity(
             evidenceId = id,
             incidentLocalId = localIncidentId,
@@ -40,28 +115,15 @@ class EvidenceVault @Inject constructor(
             uploadState = "QUEUED",
             retryCount = 0,
             size = bytes.size,
+            captureId = captureId,
+            chunkIndex = chunkIndex,
+            chunkCount = chunkCount,
+            originalSha256 = originalSha256,
+            originalSize = originalSize,
+            capturedAtEpochMs = capturedAtEpochMs,
         )
         database.evidence().insert(row)
         return row
-    }
-
-    suspend fun storeFileChunks(
-        localIncidentId: String,
-        type: String,
-        file: File,
-        chunkBytes: Int = 900_000,
-    ): Int {
-        if (!file.exists() || file.length() <= 0L) return 0
-        var stored = 0
-        file.inputStream().buffered().use { input ->
-            val buffer = ByteArray(chunkBytes.coerceIn(64 * 1024, 1_400_000))
-            while (true) {
-                val read = input.read(buffer)
-                if (read <= 0) break
-                if (store(localIncidentId, type, buffer.copyOf(read)) != null) stored += 1
-            }
-        }
-        return stored
     }
 
     suspend fun bind(localIncidentId: String, serverIncidentId: String) {
@@ -87,8 +149,7 @@ class EvidenceVault @Inject constructor(
         val cipher = Cipher.getInstance("AES/GCM/NoPadding")
         cipher.init(Cipher.ENCRYPT_MODE, key())
         val encrypted = cipher.doFinal(plain)
-        val header = cipher.iv + encrypted
-        return header
+        return cipher.iv + encrypted
     }
 
     private fun decrypt(payload: ByteArray): ByteArray? {
