@@ -48,6 +48,7 @@ export function IncidentDetailPage() {
   const [legalHold, setLegalHold] = useState(false);
   const [retentionPolicy, setRetentionPolicy] = useState("STANDARD");
   const operator = session?.user.role !== "RESPONDER";
+  const responder = session?.user.role === "RESPONDER";
   const canManageEvidence = session?.user.role === "ADMIN" || session?.user.role === "SUPERVISOR";
 
   const incident = useQuery({
@@ -106,6 +107,14 @@ export function IncidentDetailPage() {
     queryFn: () => api<CommunicationEntry[]>(`/api/v1/incidents/${id}/communications`, token),
     refetchInterval: 4_000,
   });
+  const liveCompanion = useQuery({
+    queryKey: ["live-companion", id],
+    queryFn: () => api<{ responders: Array<{ responderId: string; status: string }> }>(`/api/v1/incidents/${id}/live`, token),
+    enabled: responder,
+    refetchInterval: 4_000,
+  });
+  const responderStatus = liveCompanion.data?.responders?.find((row) => row.responderId === session?.user.id)?.status ?? "ASSIGNED";
+
   const aiSearch = useQuery({
     queryKey: ["ai-search", id],
     enabled: operator,
@@ -181,8 +190,26 @@ export function IncidentDetailPage() {
       {incident.isError ? <p className="mt-6 text-sos">This incident could not be loaded.</p> : null}
       {current ? (
         <>
-        <nav className="mt-4 flex flex-wrap gap-2" aria-label="Incident sections" role="tablist">
-          {["overview", "map", "evidence", "guardians", "responders", "timeline", "communications", "profile", "intelligence"].map((name) => (
+        <nav
+          className="mt-4 flex flex-wrap gap-2"
+          aria-label="Incident sections"
+          role="tablist"
+          onKeyDown={(event) => {
+            if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+            const tabs = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="tab"]'));
+            const currentIndex = tabs.findIndex((item) => item === document.activeElement);
+            const nextIndex = event.key === "Home" ? 0 : event.key === "End" ? tabs.length - 1 : event.key === "ArrowRight"
+              ? (currentIndex + 1 + tabs.length) % tabs.length
+              : (currentIndex - 1 + tabs.length) % tabs.length;
+            event.preventDefault();
+            tabs[nextIndex]?.focus();
+            tabs[nextIndex]?.click();
+          }}
+        >
+          {(responder
+            ? ["overview", "map", "responders", "timeline", "communications", "profile", "intelligence"]
+            : ["overview", "map", "evidence", "guardians", "responders", "timeline", "communications", "profile", "intelligence"]
+          ).map((name) => (
             <button
               key={name}
               type="button"
@@ -197,7 +224,11 @@ export function IncidentDetailPage() {
             </button>
           ))}
         </nav>
-        {tab === "intelligence" ? <AiPanel id={id} token={token} canDecide={operator} /> : null}
+        {tab === "intelligence" ? (
+          <div id="incident-panel-intelligence" role="tabpanel" aria-labelledby="incident-tab-intelligence">
+            <AiPanel id={id} token={token} canDecide={operator} />
+          </div>
+        ) : null}
         {tab === "communications" ? (
           <section id="incident-panel-communications" role="tabpanel" aria-labelledby="incident-tab-communications" className="mt-4 rounded-2xl border border-line bg-panel p-4">
             <h2 className="text-xl font-semibold">Communications</h2>
@@ -224,7 +255,8 @@ export function IncidentDetailPage() {
             </dl>
           </section>
         ) : null}
-        <div id={`incident-panel-${tab}`} role="tabpanel" aria-labelledby={`incident-tab-${tab}`} className={`mt-4 grid gap-4 lg:grid-cols-[280px_1fr_320px] ${["intelligence","communications","profile"].includes(tab) ? "hidden" : ""}`}>
+        {!["intelligence","communications","profile"].includes(tab) ? (
+        <div id={`incident-panel-${tab}`} role="tabpanel" aria-labelledby={`incident-tab-${tab}`} className="mt-4 grid gap-4 lg:grid-cols-[280px_1fr_320px]">
           <section className={`rounded-2xl border border-line bg-panel p-4 ${tab === "overview" || tab === "responders" ? "" : "lg:block hidden"}`}>
             <h1 className="text-2xl font-semibold">{current.userDisplayName}</h1>
             <dl className="mt-4 space-y-2 text-sm">
@@ -291,8 +323,8 @@ export function IncidentDetailPage() {
                 <p className="mt-2 text-xs text-slate-400">This restates the incident. It cannot cancel, accuse, or dispatch.</p>
               </div>
             ) : null}
-            <h2 className={`mt-4 text-lg font-semibold ${tab === "guardians" || tab === "overview" ? "" : "hidden"}`}>Guardian delivery</h2>
-            <ul className={`mt-2 text-sm ${tab === "guardians" || tab === "overview" ? "" : "hidden"}`}>
+            {operator ? <h2 className={`mt-4 text-lg font-semibold ${tab === "guardians" || tab === "overview" ? "" : "hidden"}`}>Guardian delivery</h2> : null}
+            {operator ? <ul className={`mt-2 text-sm ${tab === "guardians" || tab === "overview" ? "" : "hidden"}`}>
               {(deliveries.data ?? []).map((item) => (
                 <li key={item.id}>
                   {item.channel} · {item.status} · {item.destination} · attempt {item.attemptNumber ?? 1}
@@ -303,9 +335,9 @@ export function IncidentDetailPage() {
                 </li>
               ))}
               {deliveries.data?.length === 0 ? <li>No guardian message has been recorded for this incident.</li> : null}
-            </ul>
-            <h2 className={`mt-4 text-lg font-semibold ${tab === "evidence" || tab === "overview" ? "" : "hidden"}`}>Evidence</h2>
-            <ul className={`mt-2 space-y-2 text-sm ${tab === "evidence" || tab === "overview" ? "" : "hidden"}`}>
+            </ul> : null}
+            {operator ? <h2 className={`mt-4 text-lg font-semibold ${tab === "evidence" || tab === "overview" ? "" : "hidden"}`}>Evidence</h2> : null}
+            {operator ? <ul className={`mt-2 space-y-2 text-sm ${tab === "evidence" || tab === "overview" ? "" : "hidden"}`}>
               {(evidence.data ?? []).map((item) => (
                 <li key={item.id}>
                   {item.contentType} · {item.byteLength} bytes · part {item.sequence}
@@ -335,8 +367,8 @@ export function IncidentDetailPage() {
                 </li>
               ))}
               {evidence.data?.length === 0 ? <li>No evidence stored for this incident.</li> : null}
-            </ul>
-            <div className={`mt-3 space-y-2 ${tab === "evidence" || tab === "overview" ? "" : "hidden"}`}>
+            </ul> : null}
+            {operator ? <div className={`mt-3 space-y-2 ${tab === "evidence" || tab === "overview" ? "" : "hidden"}`}>
               <button type="button" className="rounded-lg border border-line px-3 py-2 text-sm" onClick={() => void downloadEvidenceManifest()}>
                 Export chain-of-custody manifest
               </button>
@@ -376,10 +408,10 @@ export function IncidentDetailPage() {
                   <p className="mt-2 text-xs text-slate-400">A legal hold clears automatic expiry. Changes are written to the audit log.</p>
                 </div>
               ) : null}
-            </div>
-            {preview ? <img src={preview} alt="Incident evidence" className="mt-3 max-h-64 rounded-lg" /> : null}
-            {media?.type.startsWith("audio/") ? <audio className="mt-3 w-full" controls src={media.url} /> : null}
-            {media?.type.startsWith("video/") ? <video className="mt-3 max-h-64 w-full" controls src={media.url} /> : null}
+            </div> : null}
+            {operator && preview ? <img src={preview} alt="Incident evidence" className="mt-3 max-h-64 rounded-lg" /> : null}
+            {operator && media?.type.startsWith("audio/") ? <audio className="mt-3 w-full" controls src={media.url} /> : null}
+            {operator && media?.type.startsWith("video/") ? <video className="mt-3 max-h-64 w-full" controls src={media.url} /> : null}
             {operator ? (
               <label className="mt-4 block text-sm" htmlFor="responder">
                 Responder
@@ -433,14 +465,16 @@ export function IncidentDetailPage() {
                   Claim this incident
                 </button>
               ) : null}
-              <button
-                type="button"
-                disabled={!operator || !["SOS", "CONCERN", "HIGH_RISK"].includes(current.state) || action.isPending}
-                onClick={() => action.mutate("acknowledge")}
-                className="rounded-lg bg-warn px-4 py-3 font-semibold text-ink disabled:opacity-40"
-              >
-                Acknowledge
-              </button>
+              {operator ? (
+                <button
+                  type="button"
+                  disabled={!["SOS", "CONCERN", "HIGH_RISK"].includes(current.state) || action.isPending}
+                  onClick={() => action.mutate("acknowledge")}
+                  className="rounded-lg bg-warn px-4 py-3 font-semibold text-ink disabled:opacity-40"
+                >
+                  Acknowledge
+                </button>
+              ) : null}
               {operator ? (
                 <button
                   type="button"
@@ -496,16 +530,7 @@ export function IncidentDetailPage() {
                 </button>
               ) : (
                 <>
-                  {(
-                    [
-                      ["ACCEPTED", "Accept assignment"],
-                      ["EN_ROUTE", "En route"],
-                      ["ON_SCENE", "On scene"],
-                      ["USER_LOCATED", "Report person located"],
-                      ["COMPLETED", "Complete assignment"],
-                      ["DECLINED", "Decline assignment"],
-                    ] as const
-                  ).map(([status, label]) => (
+                  {validResponderActions(responderStatus).map(([status, label]) => (
                     <button
                       key={status}
                       type="button"
@@ -525,6 +550,7 @@ export function IncidentDetailPage() {
             </div>
           </section>
         </div>
+        ) : null}
         </>
       ) : null}
     </main>
@@ -542,4 +568,17 @@ function Row({ label, value }: { label: string; value: string }) {
       <dd className="break-all">{value}</dd>
     </div>
   );
+}
+
+
+function validResponderActions(status: string): ReadonlyArray<readonly [string, string]> {
+  switch (status) {
+    case "ASSIGNED": return [["ACCEPTED", "Accept assignment"], ["DECLINED", "Decline assignment"]];
+    case "ACCEPTED": return [["EN_ROUTE", "En route"], ["DECLINED", "Decline assignment"]];
+    case "EN_ROUTE":
+    case "RESPONDING": return [["ON_SCENE", "On scene"], ["DECLINED", "Decline assignment"]];
+    case "ON_SCENE": return [["USER_LOCATED", "Report person located"], ["COMPLETED", "Complete assignment"]];
+    case "USER_LOCATED": return [["COMPLETED", "Complete assignment"]];
+    default: return [];
+  }
 }
