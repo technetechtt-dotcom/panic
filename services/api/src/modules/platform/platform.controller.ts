@@ -4,6 +4,7 @@ import {
   evidenceGovernanceSchema,
   fusionSignalSchema,
   mfaCodeSchema,
+  mfaSetupSchema,
   operatorHandoverSchema,
   positionSchema,
   profileSchema,
@@ -127,10 +128,17 @@ export class PlatformController {
     return this.platform.eraseAccount(actorFrom(request), parseBody(eraseAccountSchema, body).password).then((data) => ({ data }));
   }
 
+  @Get("auth/mfa/status")
+  @RequirePermissions(Permission.UserReadSelf)
+  mfaStatus(@Req() request: RequestWithUser) {
+    return this.platform.mfaStatus(actorFrom(request)).then((data) => ({ data }));
+  }
+
   @Post("auth/mfa/setup")
   @RequirePermissions(Permission.UserReadSelf)
-  setup(@Req() request: RequestWithUser) {
-    return this.platform.beginMfa(actorFrom(request)).then((data) => ({ data }));
+  setup(@Body() body: unknown, @Req() request: RequestWithUser) {
+    const input = parseBody(mfaSetupSchema, body ?? {});
+    return this.platform.beginMfa(actorFrom(request), input.currentCode).then((data) => ({ data }));
   }
 
   @Post("auth/mfa/confirm")
