@@ -96,6 +96,7 @@ export interface DeviceRecord {
   lastSeenAt?: Date | null;
   nickname?: string | null;
   pushTokenUpdatedAt?: Date | null;
+  emergencyCredentialProvisioned?: boolean;
   createdAt: Date;
   updatedAt: Date;
 }
