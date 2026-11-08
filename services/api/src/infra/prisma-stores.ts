@@ -256,6 +256,7 @@ function toDeviceRecord(row: {
   lastSeenAt?: Date | null;
   nickname?: string | null;
   pushTokenUpdatedAt?: Date | null;
+  emergencyTokenHash?: string | null;
   createdAt: Date;
   updatedAt: Date;
 }): DeviceRecord {
@@ -277,6 +278,7 @@ function toDeviceRecord(row: {
     lastSeenAt: row.lastSeenAt ?? null,
     nickname: row.nickname ?? null,
     pushTokenUpdatedAt: row.pushTokenUpdatedAt ?? null,
+    emergencyCredentialProvisioned: Boolean(row.emergencyTokenHash),
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
