@@ -873,51 +873,109 @@ export class PlatformService {
     const rows = await this.prisma.incident.findMany({
       where: { createdAt: { gte: since }, isTest: false },
       include: {
-        assignments: true,
+        assignments: { include: { responder: { select: { displayName: true } } } },
         deliveries: true,
       },
       orderBy: { createdAt: "desc" },
       take: 5000,
     });
-    const acknowledgements = rows
-      .filter((row) => row.acknowledgedAt)
-      .map((row) => row.acknowledgedAt!.getTime() - row.createdAt.getTime());
-    const dispatches = rows
-      .flatMap((row) => row.assignments.filter((a) => a.assignedAt).map((a) => a.assignedAt!.getTime() - row.createdAt.getTime()));
-    const arrivals = rows
-      .flatMap((row) => row.assignments.filter((a) => a.arrivedAt).map((a) => a.arrivedAt!.getTime() - row.createdAt.getTime()));
+    const acknowledgements = rows.filter((row) => row.acknowledgedAt).map((row) => row.acknowledgedAt!.getTime() - row.createdAt.getTime());
+    const dispatches = rows.flatMap((row) => row.assignments.filter((a) => a.assignedAt).map((a) => a.assignedAt!.getTime() - row.createdAt.getTime()));
+    const arrivals = rows.flatMap((row) => row.assignments.filter((a) => a.arrivedAt).map((a) => a.arrivedAt!.getTime() - row.createdAt.getTime()));
     const deliveries = rows.flatMap((row) => row.deliveries).filter((row) => ["SMS", "FCM", "APNS", "EMAIL"].includes(row.channel));
     const delivered = deliveries.filter((row) => row.deliveredAt || row.status === "DELIVERED" || row.status === "SENT").length;
     const incidentIds = rows.map((row) => row.id);
-    const guardianPopulation = await this.prisma.notificationDelivery.findMany({
-      where: { incidentId: { in: incidentIds }, trustedContactId: { not: null } },
-      distinct: ["incidentId", "trustedContactId"],
-      select: { incidentId: true, trustedContactId: true },
-    });
-    const guardianAcknowledgements = await this.prisma.notificationDelivery.findMany({
-      where: { incidentId: { in: incidentIds }, trustedContactId: { not: null }, acknowledgedAt: { not: null } },
-      distinct: ["incidentId", "trustedContactId"],
-      select: { incidentId: true, trustedContactId: true },
-    });
+    const guardianPopulation = incidentIds.length
+      ? await this.prisma.notificationDelivery.findMany({
+          where: { incidentId: { in: incidentIds }, trustedContactId: { not: null } },
+          distinct: ["incidentId", "trustedContactId"],
+          select: { incidentId: true, trustedContactId: true },
+        })
+      : [];
+    const guardianAcknowledgements = incidentIds.length
+      ? await this.prisma.notificationDelivery.findMany({
+          where: { incidentId: { in: incidentIds }, trustedContactId: { not: null }, acknowledgedAt: { not: null } },
+          distinct: ["incidentId", "trustedContactId"],
+          select: { incidentId: true, trustedContactId: true },
+        })
+      : [];
     const byTrigger = Object.fromEntries(
       [...new Set(rows.map((row) => row.triggerType))].map((trigger) => [trigger, rows.filter((row) => row.triggerType === trigger).length]),
     );
     const byState = Object.fromEntries(
       [...new Set(rows.map((row) => row.state))].map((state) => [state, rows.filter((row) => row.state === state).length]),
     );
-    const avg = (values: number[]) => values.length ? Math.round(values.reduce((sum, value) => sum + value, 0) / values.length / 1000) : null;
+    const percentileSeconds = (values: number[], percentile: number): number | null => {
+      if (!values.length) return null;
+      const sorted = [...values].sort((a, b) => a - b);
+      const index = Math.min(sorted.length - 1, Math.max(0, Math.ceil((percentile / 100) * sorted.length) - 1));
+      return Math.round(sorted[index]! / 1000);
+    };
+    const averageSeconds = (values: number[]) =>
+      values.length ? Math.round(values.reduce((sum, value) => sum + value, 0) / values.length / 1000) : null;
+
+    const responderIds = [...new Set(rows.flatMap((row) => row.assignments.map((assignment) => assignment.responderId)))];
+    const responderProfiles = responderIds.length
+      ? await this.prisma.responderProfile.findMany({ where: { userId: { in: responderIds } } })
+      : [];
+    const profileById = new Map(responderProfiles.map((profile) => [profile.userId, profile]));
+    const responderMap = new Map<string, {
+      responderId: string;
+      displayName: string;
+      region: string | null;
+      assignments: number;
+      completed: number;
+      declined: number;
+      arrivals: number[];
+    }>();
+    for (const incident of rows) {
+      for (const assignment of incident.assignments) {
+        const current = responderMap.get(assignment.responderId) ?? {
+          responderId: assignment.responderId,
+          displayName: assignment.responder.displayName,
+          region: profileById.get(assignment.responderId)?.region ?? null,
+          assignments: 0,
+          completed: 0,
+          declined: 0,
+          arrivals: [],
+        };
+        current.assignments += 1;
+        if (assignment.status === "COMPLETED") current.completed += 1;
+        if (assignment.status === "DECLINED") current.declined += 1;
+        if (assignment.arrivedAt) current.arrivals.push(assignment.arrivedAt.getTime() - incident.createdAt.getTime());
+        responderMap.set(assignment.responderId, current);
+      }
+    }
+
     return {
       windowDays: boundedDays,
       incidentCount: rows.length,
-      averageAcknowledgementSeconds: avg(acknowledgements),
-      averageDispatchSeconds: avg(dispatches),
-      averageResponderArrivalSeconds: avg(arrivals),
+      averageAcknowledgementSeconds: averageSeconds(acknowledgements),
+      averageDispatchSeconds: averageSeconds(dispatches),
+      averageResponderArrivalSeconds: averageSeconds(arrivals),
+      acknowledgementP50Seconds: percentileSeconds(acknowledgements, 50),
+      acknowledgementP95Seconds: percentileSeconds(acknowledgements, 95),
+      dispatchP50Seconds: percentileSeconds(dispatches, 50),
+      dispatchP95Seconds: percentileSeconds(dispatches, 95),
+      arrivalP50Seconds: percentileSeconds(arrivals, 50),
+      arrivalP95Seconds: percentileSeconds(arrivals, 95),
       guardianDeliverySuccessRate: deliveries.length ? Math.round((delivered / deliveries.length) * 1000) / 10 : null,
       guardianAcknowledgementRate: guardianPopulation.length ? Math.round((guardianAcknowledgements.length / guardianPopulation.length) * 1000) / 10 : null,
       falseAlarmRate: rows.length ? Math.round((rows.filter((row) => row.state === "FALSE_ALARM").length / rows.length) * 1000) / 10 : null,
       falseAlarmNote: "False alarms are counted only when an authorised operator explicitly closes an incident with the FALSE_ALARM outcome.",
       byTrigger,
       byState,
+      responders: [...responderMap.values()].map((row) => ({
+        responderId: row.responderId,
+        displayName: row.displayName,
+        region: row.region,
+        assignments: row.assignments,
+        completed: row.completed,
+        declined: row.declined,
+        completionRate: row.assignments ? Math.round((row.completed / row.assignments) * 1000) / 10 : null,
+        averageArrivalSeconds: averageSeconds(row.arrivals),
+        arrivalP95Seconds: percentileSeconds(row.arrivals, 95),
+      })).sort((a, b) => b.assignments - a.assignments),
     };
   }
 
