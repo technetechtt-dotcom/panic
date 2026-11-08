@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useParams } from "react-router-dom";
 import { CircleMarker, MapContainer, Polygon, Polyline, TileLayer } from "react-leaflet";
 import "leaflet/dist/leaflet.css";
-import { api, type Heartbeat, type Incident, type LocationPoint, type TimelineEntry } from "../api/client";
+import { api, apiBlob, type Heartbeat, type Incident, type LocationPoint, type TimelineEntry } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
 import { Badge } from "./IncidentsPage";
 import { AiPanel } from "./AiPanel";
@@ -77,9 +77,23 @@ export function IncidentDetailPage() {
     queryFn: () => api<{ radiusMeters: number; polygon: Array<{ latitude: number; longitude: number }> } | null>(`/api/v1/incidents/${id}/corridor`, token),
   });
   const evidence = useQuery({
-    queryKey: ["evidence", id],
+    queryKey: ["evidence-artifacts", id],
     enabled: operator,
-    queryFn: () => api<Array<{ id: string; sequence: number; contentType: string; byteLength: number; capturedAt?: string; uploadedAt?: string; sha256?: string }>>(`/api/v1/incidents/${id}/evidence`, token),
+    queryFn: () => api<Array<{
+      id: string;
+      clientCaptureId: string;
+      contentType: string;
+      originalByteLength: number;
+      originalSha256: string;
+      capturedAt: string;
+      chunkCount: number;
+      receivedChunks: number;
+      status: string;
+      completedAt: string | null;
+      retentionUntil: string | null;
+      legalHold: boolean;
+      retentionPolicy: string;
+    }>>(`/api/v1/incidents/${id}/evidence-artifacts`, token),
   });
   const responders = useQuery({
     queryKey: ["responders"],
@@ -163,7 +177,7 @@ export function IncidentDetailPage() {
           policy: retentionPolicy.trim() || "STANDARD",
         }),
       });
-      await queryClient.invalidateQueries({ queryKey: ["evidence", id] });
+      await queryClient.invalidateQueries({ queryKey: ["evidence-artifacts", id] });
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Evidence governance could not be updated.");
     }
@@ -339,30 +353,35 @@ export function IncidentDetailPage() {
             {operator ? <h2 className={`mt-4 text-lg font-semibold ${tab === "evidence" || tab === "overview" ? "" : "hidden"}`}>Evidence</h2> : null}
             {operator ? <ul className={`mt-2 space-y-2 text-sm ${tab === "evidence" || tab === "overview" ? "" : "hidden"}`}>
               {(evidence.data ?? []).map((item) => (
-                <li key={item.id}>
-                  {item.contentType} · {item.byteLength} bytes · part {item.sequence}
-                  {item.capturedAt ? ` · captured ${new Date(item.capturedAt).toLocaleString()}` : ""}
-                  {item.sha256 ? ` · sha256 ${item.sha256.slice(0, 12)}` : ""}
+                <li key={item.id} className="rounded-lg border border-line p-2">
+                  <strong>{item.contentType}</strong> · {item.originalByteLength} bytes · {item.receivedChunks}/{item.chunkCount} chunks · {item.status}
+                  <span className="block text-xs text-slate-400">
+                    captured {new Date(item.capturedAt).toLocaleString()} · original sha256 {item.originalSha256.slice(0, 16)}…
+                    {item.legalHold ? " · LEGAL HOLD" : ` · retention ${item.retentionPolicy}`}
+                  </span>
                   <button
                     type="button"
-                    className="ml-2 underline"
+                    disabled={item.status !== "COMPLETE"}
+                    className="mt-1 underline disabled:opacity-40"
                     onClick={() => {
-                      void api<{ contentType: string; bytesBase64: string }>(`/api/v1/incidents/${id}/evidence/${item.id}`, token)
-                        .then((file) => {
-                          if (file.contentType.startsWith("image/")) {
-                            setPreview(`data:${file.contentType};base64,${file.bytesBase64}`);
+                      void apiBlob(`/api/v1/incidents/${id}/evidence-artifacts/${encodeURIComponent(item.id)}/content`, token)
+                        .then((blob) => {
+                          const url = URL.createObjectURL(blob);
+                          if (item.contentType.startsWith("image/")) {
+                            if (media?.url) URL.revokeObjectURL(media.url);
+                            setPreview(url);
                             setMedia(null);
                             return;
                           }
-                          const bytes = Uint8Array.from(atob(file.bytesBase64), (char) => char.charCodeAt(0));
-                          const url = URL.createObjectURL(new Blob([bytes], { type: file.contentType }));
-                          setMedia({ url, type: file.contentType });
+                          if (preview?.startsWith("blob:")) URL.revokeObjectURL(preview);
+                          if (media?.url) URL.revokeObjectURL(media.url);
+                          setMedia({ url, type: item.contentType });
                           setPreview(null);
                         })
-                        .catch((caught: unknown) => setError(caught instanceof Error ? caught.message : "The evidence could not be opened."));
+                        .catch((caught: unknown) => setError(caught instanceof Error ? caught.message : "The evidence artifact could not be opened."));
                     }}
                   >
-                    Open
+                    Open verified capture
                   </button>
                 </li>
               ))}
