@@ -190,6 +190,12 @@ export const guardianUpdateSchema = z
   })
   .strict();
 
+export const guardianRecipientPreferenceSchema = z
+  .object({
+    notificationMethods: z.string().trim().regex(/^(PUSH|SMS|EMAIL)(,(PUSH|SMS|EMAIL))*$/).max(40),
+  })
+  .strict();
+
 export const invitationTokenSchema = z.object({ token: z.string().uuid() }).strict();
 
 export const journeyExtendSchema = z.object({ minutes: z.number().int().min(5).max(12 * 60) }).strict();
