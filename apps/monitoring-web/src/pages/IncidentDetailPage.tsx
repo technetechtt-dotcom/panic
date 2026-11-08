@@ -39,6 +39,10 @@ export function IncidentDetailPage() {
   const token = session?.accessToken ?? null;
   const queryClient = useQueryClient();
   const [note, setNote] = useState("");
+  const [communicationChannel, setCommunicationChannel] = useState("PHONE");
+  const [communicationKind, setCommunicationKind] = useState("CONTACT_ATTEMPT");
+  const [communicationNote, setCommunicationNote] = useState("");
+  const [communicationReference, setCommunicationReference] = useState("");
   const [responderId, setResponderId] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [preview, setPreview] = useState<string | null>(null);
@@ -247,6 +251,46 @@ export function IncidentDetailPage() {
           <section id="incident-panel-communications" role="tabpanel" aria-labelledby="incident-tab-communications" className="mt-4 rounded-2xl border border-line bg-panel p-4">
             <h2 className="text-xl font-semibold">Communications</h2>
             <p className="mt-1 text-sm text-slate-400">Ordered delivery, operator, responder and emergency-service events.</p>
+            {operator ? (
+              <form
+                className="mt-4 grid gap-3 rounded-xl border border-line p-3"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  setError(null);
+                  void api(`/api/v1/incidents/${id}/communications`, token, {
+                    method: "POST",
+                    body: JSON.stringify({
+                      channel: communicationChannel,
+                      kind: communicationKind,
+                      note: communicationNote.trim(),
+                      externalReference: communicationReference.trim() || undefined,
+                    }),
+                  }).then(async () => {
+                    setCommunicationNote("");
+                    setCommunicationReference("");
+                    await queryClient.invalidateQueries({ queryKey: ["communications", id] });
+                  }).catch((caught: unknown) => setError(caught instanceof Error ? caught.message : "Communication could not be recorded."));
+                }}
+              >
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <label className="text-sm">Channel
+                    <select value={communicationChannel} onChange={e=>setCommunicationChannel(e.target.value)} className="mt-1 w-full rounded-lg border border-line bg-ink px-3 py-2">
+                      {["PHONE","SMS","EMAIL","RADIO","IN_PERSON","EMERGENCY_SERVICES","OTHER"].map(value=><option key={value}>{value}</option>)}
+                    </select>
+                  </label>
+                  <label className="text-sm">Type
+                    <input value={communicationKind} maxLength={80} onChange={e=>setCommunicationKind(e.target.value)} className="mt-1 w-full rounded-lg border border-line bg-ink px-3 py-2" />
+                  </label>
+                </div>
+                <label className="text-sm">Communication note
+                  <textarea required value={communicationNote} maxLength={2000} onChange={e=>setCommunicationNote(e.target.value)} className="mt-1 min-h-24 w-full rounded-lg border border-line bg-ink px-3 py-2" placeholder="Called protected user; no answer." />
+                </label>
+                <label className="text-sm">External reference (optional)
+                  <input value={communicationReference} maxLength={200} onChange={e=>setCommunicationReference(e.target.value)} className="mt-1 w-full rounded-lg border border-line bg-ink px-3 py-2" placeholder="Police case / call reference" />
+                </label>
+                <button disabled={!communicationNote.trim()} className="rounded-lg border border-line px-3 py-2 text-sm disabled:opacity-40" type="submit">Record communication</button>
+              </form>
+            ) : null}
             <ol className="mt-4 space-y-3 text-sm">
               {(communications.data ?? []).map(entry => <li key={entry.id} className="border-l-2 border-line pl-3">
                 <time className="block text-xs text-slate-400">{new Date(entry.at).toLocaleString()}</time>
