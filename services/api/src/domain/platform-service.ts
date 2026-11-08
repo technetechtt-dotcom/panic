@@ -137,42 +137,36 @@ export class PlatformService {
     const contacts = allContacts.filter((contact) => contact.priority === priority);
     for (const contact of contacts) {
       const methods = (contact.notificationMethods || "PUSH,SMS").split(",").map((item) => item.trim().toUpperCase());
-      let room = await this.prisma.incidentRoom.findFirst({
-        where: { incidentId, trustedContactId: contact.id, expiresAt: { gt: this.clock.now() } },
-        orderBy: { createdAt: "desc" },
-      });
-      let roomUrl: string;
-      if (room) {
-        roomUrl = `${this.config.publicWebUrl}/room/${""}`;
-        // Existing rooms store only a token hash, so a retried notification cannot recover the bearer token.
-        // Do not create duplicate rooms merely to retry another provider; reuse the room delivery state instead.
-        const recordedRoom = await this.prisma.notificationDelivery.findFirst({
-          where: { incidentId, trustedContactId: contact.id, channel: "ROOM" },
-          orderBy: { createdAt: "desc" },
-        });
-        roomUrl = recordedRoom?.detail.match(/https?:\\/\\/\\S+/)?.[0] ?? "";
-      } else {
-        const opened = await this.openRoom(incidentId, contact.canViewLocation, contact.canViewEvidence, contact.id, contact.displayName);
-        roomUrl = opened.url;
-        await this.record(
-          incidentId,
-          "ROOM",
-          contact.displayName,
-          "SENT",
-          `Private Guardian Room created: ${roomUrl}`,
-          undefined,
-          contact.id,
-        );
-      }
+      const [existingPush, existingSms, existingEmail] = await Promise.all([
+        this.prisma.notificationDelivery.findFirst({ where: { incidentId, trustedContactId: contact.id, channel: { in: ["FCM", "APNS"] } } }),
+        this.prisma.notificationDelivery.findFirst({ where: { incidentId, trustedContactId: contact.id, channel: "SMS" } }),
+        this.prisma.notificationDelivery.findFirst({ where: { incidentId, trustedContactId: contact.id, channel: "EMAIL" } }),
+      ]);
+      const needsPush = methods.includes("PUSH") && !existingPush;
+      const needsSms = methods.includes("SMS") && !existingSms;
+      const needsEmail = methods.includes("EMAIL") && !existingEmail;
+      if (!needsPush && !needsSms && !needsEmail) continue;
+
+      // Room bearer tokens are never stored in notification logs. If a provider retry needs a URL,
+      // create another short-lived contact-scoped room rather than persisting the token.
+      const opened = await this.openRoom(incidentId, contact.canViewLocation, contact.canViewEvidence, contact.id, contact.displayName);
+      const roomUrl = opened.url;
+      await this.record(
+        incidentId,
+        "ROOM",
+        contact.displayName,
+        "SENT",
+        "A private contact-scoped Guardian Room was created.",
+        undefined,
+        contact.id,
+      );
       const body = guardianSmsBody({
         name: incident.userDisplayName,
         incidentState: incident.state,
         roomUrl: roomUrl || null,
       });
 
-      if (methods.includes("PUSH") && contact.guardianUserId) {
-        const already = await this.prisma.notificationDelivery.findFirst({ where: { incidentId, trustedContactId: contact.id, channel: { in: ["FCM", "APNS"] } } });
-        if (!already) {
+      if (needsPush && contact.guardianUserId) {
           const guardianPhones = await this.prisma.device.findMany({
             where: { userId: contact.guardianUserId, fcmToken: { not: null }, revokedAt: null },
           });
@@ -197,12 +191,9 @@ export class PlatformService {
               );
             }
           }
-        }
       }
 
-      if (methods.includes("SMS")) {
-        const already = await this.prisma.notificationDelivery.findFirst({ where: { incidentId, trustedContactId: contact.id, channel: "SMS" } });
-        if (!already) {
+      if (needsSms) {
           const sms = contact.phone
             ? await this.sms.send({ to: contact.phone, body, incidentId })
             : { delivered: false, simulated: true, reason: "This guardian has no phone number.", providerMessageId: undefined };
@@ -215,12 +206,9 @@ export class PlatformService {
             sms.providerMessageId,
             contact.id,
           );
-        }
       }
 
-      if (methods.includes("EMAIL")) {
-        const already = await this.prisma.notificationDelivery.findFirst({ where: { incidentId, trustedContactId: contact.id, channel: "EMAIL" } });
-        if (!already) {
+      if (needsEmail) {
           let sent = false;
           let detail = "This guardian has no email address.";
           if (contact.email) {
@@ -232,7 +220,6 @@ export class PlatformService {
             detail = sent ? "Guardian incident email submitted to SMTP." : "SMTP is not configured.";
           }
           await this.record(incidentId, "EMAIL", contact.email ?? contact.displayName, sent ? "SENT" : "SKIPPED", detail, undefined, contact.id);
-        }
       }
 
       await this.prisma.trustedContact.update({
@@ -1082,6 +1069,27 @@ export class PlatformService {
     }));
   }
 
+  async guardianRoomForIncident(actor: Actor, incidentId: string) {
+    if (actor.role !== "GUARDIAN") throw new AppError("FORBIDDEN", 403, "This action is only available to Guardian accounts.");
+    const incident = await this.prisma.incident.findUnique({
+      where: { id: incidentId },
+      select: { id: true, userId: true, state: true },
+    });
+    if (!incident || ["RESOLVED", "FALSE_ALARM", "ARCHIVED"].includes(incident.state)) {
+      throw new AppError("NOT_FOUND", 404, "That active Guardian incident was not found.");
+    }
+    const contact = await this.prisma.trustedContact.findFirst({
+      where: {
+        userId: incident.userId,
+        guardianUserId: actor.id,
+        invitationStatus: "ACCEPTED",
+        active: true,
+      },
+    });
+    if (!contact) throw new AppError("FORBIDDEN", 403, "You are not an authorised Guardian for this incident.");
+    return this.openRoom(incident.id, contact.canViewLocation, contact.canViewEvidence, contact.id, contact.displayName);
+  }
+
   async responderProfile(actor: Actor) {
     if (actor.role !== "RESPONDER") throw new AppError("FORBIDDEN", 403, "Responder profile is only available to responder accounts.");
     const row = await this.prisma.responderProfile.findUnique({ where: { userId: actor.id } });
@@ -1821,8 +1829,7 @@ export class PlatformService {
         createdAt: now,
       },
     });
-    const origin = this.config.corsOrigins[0] ?? "http://localhost:5173";
-    return { url: `${origin}/room/${token}` };
+    return { url: `${this.config.publicWebUrl}/room/${token}` };
   }
 
   async applyDeliveryReceipt(input: {
