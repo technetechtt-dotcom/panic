@@ -28,13 +28,29 @@ export function ArchivePage() {
   const [state, setState] = useState("ALL");
   const [trigger, setTrigger] = useState("ALL");
   const [testMode, setTestMode] = useState("all");
+  const [from, setFrom] = useState("");
+  const [to, setTo] = useState("");
+  const [responderId, setResponderId] = useState("");
+  const [operatorId, setOperatorId] = useState("");
   const [page, setPage] = useState(1);
   const params = new URLSearchParams({ page: String(page), pageSize: "25", state, trigger });
   if (submitted) params.set("query", submitted);
   if (testMode !== "all") params.set("isTest", String(testMode === "test"));
+  if (from) params.set("from", new Date(from).toISOString());
+  if (to) params.set("to", new Date(to).toISOString());
+  if (responderId) params.set("responderId", responderId);
+  if (operatorId) params.set("operatorId", operatorId);
   const archive = useQuery({
-    queryKey: ["archive", page, submitted, state, trigger, testMode],
+    queryKey: ["archive", page, submitted, state, trigger, testMode, from, to, responderId, operatorId],
     queryFn: () => api<ArchiveResult>(`/api/v1/admin/incidents/archive?${params.toString()}`, token),
+  });
+  const responders = useQuery({
+    queryKey:["archive-responders"],
+    queryFn:()=>api<Array<{id:string;displayName:string}>>("/api/v1/responders",token),
+  });
+  const operators = useQuery({
+    queryKey:["archive-operators"],
+    queryFn:()=>api<Array<{id:string;displayName:string;role:string}>>("/api/v1/operators",token),
   });
   function submit(event: FormEvent) {
     event.preventDefault();
@@ -63,6 +79,18 @@ export function ArchivePage() {
           <select value={testMode} onChange={(e) => { setTestMode(e.target.value); setPage(1); }} className="mt-1 w-full rounded-lg border border-line bg-ink px-3 py-2">
             <option value="all">Live + test</option><option value="live">Live only</option><option value="test">TEST only</option>
           </select>
+        </label>
+        <label className="text-sm">From
+          <input type="datetime-local" value={from} onChange={e=>{setFrom(e.target.value);setPage(1)}} className="mt-1 w-full rounded-lg border border-line bg-ink px-3 py-2" />
+        </label>
+        <label className="text-sm">To
+          <input type="datetime-local" value={to} onChange={e=>{setTo(e.target.value);setPage(1)}} className="mt-1 w-full rounded-lg border border-line bg-ink px-3 py-2" />
+        </label>
+        <label className="text-sm">Responder
+          <select value={responderId} onChange={e=>{setResponderId(e.target.value);setPage(1)}} className="mt-1 w-full rounded-lg border border-line bg-ink px-3 py-2"><option value="">All responders</option>{(responders.data??[]).map(x=><option key={x.id} value={x.id}>{x.displayName}</option>)}</select>
+        </label>
+        <label className="text-sm">Claimed operator
+          <select value={operatorId} onChange={e=>{setOperatorId(e.target.value);setPage(1)}} className="mt-1 w-full rounded-lg border border-line bg-ink px-3 py-2"><option value="">All operators</option>{(operators.data??[]).map(x=><option key={x.id} value={x.id}>{x.displayName} · {x.role}</option>)}</select>
         </label>
         <button className="rounded-lg border border-line px-3 py-2 text-sm md:col-span-4" type="submit">Apply search</button>
       </form>
