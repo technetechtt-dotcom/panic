@@ -209,6 +209,22 @@ class HomeViewModel @Inject constructor(
         }
     }
 
+    fun openGuardianIncident(context: android.content.Context, incidentId: String) {
+        val client = api ?: return
+        viewModelScope.launch {
+            try {
+                val room = client.guardianIncidentRoom(incidentId).data
+                context.startActivity(
+                    android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(room.url))
+                        .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK),
+                )
+                messageState.value = "Private Guardian Room opened."
+            } catch (error: Exception) {
+                messageState.value = error.userMessage()
+            }
+        }
+    }
+
     fun openEmergencyDialer(context: android.content.Context) {
         val intent = android.content.Intent(
             android.content.Intent.ACTION_DIAL,
@@ -1040,6 +1056,7 @@ fun GuardianHomeScreen(
     onSignedOut: () -> Unit,
     viewModel: HomeViewModel = hiltViewModel(),
 ) {
+    val context = androidx.compose.ui.platform.LocalContext.current
     androidx.compose.runtime.LaunchedEffect(Unit) { viewModel.refresh() }
     Scaffold { padding ->
         Column(Modifier.fillMaxSize().padding(padding).padding(20.dp).verticalScroll(rememberScrollState())) {
@@ -1065,7 +1082,12 @@ fun GuardianHomeScreen(
                                     modifier = Modifier.padding(top = 6.dp),
                                 )
                             }
-                            Text("Open the incident from the alert notification or private Guardian Room link.", modifier = Modifier.padding(top = 6.dp))
+                            active.forEach { incident ->
+                                Button(
+                                    onClick = { viewModel.openGuardianIncident(context, incident.id) },
+                                    modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
+                                ) { Text("Open ${incident.state} alert") }
+                            }
                         }
                         person.lastAcknowledgedAt?.let { Text("Last acknowledgement $it", color = Color(0xFFB7C0CC)) }
                     }
