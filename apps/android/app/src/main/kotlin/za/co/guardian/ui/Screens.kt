@@ -660,6 +660,8 @@ class SettingsViewModel @Inject constructor(
     }
     fun removeGuardian(id: String) = run { protection.removeGuardian(id) }
     fun revokeDevice(id: String) = run { protection.revokeDevice(id) }
+    fun currentDeviceId(): String? = tokens.deviceServerId()
+    fun currentEmergencyCredentialProvisioned(): Boolean = !tokens.emergencyCredential().isNullOrBlank()
     fun extendJourney(minutes: String) = run { protection.extendJourney(minutes.toIntOrNull() ?: 15) }
     fun completeJourney() = run { protection.completeJourney() }
     fun checkIn() = run { protection.checkIn() }
@@ -1332,6 +1334,7 @@ fun GuardiansScreen(
     var guardianPhone by remember { mutableStateOf("") }
     var guardianEmail by remember { mutableStateOf("") }
     var inviteToken by remember(initialInviteToken) { mutableStateOf(initialInviteToken) }
+    var pendingRemoval by remember { mutableStateOf<za.co.guardian.data.GuardianWire?>(null) }
     androidx.compose.runtime.LaunchedEffect(Unit) { viewModel.refresh() }
     androidx.compose.runtime.LaunchedEffect(initialInviteToken) {
         if (initialInviteToken.isNotBlank()) {
@@ -1378,7 +1381,19 @@ fun GuardiansScreen(
                             },
                             modifier = Modifier.fillMaxWidth(),
                         ) { Text("Save preferences") }
-                        Button(onClick = { viewModel.removeGuardian(row.id) }, modifier = Modifier.fillMaxWidth()) { Text("Remove ${row.displayName}") }
+                        Button(onClick = { pendingRemoval = row }, modifier = Modifier.fillMaxWidth()) { Text("Remove ${row.displayName}") }
+                    }
+                }
+            }
+            pendingRemoval?.let { row ->
+                Surface(modifier = Modifier.fillMaxWidth().padding(top = 12.dp), color = Color(0xFF2A1717)) {
+                    Column(Modifier.padding(14.dp)) {
+                        Text("Remove ${row.displayName}?", fontWeight = FontWeight.Bold)
+                        Text("They will stop receiving Guardian alerts for this account.")
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            TextButton(onClick = { pendingRemoval = null }) { Text("Cancel") }
+                            Button(onClick = { viewModel.removeGuardian(row.id); pendingRemoval = null }) { Text("Remove Guardian") }
+                        }
                     }
                 }
             }
