@@ -118,55 +118,193 @@ export class PlatformService {
     if (!incident.isTest) await this.dispatchGuardianNotify(incident);
   }
 
-  async dispatchGuardianNotify(incident: { id?: string; incidentId?: string; userId: string; userDisplayName: string; state: string }): Promise<void> {
+  async dispatchGuardianNotify(
+    incident: { id?: string; incidentId?: string; userId: string; userDisplayName: string; state: string },
+    requestedPriority?: number,
+  ): Promise<void> {
     const incidentId = incident.id ?? incident.incidentId;
     if (!incidentId) throw new Error("Guardian notify requires an incident id.");
-    const contacts = await this.prisma.trustedContact.findMany({
-      where: { userId: incident.userId, invitationStatus: { not: "DECLINED" } },
-      orderBy: { priority: "asc" },
+    const allContacts = await this.prisma.trustedContact.findMany({
+      where: {
+        userId: incident.userId,
+        invitationStatus: { not: "DECLINED" },
+        active: true,
+      },
+      orderBy: [{ priority: "asc" }, { createdAt: "asc" }],
     });
+    if (allContacts.length === 0) return;
+    const priority = requestedPriority ?? allContacts[0]!.priority;
+    const contacts = allContacts.filter((contact) => contact.priority === priority);
     for (const contact of contacts) {
       const methods = (contact.notificationMethods || "PUSH,SMS").split(",").map((item) => item.trim().toUpperCase());
-      const room = await this.openRoom(incidentId, contact.canViewLocation, contact.canViewEvidence, contact.id, contact.displayName);
+      let room = await this.prisma.incidentRoom.findFirst({
+        where: { incidentId, trustedContactId: contact.id, expiresAt: { gt: this.clock.now() } },
+        orderBy: { createdAt: "desc" },
+      });
+      let roomUrl: string;
+      if (room) {
+        roomUrl = `${this.config.publicWebUrl}/room/${""}`;
+        // Existing rooms store only a token hash, so a retried notification cannot recover the bearer token.
+        // Do not create duplicate rooms merely to retry another provider; reuse the room delivery state instead.
+        const recordedRoom = await this.prisma.notificationDelivery.findFirst({
+          where: { incidentId, trustedContactId: contact.id, channel: "ROOM" },
+          orderBy: { createdAt: "desc" },
+        });
+        roomUrl = recordedRoom?.detail.match(/https?:\\/\\/\\S+/)?.[0] ?? "";
+      } else {
+        const opened = await this.openRoom(incidentId, contact.canViewLocation, contact.canViewEvidence, contact.id, contact.displayName);
+        roomUrl = opened.url;
+        await this.record(
+          incidentId,
+          "ROOM",
+          contact.displayName,
+          "SENT",
+          `Private Guardian Room created: ${roomUrl}`,
+          undefined,
+          contact.id,
+        );
+      }
       const body = guardianSmsBody({
         name: incident.userDisplayName,
         incidentState: incident.state,
-        roomUrl: room.url,
+        roomUrl: roomUrl || null,
       });
-      if (methods.includes("SMS")) {
-        const sms = contact.phone
-          ? await this.sms.send({ to: contact.phone, body, incidentId })
-          : { delivered: false, simulated: true, reason: "This guardian has no phone number.", providerMessageId: undefined };
-        await this.record(incidentId, "SMS", contact.phone ?? contact.email ?? contact.displayName, sms.delivered ? "SENT" : "SKIPPED", sms.reason, sms.providerMessageId, contact.id);
-      }
-      await this.record(incidentId, "ROOM", contact.displayName, "SENT", "A private room link was created for this guardian.", undefined, contact.id);
+
       if (methods.includes("PUSH") && contact.guardianUserId) {
-        const guardianPhones = await this.prisma.device.findMany({
-          where: { userId: contact.guardianUserId, fcmToken: { not: null }, revokedAt: null },
-        });
-        for (const phone of guardianPhones) {
-          if (!phone.fcmToken) continue;
-          const apple = phone.platform === "IOS";
-          const pushData = {
-            type: "GUARDIAN_INCIDENT",
-            incidentId,
-            trustedContactId: contact.id,
-            roomUrl: room.url,
-          };
-          const push = apple
-            ? await sendApns(phone.fcmToken, "Guardian", `${incident.userDisplayName} needs help.`, process.env, pushData)
-            : await sendFcm(phone.fcmToken, "Guardian", `${incident.userDisplayName} needs help.`, process.env, pushData);
+        const already = await this.prisma.notificationDelivery.findFirst({ where: { incidentId, trustedContactId: contact.id, channel: { in: ["FCM", "APNS"] } } });
+        if (!already) {
+          const guardianPhones = await this.prisma.device.findMany({
+            where: { userId: contact.guardianUserId, fcmToken: { not: null }, revokedAt: null },
+          });
+          if (guardianPhones.length === 0) {
+            await this.record(incidentId, "FCM", contact.displayName, "SKIPPED", "No active Guardian push token is registered.", undefined, contact.id);
+          } else {
+            for (const phone of guardianPhones) {
+              if (!phone.fcmToken) continue;
+              const apple = phone.platform === "IOS";
+              const pushData = { type: "GUARDIAN_INCIDENT", incidentId, trustedContactId: contact.id, roomUrl };
+              const push = apple
+                ? await sendApns(phone.fcmToken, "Guardian", `${incident.userDisplayName} needs help.`, process.env, pushData)
+                : await sendFcm(phone.fcmToken, "Guardian", `${incident.userDisplayName} needs help.`, process.env, pushData);
+              await this.record(
+                incidentId,
+                apple ? "APNS" : "FCM",
+                contact.displayName,
+                push.delivered ? "SENT" : "SKIPPED",
+                push.reason,
+                push.providerMessageId,
+                contact.id,
+              );
+            }
+          }
+        }
+      }
+
+      if (methods.includes("SMS")) {
+        const already = await this.prisma.notificationDelivery.findFirst({ where: { incidentId, trustedContactId: contact.id, channel: "SMS" } });
+        if (!already) {
+          const sms = contact.phone
+            ? await this.sms.send({ to: contact.phone, body, incidentId })
+            : { delivered: false, simulated: true, reason: "This guardian has no phone number.", providerMessageId: undefined };
           await this.record(
             incidentId,
-            apple ? "APNS" : "FCM",
-            contact.displayName,
-            push.delivered ? "SENT" : "SKIPPED",
-            push.reason,
-            push.providerMessageId,
+            "SMS",
+            contact.phone ?? contact.displayName,
+            sms.delivered ? "SENT" : "SKIPPED",
+            sms.reason,
+            sms.providerMessageId,
             contact.id,
           );
         }
       }
+
+      if (methods.includes("EMAIL")) {
+        const already = await this.prisma.notificationDelivery.findFirst({ where: { incidentId, trustedContactId: contact.id, channel: "EMAIL" } });
+        if (!already) {
+          let sent = false;
+          let detail = "This guardian has no email address.";
+          if (contact.email) {
+            sent = await sendTransactionalEmail({
+              to: contact.email,
+              subject: `Guardian alert for ${incident.userDisplayName}`,
+              text: body,
+            });
+            detail = sent ? "Guardian incident email submitted to SMTP." : "SMTP is not configured.";
+          }
+          await this.record(incidentId, "EMAIL", contact.email ?? contact.displayName, sent ? "SENT" : "SKIPPED", detail, undefined, contact.id);
+        }
+      }
+
+      await this.prisma.trustedContact.update({
+        where: { id: contact.id },
+        data: { lastNotifiedAt: this.clock.now() },
+      });
+    }
+
+    const nextPriority = allContacts.find((contact) => contact.priority > priority)?.priority;
+    if (nextPriority !== undefined && this.outbox) {
+      const delaySeconds = Math.max(15, Number(process.env.GUARDIAN_ESCALATION_SECONDS ?? 45));
+      await this.outbox.enqueue({
+        type: "GUARDIAN_ESCALATE",
+        aggregateType: "Incident",
+        aggregateId: incidentId,
+        payload: {
+          incidentId,
+          userId: incident.userId,
+          userDisplayName: incident.userDisplayName,
+          state: incident.state,
+          previousPriority: priority,
+          nextPriority,
+        },
+        notBefore: new Date(this.clock.now().getTime() + delaySeconds * 1000),
+        maxAttempts: 6,
+      });
+    }
+  }
+
+  private async processGuardianEscalation(payload: {
+    incidentId: string;
+    userId: string;
+    userDisplayName: string;
+    state: string;
+    previousPriority: number;
+    nextPriority: number;
+  }): Promise<void> {
+    const incident = await this.prisma.incident.findUnique({
+      where: { id: payload.incidentId },
+      select: { state: true, isTest: true, escalatedToSupervisorAt: true },
+    });
+    if (!incident || incident.isTest || ["RESOLVED", "FALSE_ALARM", "ARCHIVED"].includes(incident.state)) return;
+    const acknowledged = await this.prisma.notificationDelivery.findFirst({
+      where: {
+        incidentId: payload.incidentId,
+        trustedContactId: { not: null },
+        acknowledgedAt: { not: null },
+      },
+      select: { id: true },
+    });
+    if (acknowledged) return;
+    const exists = await this.prisma.trustedContact.findFirst({
+      where: { userId: payload.userId, active: true, invitationStatus: { not: "DECLINED" }, priority: payload.nextPriority },
+      select: { id: true },
+    });
+    if (exists) {
+      await this.dispatchGuardianNotify(
+        {
+          incidentId: payload.incidentId,
+          userId: payload.userId,
+          userDisplayName: payload.userDisplayName,
+          state: incident.state,
+        },
+        payload.nextPriority,
+      );
+      return;
+    }
+    if (!incident.escalatedToSupervisorAt) {
+      await this.prisma.incident.update({
+        where: { id: payload.incidentId },
+        data: { escalatedToSupervisorAt: this.clock.now() },
+      });
     }
   }
 
@@ -610,9 +748,19 @@ export class PlatformService {
       .flatMap((row) => row.assignments.filter((a) => a.assignedAt).map((a) => a.assignedAt!.getTime() - row.createdAt.getTime()));
     const arrivals = rows
       .flatMap((row) => row.assignments.filter((a) => a.arrivedAt).map((a) => a.arrivedAt!.getTime() - row.createdAt.getTime()));
-    const deliveries = rows.flatMap((row) => row.deliveries).filter((row) => ["SMS", "FCM", "APNS", "ROOM"].includes(row.channel));
-    const delivered = deliveries.filter((row) => row.deliveredAt || row.status === "DELIVERED" || row.status === "ACKNOWLEDGED").length;
-    const acknowledged = deliveries.filter((row) => row.acknowledgedAt).length;
+    const deliveries = rows.flatMap((row) => row.deliveries).filter((row) => ["SMS", "FCM", "APNS", "EMAIL"].includes(row.channel));
+    const delivered = deliveries.filter((row) => row.deliveredAt || row.status === "DELIVERED" || row.status === "SENT").length;
+    const incidentIds = rows.map((row) => row.id);
+    const guardianPopulation = await this.prisma.notificationDelivery.findMany({
+      where: { incidentId: { in: incidentIds }, trustedContactId: { not: null } },
+      distinct: ["incidentId", "trustedContactId"],
+      select: { incidentId: true, trustedContactId: true },
+    });
+    const guardianAcknowledgements = await this.prisma.notificationDelivery.findMany({
+      where: { incidentId: { in: incidentIds }, trustedContactId: { not: null }, acknowledgedAt: { not: null } },
+      distinct: ["incidentId", "trustedContactId"],
+      select: { incidentId: true, trustedContactId: true },
+    });
     const byTrigger = Object.fromEntries(
       [...new Set(rows.map((row) => row.triggerType))].map((trigger) => [trigger, rows.filter((row) => row.triggerType === trigger).length]),
     );
@@ -627,7 +775,7 @@ export class PlatformService {
       averageDispatchSeconds: avg(dispatches),
       averageResponderArrivalSeconds: avg(arrivals),
       guardianDeliverySuccessRate: deliveries.length ? Math.round((delivered / deliveries.length) * 1000) / 10 : null,
-      guardianAcknowledgementRate: deliveries.length ? Math.round((acknowledged / deliveries.length) * 1000) / 10 : null,
+      guardianAcknowledgementRate: guardianPopulation.length ? Math.round((guardianAcknowledgements.length / guardianPopulation.length) * 1000) / 10 : null,
       falseAlarmRate: rows.length ? Math.round((rows.filter((row) => row.state === "FALSE_ALARM").length / rows.length) * 1000) / 10 : null,
       falseAlarmNote: "False alarms are counted only when an authorised operator explicitly closes an incident with the FALSE_ALARM outcome.",
       byTrigger,
@@ -1128,7 +1276,7 @@ export class PlatformService {
           channel: { in: ["ROOM", "SMS", "FCM", "APNS"] },
           acknowledgedAt: null,
         },
-        data: { acknowledgedAt: now, status: "ACKNOWLEDGED" },
+        data: { acknowledgedAt: now },
       });
     }
     if (row.trustedContactId) {
@@ -1312,6 +1460,15 @@ export class PlatformService {
           const payload = event.payload as { incidentId?: string };
           if (!this.ai || !payload.incidentId) throw new Error("AI assessment needs an incident id.");
           await this.ai.assess(payload.incidentId);
+        } else if (event.type === "GUARDIAN_ESCALATE") {
+          await this.processGuardianEscalation(event.payload as {
+            incidentId: string;
+            userId: string;
+            userDisplayName: string;
+            state: string;
+            previousPriority: number;
+            nextPriority: number;
+          });
         } else {
           throw new Error(`Unknown outbox type ${event.type}`);
         }
