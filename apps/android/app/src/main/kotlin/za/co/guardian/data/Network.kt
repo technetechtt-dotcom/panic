@@ -121,6 +121,7 @@ data class IncidentWire(
     val lastBattery: Double? = null,
     val claimedBy: String? = null,
     val emergencyProfile: ProfileWire? = null,
+    val assignment: String? = null,
 )
 
 @Serializable
@@ -130,13 +131,27 @@ data class IncidentListEnvelope(val data: List<IncidentWire>)
 data class ResponderStatusBody(val status: String)
 
 @Serializable
-data class JourneyPositionBody(val latitude: Double, val longitude: Double)
+data class JourneyPositionBody(
+    val latitude: Double,
+    val longitude: Double,
+    @OptIn(ExperimentalSerializationApi::class) @EncodeDefault(EncodeDefault.Mode.NEVER) val sampleId: String? = null,
+    @OptIn(ExperimentalSerializationApi::class) @EncodeDefault(EncodeDefault.Mode.NEVER) val recordedAt: String? = null,
+    @OptIn(ExperimentalSerializationApi::class) @EncodeDefault(EncodeDefault.Mode.NEVER) val accuracy: Double? = null,
+    @OptIn(ExperimentalSerializationApi::class) @EncodeDefault(EncodeDefault.Mode.NEVER) val speedMps: Double? = null,
+    @OptIn(ExperimentalSerializationApi::class) @EncodeDefault(EncodeDefault.Mode.NEVER) val bearing: Double? = null,
+    @OptIn(ExperimentalSerializationApi::class) @EncodeDefault(EncodeDefault.Mode.NEVER) val source: String? = null,
+)
 
 @Serializable
 data class ResponderLocationBody(
     val latitude: Double,
     val longitude: Double,
     @OptIn(ExperimentalSerializationApi::class) @EncodeDefault(EncodeDefault.Mode.NEVER) val speedMps: Double? = null,
+    @OptIn(ExperimentalSerializationApi::class) @EncodeDefault(EncodeDefault.Mode.NEVER) val sampleId: String? = null,
+    @OptIn(ExperimentalSerializationApi::class) @EncodeDefault(EncodeDefault.Mode.NEVER) val recordedAt: String? = null,
+    @OptIn(ExperimentalSerializationApi::class) @EncodeDefault(EncodeDefault.Mode.NEVER) val accuracy: Double? = null,
+    @OptIn(ExperimentalSerializationApi::class) @EncodeDefault(EncodeDefault.Mode.NEVER) val bearing: Double? = null,
+    @OptIn(ExperimentalSerializationApi::class) @EncodeDefault(EncodeDefault.Mode.NEVER) val source: String? = null,
 )
 
 @Serializable
@@ -236,6 +251,9 @@ interface GuardianApi {
 
     @GET("guardian/inbox")
     suspend fun guardianInbox(): GuardianInboxEnvelope
+
+    @GET("guardian/incidents/{id}/access")
+    suspend fun guardianIncidentAccess(@Path("id") id: String): GuardianIncidentAccessEnvelope
 
     @GET("health")
     suspend fun health(): HealthEnvelope
@@ -369,6 +387,12 @@ data class GuardianInboxPersonWire(
 data class GuardianInboxEnvelope(val data: List<GuardianInboxPersonWire>)
 
 @Serializable
+data class GuardianIncidentAccessWire(val roomUrl: String)
+
+@Serializable
+data class GuardianIncidentAccessEnvelope(val data: GuardianIncidentAccessWire)
+
+@Serializable
 data class GuardianBody(
     val displayName: String,
     val canViewLocation: Boolean = false,
@@ -414,12 +438,15 @@ data class GuardianListEnvelope(val data: List<GuardianWire>)
 @Serializable
 data class DeviceListItem(
     val id: String,
+    val devicePublicId: String? = null,
     val model: String? = null,
     val osVersion: String = "",
+    val appVersion: String = "",
     val revokedAt: String? = null,
     val fcmToken: String? = null,
     val lastSeenAt: String? = null,
     val nickname: String? = null,
+    val emergencyCredentialProvisioned: Boolean = false,
 )
 
 @Serializable

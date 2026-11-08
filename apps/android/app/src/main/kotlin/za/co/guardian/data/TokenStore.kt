@@ -9,19 +9,23 @@ import java.util.UUID
 import javax.inject.Inject
 import javax.inject.Singleton
 
+fun guardianEncryptedPreferences(context: Context, name: String): SharedPreferences {
+    val masterKeyAlias = MasterKeys.getOrCreate(MasterKeys.AES256_GCM_SPEC)
+    return EncryptedSharedPreferences.create(
+        name,
+        masterKeyAlias,
+        context,
+        EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+        EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM,
+    )
+}
+
 @Singleton
 class TokenStore @Inject constructor(@ApplicationContext context: Context) {
     private val prefs: SharedPreferences
 
     init {
-        val masterKeyAlias = MasterKeys.getOrCreate(MasterKeys.AES256_GCM_SPEC)
-        prefs = EncryptedSharedPreferences.create(
-            "guardian_tokens",
-            masterKeyAlias,
-            context,
-            EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
-            EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM,
-        )
+        prefs = guardianEncryptedPreferences(context, "guardian_tokens")
     }
 
     fun accessToken(): String? = prefs.getString(ACCESS, null)
@@ -78,7 +82,29 @@ class TokenStore @Inject constructor(@ApplicationContext context: Context) {
 
 @Singleton
 class SettingsStore @Inject constructor(@ApplicationContext context: Context) : PracticeModeReader {
-    private val prefs = context.getSharedPreferences("guardian_settings", Context.MODE_PRIVATE)
+    private val prefs = guardianEncryptedPreferences(context, "guardian_settings_secure")
+
+    init {
+        migrateLegacySettings(context)
+    }
+
+    private fun migrateLegacySettings(context: Context) {
+        if (prefs.getBoolean("__legacy_migrated", false)) return
+        val legacy = context.getSharedPreferences("guardian_settings", Context.MODE_PRIVATE)
+        val editor = prefs.edit()
+        legacy.all.forEach { (key, value) ->
+            when (value) {
+                is String -> editor.putString(key, value)
+                is Boolean -> editor.putBoolean(key, value)
+                is Int -> editor.putInt(key, value)
+                is Long -> editor.putLong(key, value)
+                is Float -> editor.putFloat(key, value)
+                is Set<*> -> editor.putStringSet(key, value.filterIsInstance<String>().toSet())
+            }
+        }
+        editor.putBoolean("__legacy_migrated", true).commit()
+        legacy.edit().clear().apply()
+    }
 
     override fun enabled(): Boolean = testSessionActive(System.currentTimeMillis())
     override fun remainingMs(): Long {

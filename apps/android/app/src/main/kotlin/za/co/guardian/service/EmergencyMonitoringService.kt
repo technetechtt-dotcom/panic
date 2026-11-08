@@ -52,6 +52,7 @@ import za.co.guardian.data.LocationEntity
 import za.co.guardian.data.LocationPointBody
 import za.co.guardian.data.PhoneSignals
 import za.co.guardian.data.SettingsStore
+import za.co.guardian.data.guardianEncryptedPreferences
 import java.util.UUID
 import javax.inject.Inject
 
@@ -418,9 +419,11 @@ class IncidentFlushWorker @AssistedInject constructor(
 class ResumeProtectionReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         if (intent.action != Intent.ACTION_BOOT_COMPLETED) return
-        val prefs = context.getSharedPreferences("guardian_settings", Context.MODE_PRIVATE)
-        val active = prefs.getBoolean("incident_active", false)
-        if (!active) return
+        val prefs = guardianEncryptedPreferences(context, "guardian_settings_secure")
+        val incidentActive = prefs.getBoolean("incident_active", false)
+        val journeyActive = !prefs.getString("journey_id", null).isNullOrBlank()
+        val responderActive = !prefs.getString("responder_incident_id", null).isNullOrBlank()
+        if (!incidentActive && !journeyActive && !responderActive) return
         val channelId = "guardian.resume"
         val manager = context.getSystemService(NotificationManager::class.java)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -436,8 +439,14 @@ class ResumeProtectionReceiver : BroadcastReceiver() {
         )
         val notification = NotificationCompat.Builder(context, channelId)
             .setSmallIcon(android.R.drawable.ic_dialog_alert)
-            .setContentTitle("Guardian needs you to reopen the app")
-            .setContentText("An emergency was active. Android does not let Guardian resume tracking until you open it.")
+            .setContentTitle("Guardian protection needs to resume")
+            .setContentText(
+                when {
+                    incidentActive -> "An emergency was active. Open Guardian to resume permitted protection services."
+                    responderActive -> "A responder assignment was active. Open Guardian to resume visible location sharing."
+                    else -> "Journey Protection was active. Open Guardian to resume visible location sharing."
+                },
+            )
             .setContentIntent(open)
             .setAutoCancel(true)
             .build()

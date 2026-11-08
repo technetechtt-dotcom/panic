@@ -20,14 +20,16 @@ import za.co.guardian.data.EmergencyServiceController
 import za.co.guardian.data.PhoneSignals
 import za.co.guardian.data.SettingsStore
 import za.co.guardian.data.TokenStore
+import za.co.guardian.ui.AcceptGuardianInviteScreen
 import za.co.guardian.ui.ActiveIncidentScreen
 import za.co.guardian.ui.DevicesPage
 import za.co.guardian.ui.DuressPage
 import za.co.guardian.ui.EmergencyProfilePage
 import za.co.guardian.ui.ForgotPasswordScreen
 import za.co.guardian.ui.GuardianTheme
-import za.co.guardian.ui.GuardianHomeScreen
+import za.co.guardian.ui.GuardianAccountScreen
 import za.co.guardian.ui.GuardiansScreen
+import za.co.guardian.ui.ProductionGuardianHomeScreen
 import za.co.guardian.ui.HistoryScreen
 import za.co.guardian.ui.HomeScreen
 import za.co.guardian.ui.JourneyPage
@@ -37,7 +39,8 @@ import za.co.guardian.ui.OnboardingScreen
 import za.co.guardian.ui.PrivacyPage
 import za.co.guardian.ui.ProfileScreen
 import za.co.guardian.ui.RegisterScreen
-import za.co.guardian.ui.ResponderHomeScreen
+import za.co.guardian.ui.ProductionResponderHomeScreen
+import za.co.guardian.ui.ResponderAccountScreen
 import za.co.guardian.ui.ResetPasswordScreen
 import za.co.guardian.ui.SafeWordPage
 import za.co.guardian.ui.SettingsScreen
@@ -88,6 +91,9 @@ class MainActivity : ComponentActivity() {
                     microphoneRequested = false,
                 ),
             )
+        }
+        if (signedIn && (settings.journeyId() != null || settings.responderIncidentId() != null)) {
+            za.co.guardian.service.ProtectionTrackingService.ensureRunning(this)
         }
         setContent {
             GuardianTheme {
@@ -191,25 +197,27 @@ class MainActivity : ComponentActivity() {
                         "invite/{token}",
                         arguments = listOf(navArgument("token") { type = NavType.StringType }),
                     ) { entry ->
-                        GuardiansScreen(
-                            onHome = { nav.navigate(roleHome()) },
-                            onProtect = { nav.navigate("protect") },
-                            onActivity = { nav.navigate("activity") },
-                            onProfile = { nav.navigate("profile") },
-                            initialInviteToken = android.net.Uri.decode(entry.arguments?.getString("token").orEmpty()),
+                        AcceptGuardianInviteScreen(
+                            token = android.net.Uri.decode(entry.arguments?.getString("token").orEmpty()),
+                            onAccepted = {
+                                nav.navigate("guardian-home") {
+                                    popUpTo("invite/{token}") { inclusive = true }
+                                }
+                            },
+                            onCancel = { nav.navigate(roleHome()) },
                         )
                     }
                     composable("onboarding") {
                         OnboardingScreen(onDone = { nav.navigate("home") { popUpTo("onboarding") { inclusive = true } } })
                     }
                     composable("guardian-home") {
-                        GuardianHomeScreen(
+                        ProductionGuardianHomeScreen(
                             onProfile = { nav.navigate("profile") },
                             onSignedOut = { signOut() },
                         )
                     }
                     composable("responder-home") {
-                        ResponderHomeScreen(
+                        ProductionResponderHomeScreen(
                             onProfile = { nav.navigate("profile") },
                         )
                     }
@@ -269,17 +277,31 @@ class MainActivity : ComponentActivity() {
                         )
                     }
                     composable("profile") {
-                        ProfileScreen(
-                            onHome = { nav.popBackStack("home", false) },
-                            onProtect = { nav.navigate("protect") },
-                            onGuardians = { nav.navigate("guardians") },
-                            onActivity = { nav.navigate("activity") },
-                            onSignedOut = { signOut() },
-                            onEmergencyProfile = { nav.navigate("emergency-profile") },
-                            onDevices = { nav.navigate("devices") },
-                            onPrivacy = { nav.navigate("privacy") },
-                            onHelp = { nav.navigate("legal/help") },
-                        )
+                        when (tokens.userRole()) {
+                            "GUARDIAN" -> GuardianAccountScreen(
+                                onHome = { nav.navigate("guardian-home") { popUpTo("guardian-home") { inclusive = false } } },
+                                onPrivacy = { nav.navigate("privacy") },
+                                onHelp = { nav.navigate("legal/help") },
+                                onSignedOut = { signOut() },
+                            )
+                            "RESPONDER" -> ResponderAccountScreen(
+                                onHome = { nav.navigate("responder-home") { popUpTo("responder-home") { inclusive = false } } },
+                                onPrivacy = { nav.navigate("privacy") },
+                                onHelp = { nav.navigate("legal/help") },
+                                onSignedOut = { signOut() },
+                            )
+                            else -> ProfileScreen(
+                                onHome = { nav.popBackStack("home", false) },
+                                onProtect = { nav.navigate("protect") },
+                                onGuardians = { nav.navigate("guardians") },
+                                onActivity = { nav.navigate("activity") },
+                                onSignedOut = { signOut() },
+                                onEmergencyProfile = { nav.navigate("emergency-profile") },
+                                onDevices = { nav.navigate("devices") },
+                                onPrivacy = { nav.navigate("privacy") },
+                                onHelp = { nav.navigate("legal/help") },
+                            )
+                        }
                     }
                     composable("active") {
                         ActiveIncidentScreen(onBack = { nav.popBackStack() })

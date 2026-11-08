@@ -409,8 +409,7 @@ class ProtectionActions @Inject constructor(
     suspend fun loadProfile(): ProfileWire = api.profile().data
 
     suspend fun exportAccount(): String {
-        api.exportAccount()
-        return "Account export was prepared on the server. It includes profile, guardians, devices, and incident metadata, not evidence bytes."
+        return api.exportAccount().data.toString()
     }
 
     suspend fun eraseAccount(password: String): String {

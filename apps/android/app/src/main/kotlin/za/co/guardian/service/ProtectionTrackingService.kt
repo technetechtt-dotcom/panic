@@ -21,12 +21,18 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import retrofit2.HttpException
 import za.co.guardian.MainActivity
 import za.co.guardian.data.GuardianApi
 import za.co.guardian.data.JourneyPositionBody
 import za.co.guardian.data.PhoneSignals
 import za.co.guardian.data.ResponderLocationBody
 import za.co.guardian.data.SettingsStore
+import za.co.guardian.data.guardianEncryptedPreferences
+import java.time.Instant
+import java.util.UUID
 import javax.inject.Inject
 
 /**
@@ -41,7 +47,8 @@ class ProtectionTrackingService : android.app.Service() {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var listener: LocationListener? = null
-    private val queue by lazy { getSharedPreferences("guardian_live_tracking_queue", Context.MODE_PRIVATE) }
+    private val queue by lazy { guardianEncryptedPreferences(this, "guardian_live_tracking_queue_secure") }
+    private val queueMutex = Mutex()
 
     override fun onBind(intent: Intent?) = null
 
@@ -101,41 +108,108 @@ class ProtectionTrackingService : android.app.Service() {
         }
     }
 
-    private fun enqueue(location: Location) {
+    private suspend fun enqueue(location: Location) = queueMutex.withLock {
         val existing = queue.getString(KEY, "").orEmpty().lineSequence().filter { it.isNotBlank() }.toMutableList()
-        settings.journeyId()?.let { id -> existing += encode("J", id, location) }
-        settings.responderIncidentId()?.let { id -> existing += encode("R", id, location) }
-        val trimmed = existing.takeLast(50)
-        queue.edit().putString(KEY, trimmed.joinToString("\n")).apply()
+        settings.journeyId()?.let { id -> existing += TrackSample.from("J", id, location).encode() }
+        settings.responderIncidentId()?.let { id -> existing += TrackSample.from("R", id, location).encode() }
+        queue.edit().putString(KEY, existing.takeLast(MAX_PENDING).joinToString("\n")).apply()
     }
 
-    private suspend fun flushQueue() {
-        val items = queue.getString(KEY, "").orEmpty().lineSequence().filter { it.isNotBlank() }.toList()
-        if (items.isEmpty()) return
-        val remaining = mutableListOf<String>()
-        for (row in items) {
-            val parts = row.split("\t")
-            if (parts.size < 5) continue
-            val kind = parts[0]
-            val id = parts[1]
-            val lat = parts[2].toDoubleOrNull() ?: continue
-            val lon = parts[3].toDoubleOrNull() ?: continue
-            val speed = parts[4].toDoubleOrNull()
+    private suspend fun flushQueue() = queueMutex.withLock {
+        val now = System.currentTimeMillis()
+        val items = queue.getString(KEY, "").orEmpty().lineSequence().filter { it.isNotBlank() }.mapNotNull(TrackSample::decode).toList()
+        if (items.isEmpty()) return@withLock
+        val remaining = mutableListOf<TrackSample>()
+        for (sample in items) {
+            if (sample.nextAttemptAt > now) {
+                remaining += sample
+                continue
+            }
             try {
-                when (kind) {
-                    "J" -> api.journeyPosition(id, JourneyPositionBody(lat, lon))
-                    "R" -> api.responderLocation(id, ResponderLocationBody(lat, lon, speed))
+                when (sample.kind) {
+                    "J" -> api.journeyPosition(
+                        sample.targetId,
+                        JourneyPositionBody(sample.latitude, sample.longitude, sample.sampleId, sample.recordedAt, sample.accuracy, sample.speed, sample.bearing, sample.source),
+                    )
+                    "R" -> api.responderLocation(
+                        sample.targetId,
+                        ResponderLocationBody(sample.latitude, sample.longitude, sample.speed, sample.sampleId, sample.recordedAt, sample.accuracy, sample.bearing, sample.source),
+                    )
+                }
+            } catch (error: HttpException) {
+                if (error.code() in setOf(404, 409, 410, 422)) {
+                    deadLetter(sample, "HTTP_${error.code()}")
+                } else {
+                    remaining += sample.retry(now)
                 }
             } catch (_: Exception) {
-                remaining += row
+                remaining += sample.retry(now)
             }
         }
-        queue.edit().putString(KEY, remaining.takeLast(50).joinToString("\n")).apply()
+        queue.edit().putString(KEY, remaining.takeLast(MAX_PENDING).joinToString("\n") { it.encode() }).apply()
     }
 
-    private fun encode(kind: String, id: String, location: Location): String {
-        val speed = if (location.hasSpeed()) location.speed.toDouble() else 0.0
-        return listOf(kind, id, location.latitude.toString(), location.longitude.toString(), speed.toString()).joinToString("\t")
+    private fun deadLetter(sample: TrackSample, reason: String) {
+        val existing = queue.getString(DEAD_KEY, "").orEmpty().lineSequence().filter { it.isNotBlank() }.toMutableList()
+        existing += "${sample.encode()}\t$reason"
+        queue.edit().putString(DEAD_KEY, existing.takeLast(MAX_DEAD).joinToString("\n")).apply()
+    }
+
+    private data class TrackSample(
+        val kind: String,
+        val targetId: String,
+        val sampleId: String,
+        val recordedAt: String,
+        val latitude: Double,
+        val longitude: Double,
+        val accuracy: Double?,
+        val speed: Double?,
+        val bearing: Double?,
+        val source: String,
+        val retryCount: Int,
+        val nextAttemptAt: Long,
+    ) {
+        fun encode(): String = listOf(
+            kind, targetId, sampleId, recordedAt,
+            latitude.toString(), longitude.toString(),
+            accuracy?.toString().orEmpty(), speed?.toString().orEmpty(), bearing?.toString().orEmpty(),
+            source, retryCount.toString(), nextAttemptAt.toString(),
+        ).joinToString("\t")
+
+        fun retry(now: Long): TrackSample {
+            val nextRetry = (retryCount + 1).coerceAtMost(12)
+            val delay = (5_000L * (1L shl nextRetry.coerceAtMost(8))).coerceAtMost(15 * 60_000L)
+            return copy(retryCount = nextRetry, nextAttemptAt = now + delay)
+        }
+
+        companion object {
+            fun from(kind: String, targetId: String, location: Location): TrackSample = TrackSample(
+                kind = kind,
+                targetId = targetId,
+                sampleId = UUID.randomUUID().toString(),
+                recordedAt = Instant.ofEpochMilli(location.time.takeIf { it > 0L } ?: System.currentTimeMillis()).toString(),
+                latitude = location.latitude,
+                longitude = location.longitude,
+                accuracy = if (location.hasAccuracy()) location.accuracy.toDouble() else null,
+                speed = if (location.hasSpeed()) location.speed.toDouble() else null,
+                bearing = if (location.hasBearing()) location.bearing.toDouble() else null,
+                source = location.provider?.uppercase() ?: "UNKNOWN",
+                retryCount = 0,
+                nextAttemptAt = 0L,
+            )
+
+            fun decode(row: String): TrackSample? {
+                val p = row.split("\t")
+                if (p.size < 12) return null
+                return TrackSample(
+                    p[0], p[1], p[2], p[3],
+                    p[4].toDoubleOrNull() ?: return null,
+                    p[5].toDoubleOrNull() ?: return null,
+                    p[6].toDoubleOrNull(), p[7].toDoubleOrNull(), p[8].toDoubleOrNull(),
+                    p[9], p[10].toIntOrNull() ?: 0, p[11].toLongOrNull() ?: 0L,
+                )
+            }
+        }
     }
 
     override fun onDestroy() {
@@ -148,6 +222,9 @@ class ProtectionTrackingService : android.app.Service() {
         private const val CHANNEL = "guardian.protection.tracking"
         private const val NOTIFICATION_ID = 2201
         private const val KEY = "pending"
+        private const val DEAD_KEY = "dead"
+        private const val MAX_PENDING = 2_000
+        private const val MAX_DEAD = 200
 
         fun ensureRunning(context: Context) {
             if (ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) return

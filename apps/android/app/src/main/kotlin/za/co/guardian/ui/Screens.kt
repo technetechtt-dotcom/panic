@@ -181,6 +181,19 @@ class HomeViewModel @Inject constructor(
         }
     }
 
+    fun openGuardianIncident(incidentId: String, context: Context) {
+        val client = api ?: return
+        viewModelScope.launch {
+            try {
+                val room = client.guardianIncidentAccess(incidentId).data
+                context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(room.roomUrl)))
+                messageState.value = "Opened the private Guardian Room."
+            } catch (error: Exception) {
+                messageState.value = error.userMessage()
+            }
+        }
+    }
+
     fun reportLocated(incidentId: String) = updateAssignment(incidentId, "USER_LOCATED", "Location report sent. This does not close the incident.")
 
     fun updateAssignment(incidentId: String, status: String, success: String) {
@@ -663,7 +676,24 @@ class SettingsViewModel @Inject constructor(
     fun extendJourney(minutes: String) = run { protection.extendJourney(minutes.toIntOrNull() ?: 15) }
     fun completeJourney() = run { protection.completeJourney() }
     fun checkIn() = run { protection.checkIn() }
-    fun exportAccount() = run { protection.exportAccount() }
+    fun exportAccount() {
+        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            status = try {
+                val json = protection.exportAccount()
+                val file = java.io.File(context.cacheDir, "guardian-account-export-${System.currentTimeMillis()}.json")
+                file.writeText(json)
+                val uri = androidx.core.content.FileProvider.getUriForFile(context, "${context.packageName}.files", file)
+                val send = android.content.Intent(android.content.Intent.ACTION_SEND)
+                    .setType("application/json")
+                    .putExtra(android.content.Intent.EXTRA_STREAM, uri)
+                    .addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION or android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                context.startActivity(android.content.Intent.createChooser(send, "Share Guardian account export").addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK))
+                "Account export created. Choose where to save or share the JSON file."
+            } catch (error: Exception) {
+                error.userMessage()
+            }
+        }
+    }
     fun eraseAccount(password: String) = run { protection.eraseAccount(password) }
     fun previewJourney(label: String) = run {
         val preview = protection.previewJourney(label)
