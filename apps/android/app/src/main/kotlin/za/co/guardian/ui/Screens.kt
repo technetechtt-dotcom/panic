@@ -209,6 +209,19 @@ class HomeViewModel @Inject constructor(
         }
     }
 
+    fun updateGuardianPreferences(trustedContactId: String, methods: String) {
+        val client = api ?: return
+        viewModelScope.launch {
+            try {
+                client.guardianPreferences(trustedContactId, za.co.guardian.data.GuardianRecipientPreferenceBody(methods))
+                messageState.value = "Notification preferences updated."
+                refresh()
+            } catch (error: Exception) {
+                messageState.value = error.userMessage()
+            }
+        }
+    }
+
     fun openGuardianIncident(context: android.content.Context, incidentId: String) {
         val client = api ?: return
         viewModelScope.launch {
@@ -1071,6 +1084,24 @@ fun GuardianHomeScreen(
                     Column(Modifier.padding(14.dp)) {
                         Text(person.displayName, fontWeight = FontWeight.SemiBold, fontSize = 19.sp)
                         Text("${person.relationship} · priority ${person.priority}", color = Color(0xFFB7C0CC))
+                        var push by remember(person.trustedContactId, person.notificationMethods) { mutableStateOf(person.notificationMethods.contains("PUSH")) }
+                        var sms by remember(person.trustedContactId, person.notificationMethods) { mutableStateOf(person.notificationMethods.contains("SMS")) }
+                        var email by remember(person.trustedContactId, person.notificationMethods) { mutableStateOf(person.notificationMethods.contains("EMAIL")) }
+                        Text("My alert channels", fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 8.dp))
+                        Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) { Switch(push, { push = it }); Text("Push", Modifier.padding(start = 6.dp)) }
+                        Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) { Switch(sms, { sms = it }); Text("SMS", Modifier.padding(start = 6.dp)) }
+                        Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) { Switch(email, { email = it }); Text("Email", Modifier.padding(start = 6.dp)) }
+                        Button(
+                            onClick = {
+                                val methods = buildList {
+                                    if (push) add("PUSH")
+                                    if (sms) add("SMS")
+                                    if (email) add("EMAIL")
+                                }.ifEmpty { listOf("PUSH") }.joinToString(",")
+                                viewModel.updateGuardianPreferences(person.trustedContactId, methods)
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                        ) { Text("Save my alert channels") }
                         if (active.isEmpty()) {
                             Text("SAFE · no active Guardian incident", color = Color(0xFF8BD3A8), modifier = Modifier.padding(top = 6.dp))
                         } else {
