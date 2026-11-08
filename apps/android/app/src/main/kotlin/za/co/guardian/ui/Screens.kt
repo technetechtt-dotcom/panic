@@ -1144,12 +1144,27 @@ fun ResponderHomeScreen(
                         } else {
                             Text("No confirmed location received yet.", color = Color(0xFFB7C0CC), modifier = Modifier.padding(top = 6.dp))
                         }
-                        Button(onClick = { viewModel.updateAssignment(incident.id, "ACCEPTED", "Assignment accepted. Live location sharing started.") }, modifier = Modifier.fillMaxWidth()) { Text("Accept") }
-                        Button(onClick = { viewModel.updateAssignment(incident.id, "EN_ROUTE", "Marked en route. Live location sharing continues.") }, modifier = Modifier.fillMaxWidth()) { Text("En route") }
-                        Button(onClick = { viewModel.updateAssignment(incident.id, "ON_SCENE", "Marked on scene.") }, modifier = Modifier.fillMaxWidth()) { Text("On scene") }
-                        Button(onClick = { viewModel.reportLocated(incident.id) }, modifier = Modifier.fillMaxWidth()) { Text("Person located") }
-                        Button(onClick = { viewModel.updateAssignment(incident.id, "COMPLETED", "Assignment completed. Live location sharing stopped.") }, modifier = Modifier.fillMaxWidth()) { Text("Complete") }
-                        TextButton(onClick = { viewModel.updateAssignment(incident.id, "DECLINED", "Assignment declined. Live location sharing stopped.") }) { Text("Decline") }
+                        when (incident.assignment) {
+                            "ASSIGNED" -> {
+                                Button(onClick = { viewModel.updateAssignment(incident.id, "ACCEPTED", "Assignment accepted. Live location sharing started.") }, modifier = Modifier.fillMaxWidth()) { Text("Accept") }
+                                TextButton(onClick = { viewModel.updateAssignment(incident.id, "DECLINED", "Assignment declined. Live location sharing stopped.") }) { Text("Decline") }
+                            }
+                            "ACCEPTED" -> {
+                                Button(onClick = { viewModel.updateAssignment(incident.id, "EN_ROUTE", "Marked en route. Live location sharing continues.") }, modifier = Modifier.fillMaxWidth()) { Text("En route") }
+                                TextButton(onClick = { viewModel.updateAssignment(incident.id, "DECLINED", "Assignment declined. Live location sharing stopped.") }) { Text("Decline") }
+                            }
+                            "EN_ROUTE", "RESPONDING" -> {
+                                Button(onClick = { viewModel.updateAssignment(incident.id, "ON_SCENE", "Marked on scene.") }, modifier = Modifier.fillMaxWidth()) { Text("On scene") }
+                                TextButton(onClick = { viewModel.updateAssignment(incident.id, "DECLINED", "Assignment declined. Live location sharing stopped.") }) { Text("Decline") }
+                            }
+                            "ON_SCENE" -> {
+                                Button(onClick = { viewModel.reportLocated(incident.id) }, modifier = Modifier.fillMaxWidth()) { Text("Person located") }
+                                Button(onClick = { viewModel.updateAssignment(incident.id, "COMPLETED", "Assignment completed. Live location sharing stopped.") }, modifier = Modifier.fillMaxWidth()) { Text("Complete") }
+                            }
+                            "USER_LOCATED" -> {
+                                Button(onClick = { viewModel.updateAssignment(incident.id, "COMPLETED", "Assignment completed. Live location sharing stopped.") }, modifier = Modifier.fillMaxWidth()) { Text("Complete") }
+                            }
+                        }
                     }
                 }
             }
@@ -1369,6 +1384,83 @@ fun GuardiansScreen(
             }
             if (viewModel.guardians.isEmpty()) Text("No guardians saved yet.", modifier = Modifier.padding(top = 12.dp))
             viewModel.status?.let { Text(it, modifier = Modifier.padding(top = 8.dp)) }
+        }
+    }
+}
+
+@Composable
+fun AcceptGuardianInviteScreen(
+    token: String,
+    onAccepted: () -> Unit,
+    onBack: () -> Unit,
+    viewModel: SettingsViewModel = hiltViewModel(),
+) {
+    var accepting by remember { mutableStateOf(false) }
+    var completed by remember { mutableStateOf(false) }
+    Column(
+        Modifier.fillMaxSize().padding(24.dp).verticalScroll(rememberScrollState()),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        TextButton(onClick = onBack, enabled = !accepting) { Text("Back") }
+        Text("Accept Guardian invitation", fontSize = 30.sp, fontWeight = FontWeight.SemiBold)
+        Text("This invitation lets this account receive alerts for the person who invited you. It does not expose unrelated Guardian accounts or protected users.")
+        Button(
+            onClick = {
+                accepting = true
+                viewModel.acceptInvitation(
+                    token,
+                    onSuccess = {
+                        accepting = false
+                        completed = true
+                        onAccepted()
+                    },
+                )
+            },
+            enabled = token.isNotBlank() && !accepting && !completed,
+            modifier = Modifier.fillMaxWidth(),
+        ) { Text(if (accepting) "Accepting…" else "Accept invitation") }
+        viewModel.status?.let { Text(it) }
+    }
+}
+
+@Composable
+fun RoleProfileScreen(
+    title: String,
+    onHome: () -> Unit,
+    onPrivacy: () -> Unit,
+    onDevices: () -> Unit,
+    onHelp: () -> Unit,
+    onSignedOut: () -> Unit,
+    viewModel: SettingsViewModel = hiltViewModel(),
+) {
+    androidx.compose.runtime.LaunchedEffect(Unit) { viewModel.refresh() }
+    Scaffold(
+        bottomBar = {
+            NavigationBar {
+                NavigationBarItem(
+                    selected = false,
+                    onClick = onHome,
+                    icon = { Icon(Icons.Filled.Home, contentDescription = "Home") },
+                    label = { Text("Home") },
+                )
+                NavigationBarItem(
+                    selected = true,
+                    onClick = {},
+                    icon = { Icon(Icons.Filled.Settings, contentDescription = "Profile") },
+                    label = { Text("Profile") },
+                )
+            }
+        },
+    ) { padding ->
+        Column(Modifier.fillMaxSize().padding(padding).padding(20.dp).verticalScroll(rememberScrollState())) {
+            Text(title, fontSize = 32.sp, fontWeight = FontWeight.SemiBold)
+            Button(onClick = onDevices, modifier = Modifier.fillMaxWidth().padding(top = 16.dp)) { Text("My devices") }
+            Button(onClick = onPrivacy, modifier = Modifier.fillMaxWidth()) { Text("Account & privacy") }
+            Button(onClick = onHelp, modifier = Modifier.fillMaxWidth()) { Text("Help & support") }
+            Button(onClick = viewModel::checkConnection, modifier = Modifier.fillMaxWidth()) { Text("Check connection") }
+            viewModel.status?.let { Text(it, modifier = Modifier.padding(top = 8.dp)) }
+            Spacer(Modifier.height(20.dp))
+            Button(onClick = { viewModel.signOut(onSignedOut) }, modifier = Modifier.fillMaxWidth()) { Text("Sign out") }
         }
     }
 }
