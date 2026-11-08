@@ -67,6 +67,23 @@ export function routeDeviates(
   return distanceToSegmentMeters(lat, lng, originLat, originLng, destLat, destLng) > corridorMeters;
 }
 
+export function routeDeviatesPolyline(
+  lat: number,
+  lng: number,
+  points: Array<{ latitude: number; longitude: number }>,
+  corridorMeters: number,
+): boolean {
+  if (points.length < 2) return false;
+  let nearest = Number.POSITIVE_INFINITY;
+  for (let index = 1; index < points.length; index += 1) {
+    const from = points[index - 1]!;
+    const to = points[index]!;
+    nearest = Math.min(nearest, distanceToSegmentMeters(lat, lng, from.latitude, from.longitude, to.latitude, to.longitude));
+    if (nearest <= corridorMeters) return false;
+  }
+  return nearest > corridorMeters;
+}
+
 export interface CorridorPoint {
   latitude: number;
   longitude: number;
