@@ -308,7 +308,7 @@ fun PrivacyPage(onBack: () -> Unit, onSignedOut: () -> Unit, viewModel: Settings
         Text(privacyCopy(), modifier = Modifier.padding(vertical = 8.dp))
         Button(onClick = viewModel::exportAccount, modifier = Modifier.fillMaxWidth()) { Text("Export my data") }
         PasswordField(password, { password = it }, "Password to erase profile")
-        Button(onClick = { viewModel.eraseAccount(password) }, modifier = Modifier.fillMaxWidth()) { Text("Erase my profile") }
+        Button(onClick = { viewModel.eraseAccount(password, onSignedOut) }, modifier = Modifier.fillMaxWidth()) { Text("Erase my profile") }
         Button(onClick = { viewModel.signOut(onSignedOut) }, modifier = Modifier.fillMaxWidth()) { Text("Sign out") }
         viewModel.status?.let { Text(it) }
     }
