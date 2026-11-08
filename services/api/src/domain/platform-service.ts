@@ -121,56 +121,153 @@ export class PlatformService {
   async dispatchGuardianNotify(incident: { id?: string; incidentId?: string; userId: string; userDisplayName: string; state: string }): Promise<void> {
     const incidentId = incident.id ?? incident.incidentId;
     if (!incidentId) throw new Error("Guardian notify requires an incident id.");
-    const contacts = await this.prisma.trustedContact.findMany({
-      where: { userId: incident.userId, invitationStatus: { not: "DECLINED" } },
-      orderBy: { priority: "asc" },
+    const first = await this.prisma.trustedContact.findFirst({
+      where: { userId: incident.userId, active: true, invitationStatus: { not: "DECLINED" } },
+      orderBy: [{ priority: "asc" }, { createdAt: "asc" }],
     });
-    for (const contact of contacts) {
-      const methods = (contact.notificationMethods || "PUSH,SMS").split(",").map((item) => item.trim().toUpperCase());
-      const room = await this.openRoom(incidentId, contact.canViewLocation, contact.canViewEvidence, contact.id, contact.displayName);
-      const body = guardianSmsBody({
-        name: incident.userDisplayName,
-        incidentState: incident.state,
-        roomUrl: room.url,
-      });
-      if (methods.includes("SMS")) {
-        const sms = contact.phone
-          ? await this.sms.send({ to: contact.phone, body, incidentId })
-          : { delivered: false, simulated: true, reason: "This guardian has no phone number.", providerMessageId: undefined };
-        await this.record(incidentId, "SMS", contact.phone ?? contact.email ?? contact.displayName, sms.delivered ? "SENT" : "SKIPPED", sms.reason, sms.providerMessageId, contact.id);
+    if (!first) return;
+    await this.sendGuardianEscalationStep({
+      incidentId,
+      userId: incident.userId,
+      userDisplayName: incident.userDisplayName,
+      state: incident.state,
+      trustedContactId: first.id,
+      stage: 0,
+    });
+  }
+
+  private async sendGuardianEscalationStep(payload: {
+    incidentId: string;
+    userId: string;
+    userDisplayName: string;
+    state: string;
+    trustedContactId: string;
+    stage: number;
+  }): Promise<void> {
+    const [incident, contact] = await Promise.all([
+      this.prisma.incident.findUnique({ where: { id: payload.incidentId }, select: { id: true, createdAt: true, state: true, escalatedToSupervisorAt: true } }),
+      this.prisma.trustedContact.findUnique({ where: { id: payload.trustedContactId } }),
+    ]);
+    if (!incident || !contact || !contact.active || contact.userId !== payload.userId || ["RESOLVED", "ARCHIVED", "FALSE_ALARM"].includes(incident.state)) return;
+    if (contact.lastAcknowledgedAt && contact.lastAcknowledgedAt.getTime() >= incident.createdAt.getTime()) return;
+
+    const recipient = contact.guardianUserId
+      ? await this.prisma.user.findUnique({ where: { id: contact.guardianUserId }, select: { guardianNotificationMethods: true } })
+      : null;
+    const ownerMethods = new Set((contact.notificationMethods || "PUSH,SMS").split(",").map((value) => value.trim().toUpperCase()).filter(Boolean));
+    const recipientMethods = new Set((recipient?.guardianNotificationMethods || "PUSH,SMS,EMAIL").split(",").map((value) => value.trim().toUpperCase()).filter(Boolean));
+    const channels = ["PUSH", "SMS", "EMAIL"].filter((channel) => ownerMethods.has(channel) && recipientMethods.has(channel));
+    if (payload.stage >= channels.length) {
+      await this.advanceGuardianEscalation(payload, contact.id);
+      return;
+    }
+
+    const room = await this.openRoom(payload.incidentId, contact.canViewLocation, contact.canViewEvidence, contact.id, contact.displayName);
+    const body = guardianSmsBody({ name: payload.userDisplayName, incidentState: payload.state, roomUrl: room.url });
+    const channel = channels[payload.stage]!;
+    if (payload.stage === 0) {
+      await this.record(payload.incidentId, "ROOM", contact.displayName, "SENT", "A private room link was created for this guardian.", undefined, contact.id);
+    }
+
+    if (channel === "PUSH") {
+      const phones = contact.guardianUserId
+        ? await this.prisma.device.findMany({ where: { userId: contact.guardianUserId, fcmToken: { not: null }, revokedAt: null } })
+        : [];
+      if (!phones.length) {
+        await this.record(payload.incidentId, "FCM", contact.displayName, "SKIPPED", "No active push token is registered.", undefined, contact.id);
       }
-      await this.record(incidentId, "ROOM", contact.displayName, "SENT", "A private room link was created for this guardian.", undefined, contact.id);
-      if (methods.includes("PUSH") && contact.guardianUserId) {
-        const guardianPhones = await this.prisma.device.findMany({
-          where: { userId: contact.guardianUserId, fcmToken: { not: null }, revokedAt: null },
-        });
-        for (const phone of guardianPhones) {
-          if (!phone.fcmToken) continue;
-          const apple = phone.platform === "IOS";
-          const pushData = {
-            type: "GUARDIAN_INCIDENT",
-            incidentId,
-            trustedContactId: contact.id,
-            roomUrl: room.url,
-          };
-          const push = apple
-            ? await sendApns(phone.fcmToken, "Guardian", `${incident.userDisplayName} needs help.`, process.env, pushData)
-            : await sendFcm(phone.fcmToken, "Guardian", `${incident.userDisplayName} needs help.`, process.env, pushData);
-          await this.record(
-            incidentId,
-            apple ? "APNS" : "FCM",
-            contact.displayName,
-            push.delivered ? "SENT" : "SKIPPED",
-            push.reason,
-            push.providerMessageId,
-            contact.id,
-          );
+      for (const phone of phones) {
+        if (!phone.fcmToken) continue;
+        const apple = phone.platform === "IOS";
+        const pushData = { type: "GUARDIAN_INCIDENT", incidentId: payload.incidentId, trustedContactId: contact.id, roomUrl: room.url };
+        const push = apple
+          ? await sendApns(phone.fcmToken, "Guardian", `${payload.userDisplayName} needs help.`, process.env, pushData)
+          : await sendFcm(phone.fcmToken, "Guardian", `${payload.userDisplayName} needs help.`, process.env, pushData);
+        await this.record(payload.incidentId, apple ? "APNS" : "FCM", contact.displayName, push.delivered ? "SENT" : "SKIPPED", push.reason, push.providerMessageId, contact.id);
+      }
+    } else if (channel === "SMS") {
+      const sms = contact.phone
+        ? await this.sms.send({ to: contact.phone, body, incidentId: payload.incidentId })
+        : { delivered: false, simulated: true, reason: "This guardian has no phone number.", providerMessageId: undefined };
+      await this.record(payload.incidentId, "SMS", contact.phone ?? contact.displayName, sms.delivered ? "SENT" : "SKIPPED", sms.reason, sms.providerMessageId, contact.id);
+    } else if (channel === "EMAIL") {
+      let sent = false;
+      let reason = "This guardian has no email address.";
+      if (contact.email) {
+        try {
+          sent = await sendTransactionalEmail({
+            to: contact.email,
+            subject: `Guardian alert: ${payload.userDisplayName} needs help`,
+            text: `${body}\n\nThis is an emergency notification. Open the private Guardian Room for the latest confirmed information.`,
+          });
+          reason = sent ? "Email accepted by the configured SMTP provider." : "SMTP is not configured.";
+        } catch (error) {
+          reason = error instanceof Error ? error.message : "Email provider failed.";
         }
       }
+      await this.record(payload.incidentId, "EMAIL", contact.email ?? contact.displayName, sent ? "SENT" : "SKIPPED", reason, undefined, contact.id);
+    }
+
+    await this.queueGuardianEscalation({ ...payload, stage: payload.stage + 1 }, this.guardianEscalationDelayMs());
+  }
+
+  private guardianEscalationDelayMs(): number {
+    const seconds = Number(process.env.GUARDIAN_ESCALATION_DELAY_SECONDS ?? 30);
+    return Math.max(5, Math.min(300, Number.isFinite(seconds) ? seconds : 30)) * 1000;
+  }
+
+  private async queueGuardianEscalation(payload: {
+    incidentId: string; userId: string; userDisplayName: string; state: string; trustedContactId: string; stage: number;
+  }, delayMs: number): Promise<void> {
+    if (this.outbox) {
+      await this.outbox.enqueue({
+        type: "GUARDIAN_ESCALATION_STEP",
+        aggregateType: "Incident",
+        aggregateId: payload.incidentId,
+        payload,
+        nextAttemptAt: new Date(this.clock.now().getTime() + delayMs),
+      });
+      return;
+    }
+    await this.sendGuardianEscalationStep(payload);
+  }
+
+  private async advanceGuardianEscalation(payload: {
+    incidentId: string; userId: string; userDisplayName: string; state: string; trustedContactId: string; stage: number;
+  }, currentContactId: string): Promise<void> {
+    const contacts = await this.prisma.trustedContact.findMany({
+      where: { userId: payload.userId, active: true, invitationStatus: { not: "DECLINED" } },
+      orderBy: [{ priority: "asc" }, { createdAt: "asc" }],
+      select: { id: true },
+    });
+    const index = contacts.findIndex((row) => row.id === currentContactId);
+    const next = index >= 0 ? contacts[index + 1] : undefined;
+    if (next) {
+      await this.queueGuardianEscalation({ ...payload, trustedContactId: next.id, stage: 0 }, this.guardianEscalationDelayMs());
+      return;
+    }
+    const now = this.clock.now();
+    const updated = await this.prisma.incident.updateMany({
+      where: { id: payload.incidentId, escalatedToSupervisorAt: null, state: { notIn: ["RESOLVED", "FALSE_ALARM", "ARCHIVED"] } },
+      data: { escalatedToSupervisorAt: now, updatedAt: now },
+    });
+    if (updated.count) {
+      await this.prisma.timelineEvent.create({
+        data: {
+          id: this.ids.uuid(),
+          incidentId: payload.incidentId,
+          type: "guardian.escalation_exhausted",
+          message: "No trusted Guardian acknowledged during the configured escalation sequence. Monitoring escalation is required.",
+          occurredAt: now,
+          actorId: null,
+          createdAt: now,
+          updatedAt: now,
+        },
+      });
     }
   }
 
-  async brief(actor: Actor, incidentId: string) {
+  async brief(actor: Actor, incidentId: string) {  async brief(actor: Actor, incidentId: string) {
     this.operator(actor);
     const incident = await this.incidents.get(actor, incidentId);
     const timeline = await this.incidents.timelineFor(actor, incidentId);
@@ -275,7 +372,7 @@ export class PlatformService {
       deliveries: deliveries.map((row) => ({
         id: row.id,
         channel: row.channel,
-        status: row.acknowledgedAt ? "ACKNOWLEDGED" : row.status,
+        status: row.status,
         detail: row.detail,
         destination: maskDestination(row.destination),
         providerMessageId: row.providerMessageId,
@@ -612,7 +709,9 @@ export class PlatformService {
       .flatMap((row) => row.assignments.filter((a) => a.arrivedAt).map((a) => a.arrivedAt!.getTime() - row.createdAt.getTime()));
     const deliveries = rows.flatMap((row) => row.deliveries).filter((row) => ["SMS", "FCM", "APNS", "ROOM"].includes(row.channel));
     const delivered = deliveries.filter((row) => row.deliveredAt || row.status === "DELIVERED" || row.status === "ACKNOWLEDGED").length;
-    const acknowledged = deliveries.filter((row) => row.acknowledgedAt).length;
+    const notifiedGuardianKeys = new Set(deliveries.map((row) => row.trustedContactId).filter((value): value is string => Boolean(value)));
+    const acknowledgedGuardianKeys = new Set(deliveries.filter((row) => row.acknowledgedAt).map((row) => row.trustedContactId).filter((value): value is string => Boolean(value)));
+    const acknowledged = acknowledgedGuardianKeys.size;
     const byTrigger = Object.fromEntries(
       [...new Set(rows.map((row) => row.triggerType))].map((trigger) => [trigger, rows.filter((row) => row.triggerType === trigger).length]),
     );
@@ -627,7 +726,10 @@ export class PlatformService {
       averageDispatchSeconds: avg(dispatches),
       averageResponderArrivalSeconds: avg(arrivals),
       guardianDeliverySuccessRate: deliveries.length ? Math.round((delivered / deliveries.length) * 1000) / 10 : null,
-      guardianAcknowledgementRate: deliveries.length ? Math.round((acknowledged / deliveries.length) * 1000) / 10 : null,
+      guardianChannelDeliverySuccessRate: deliveries.length ? Math.round((delivered / deliveries.length) * 1000) / 10 : null,
+      guardianAcknowledgementRate: notifiedGuardianKeys.size ? Math.round((acknowledged / notifiedGuardianKeys.size) * 1000) / 10 : null,
+      guardianAcknowledgedUnique: acknowledged,
+      guardianNotifiedUnique: notifiedGuardianKeys.size,
       falseAlarmRate: rows.length ? Math.round((rows.filter((row) => row.state === "FALSE_ALARM").length / rows.length) * 1000) / 10 : null,
       falseAlarmNote: "False alarms are counted only when an authorised operator explicitly closes an incident with the FALSE_ALARM outcome.",
       byTrigger,
@@ -652,18 +754,14 @@ export class PlatformService {
 
   async incidentCommunications(actor: Actor, incidentId: string) {
     await this.incidents.get(actor, incidentId);
-    const [timeline, deliveries] = await Promise.all([
+    const [timeline, deliveries, communications] = await Promise.all([
       this.prisma.timelineEvent.findMany({ where: { incidentId }, orderBy: { occurredAt: "asc" }, take: 500 }),
       this.prisma.notificationDelivery.findMany({ where: { incidentId }, orderBy: { createdAt: "asc" }, take: 500 }),
+      this.prisma.incidentCommunication.findMany({ where: { incidentId }, orderBy: { occurredAt: "asc" }, take: 500 }),
     ]);
     return [
       ...timeline.map((row) => ({
-        id: row.id,
-        at: row.occurredAt.toISOString(),
-        kind: row.type,
-        channel: "INTERNAL",
-        message: row.message,
-        status: null as string | null,
+        id: row.id, at: row.occurredAt.toISOString(), kind: row.type, channel: "INTERNAL", message: row.message, status: null as string | null,
       })),
       ...deliveries.map((row) => ({
         id: row.id,
@@ -673,10 +771,59 @@ export class PlatformService {
         message: `${maskDestination(row.destination)} · ${row.detail}`,
         status: row.status,
       })),
+      ...communications.map((row) => ({
+        id: row.id,
+        at: row.occurredAt.toISOString(),
+        kind: row.type,
+        channel: row.channel,
+        message: row.externalReference ? `${row.note} · ref ${row.externalReference}` : row.note,
+        status: "RECORDED",
+      })),
     ].sort((a, b) => a.at.localeCompare(b.at));
   }
 
-  async guardianInbox(actor: Actor) {
+  async logCommunication(
+    actor: Actor,
+    incidentId: string,
+    input: { channel: string; type: string; note: string; occurredAt?: string; externalReference?: string },
+  ) {
+    if (!hasPermission(actor.role, Permission.IncidentAcknowledge)) {
+      throw new AppError("FORBIDDEN", 403, "Only monitoring operators can record incident communications.");
+    }
+    await this.incidents.get(actor, incidentId);
+    const now = this.clock.now();
+    const occurredAt = input.occurredAt ? new Date(input.occurredAt) : now;
+    const row = await this.prisma.incidentCommunication.create({
+      data: {
+        id: this.ids.uuid(),
+        incidentId,
+        actorId: actor.id,
+        channel: input.channel,
+        type: input.type,
+        note: input.note,
+        externalReference: input.externalReference ?? null,
+        occurredAt,
+        createdAt: now,
+      },
+    });
+    await this.prisma.auditEvent.create({
+      data: {
+        id: this.ids.uuid(),
+        actorId: actor.id,
+        action: "incident.communication_recorded",
+        entityType: "IncidentCommunication",
+        entityId: row.id,
+        correlationId: incidentId,
+        requestId: null,
+        metadata: { channel: row.channel, type: row.type } as Prisma.InputJsonValue,
+        createdAt: now,
+        updatedAt: now,
+      },
+    });
+    return { ...row, occurredAt: row.occurredAt.toISOString(), createdAt: row.createdAt.toISOString() };
+  }
+
+  async guardianInbox(actor: Actor) {  async guardianInbox(actor: Actor) {
     if (actor.role !== "GUARDIAN" && !hasPermission(actor.role, Permission.IncidentReadActive)) {
       throw new AppError("FORBIDDEN", 403, "This inbox is only available to Guardian or monitoring accounts.");
     }
@@ -724,6 +871,36 @@ export class PlatformService {
         createdAt: incident.createdAt.toISOString(),
       })),
     }));
+  }
+
+  async guardianIncidentAccess(actor: Actor, incidentId: string) {
+    if (actor.role !== "GUARDIAN") throw new AppError("FORBIDDEN", 403, "This incident access is only available to Guardian accounts.");
+    const incident = await this.prisma.incident.findUnique({ where: { id: incidentId }, select: { id: true, userId: true, state: true } });
+    if (!incident || ["RESOLVED", "FALSE_ALARM", "ARCHIVED"].includes(incident.state)) {
+      throw new AppError("NOT_FOUND", 404, "That active incident is not available.");
+    }
+    const contact = await this.prisma.trustedContact.findFirst({
+      where: { userId: incident.userId, guardianUserId: actor.id, invitationStatus: "ACCEPTED", active: true },
+    });
+    if (!contact) throw new AppError("FORBIDDEN", 403, "You are not an accepted Guardian for this incident.");
+    const room = await this.openRoom(incidentId, contact.canViewLocation, contact.canViewEvidence, contact.id, contact.displayName);
+    return { roomUrl: room.url };
+  }
+
+  async guardianPreferences(actor: Actor) {
+    if (actor.role !== "GUARDIAN") throw new AppError("FORBIDDEN", 403, "This preference is only available to Guardian accounts.");
+    const row = await this.prisma.user.findUnique({ where: { id: actor.id }, select: { guardianNotificationMethods: true } });
+    return { notificationMethods: row?.guardianNotificationMethods ?? "PUSH,SMS,EMAIL" };
+  }
+
+  async updateGuardianPreferences(actor: Actor, notificationMethods: string) {
+    if (actor.role !== "GUARDIAN") throw new AppError("FORBIDDEN", 403, "This preference is only available to Guardian accounts.");
+    const row = await this.prisma.user.update({
+      where: { id: actor.id },
+      data: { guardianNotificationMethods: notificationMethods, updatedAt: this.clock.now() },
+      select: { guardianNotificationMethods: true },
+    });
+    return { notificationMethods: row.guardianNotificationMethods };
   }
 
   async responderProfile(actor: Actor) {
@@ -1027,41 +1204,83 @@ export class PlatformService {
       throw new AppError("INVALID_CREDENTIALS", 401, "The password was not accepted.");
     }
     const now = this.clock.now();
-    await this.prisma.trustedContact.deleteMany({ where: { userId: actor.id } });
-    await this.prisma.emergencyProfile.deleteMany({ where: { userId: actor.id } });
-    await this.prisma.operatorMfa.deleteMany({ where: { userId: actor.id } });
-    await this.prisma.refreshToken.updateMany({ where: { userId: actor.id, revokedAt: null }, data: { revokedAt: now } });
-    await this.prisma.user.update({
-      where: { id: actor.id },
-      data: {
-        email: `erased-${actor.id}@invalid.guardian`,
-        displayName: "Erased account",
-        passwordHash: await this.passwords.hash(randomBytes(24).toString("hex")),
-        updatedAt: now,
-      },
-    });
-    return { erased: true, incidentsRetained: true };
+    const replacementPassword = await this.passwords.hash(randomBytes(32).toString("hex"));
+    await this.prisma.$transaction([
+      this.prisma.trustedContact.deleteMany({ where: { userId: actor.id } }),
+      this.prisma.trustedContact.updateMany({
+        where: { guardianUserId: actor.id },
+        data: { guardianUserId: null, invitationStatus: "PENDING", verifiedAt: null, active: false, updatedAt: now },
+      }),
+      this.prisma.emergencyProfile.deleteMany({ where: { userId: actor.id } }),
+      this.prisma.operatorMfaRecoveryCode.deleteMany({ where: { userId: actor.id } }),
+      this.prisma.operatorMfa.deleteMany({ where: { userId: actor.id } }),
+      this.prisma.recoveryToken.deleteMany({ where: { userId: actor.id } }),
+      this.prisma.refreshToken.updateMany({ where: { userId: actor.id, revokedAt: null }, data: { revokedAt: now, updatedAt: now } }),
+      this.prisma.device.updateMany({
+        where: { userId: actor.id },
+        data: { revokedAt: now, fcmToken: null, emergencyTokenHash: null, pushTokenUpdatedAt: null, updatedAt: now },
+      }),
+      this.prisma.user.update({
+        where: { id: actor.id },
+        data: {
+          email: `erased-${actor.id}@invalid.guardian`,
+          displayName: "Erased account",
+          phone: null,
+          emailVerifiedAt: null,
+          suspendedAt: now,
+          passwordHash: replacementPassword,
+          guardianNotificationMethods: "PUSH",
+          updatedAt: now,
+        },
+      }),
+    ]);
+    return { erased: true, incidentsRetained: true, devicesRevoked: true, sessionsRevoked: true };
   }
 
-  async beginMfa(actor: Actor) {
+  async beginMfa(actor: Actor, input: { password: string; currentCode?: string }) {
     if (!OPERATOR_ROLES.includes(actor.role)) throw new AppError("FORBIDDEN", 403, "Only monitoring accounts can enroll an authenticator.");
+    const user = await this.users.findById(actor.id);
+    if (!user || !(await this.passwords.verify(input.password, user.passwordHash))) {
+      throw new AppError("INVALID_CREDENTIALS", 401, "Re-enter your account password before changing MFA.");
+    }
+    const existing = await this.prisma.operatorMfa.findUnique({ where: { userId: actor.id } });
+    if (existing?.enabled) {
+      const currentCode = input.currentCode?.trim() ?? "";
+      const normalizedRecovery = currentCode.replace("-", "").toUpperCase();
+      const totpOk = /^\d{6}$/.test(currentCode) && verifyTotp(openSecret(existing.secret, this.config.mfaEncryptionKey), currentCode, this.clock.now().getTime());
+      const recovery = !totpOk && /^[A-F0-9]{12}$/.test(normalizedRecovery)
+        ? await this.prisma.operatorMfaRecoveryCode.findFirst({ where: { userId: actor.id, codeHash: hashToken(normalizedRecovery), usedAt: null } })
+        : null;
+      if (!totpOk && !recovery) throw new AppError("INVALID_MFA", 401, "Confirm your current authenticator or recovery code before replacing it.");
+    }
     const secret = generateTotpSecret();
+    const sealed = sealSecret(secret, this.config.mfaEncryptionKey);
     const now = this.clock.now();
     await this.prisma.operatorMfa.upsert({
       where: { userId: actor.id },
-      create: { userId: actor.id, secret: sealSecret(secret, this.config.jwtSecret), enabled: false, createdAt: now, updatedAt: now },
-      update: { secret: sealSecret(secret, this.config.jwtSecret), enabled: false, updatedAt: now },
+      create: { userId: actor.id, secret: sealed, pendingSecret: sealed, pendingCreatedAt: now, enabled: false, createdAt: now, updatedAt: now },
+      update: { pendingSecret: sealed, pendingCreatedAt: now, updatedAt: now },
     });
-    return { secret, otpauth: `otpauth://totp/Guardian:${encodeURIComponent(actor.displayName)}?secret=${secret}&issuer=Guardian` };
+    return {
+      secret,
+      replacing: existing?.enabled === true,
+      otpauth: `otpauth://totp/Guardian:${encodeURIComponent(actor.displayName)}?secret=${secret}&issuer=Guardian`,
+    };
   }
 
   async confirmMfa(actor: Actor, code: string) {
     const row = await this.prisma.operatorMfa.findUnique({ where: { userId: actor.id } });
-    if (!row || !verifyTotp(openSecret(row.secret, this.config.jwtSecret), code, this.clock.now().getTime())) {
-      throw new AppError("INVALID_MFA", 401, "That authenticator code was not accepted.");
+    if (!row?.pendingSecret || !verifyTotp(openSecret(row.pendingSecret, this.config.mfaEncryptionKey), code, this.clock.now().getTime())) {
+      throw new AppError("INVALID_MFA", 401, "That new authenticator code was not accepted.");
+    }
+    if (row.pendingCreatedAt && this.clock.now().getTime() - row.pendingCreatedAt.getTime() > 15 * 60 * 1000) {
+      throw new AppError("MFA_SETUP_EXPIRED", 410, "The MFA replacement session expired. Start again.");
     }
     const now = this.clock.now();
-    await this.prisma.operatorMfa.update({ where: { userId: actor.id }, data: { enabled: true, updatedAt: now } });
+    await this.prisma.operatorMfa.update({
+      where: { userId: actor.id },
+      data: { secret: row.pendingSecret, pendingSecret: null, pendingCreatedAt: null, enabled: true, updatedAt: now },
+    });
     const recoveryCodes = Array.from({ length: 10 }, () => {
       const raw = randomBytes(6).toString("hex").toUpperCase();
       return `${raw.slice(0, 6)}-${raw.slice(6)}`;
@@ -1070,17 +1289,14 @@ export class PlatformService {
       this.prisma.operatorMfaRecoveryCode.deleteMany({ where: { userId: actor.id } }),
       this.prisma.operatorMfaRecoveryCode.createMany({
         data: recoveryCodes.map((value) => ({
-          id: randomUUID(),
-          userId: actor.id,
-          codeHash: hashToken(value.replace("-", "")),
-          createdAt: now,
+          id: randomUUID(), userId: actor.id, codeHash: hashToken(value.replace("-", "")), createdAt: now,
         })),
       }),
     ]);
     return { enabled: true, recoveryCodes };
   }
 
-  async room(token: string) {
+  async room(token: string) {  async room(token: string) {
     const row = await this.prisma.incidentRoom.findUnique({
       where: { tokenHash: sha256(token) },
       include: { incident: { include: { user: true } } },
@@ -1128,7 +1344,7 @@ export class PlatformService {
           channel: { in: ["ROOM", "SMS", "FCM", "APNS"] },
           acknowledgedAt: null,
         },
-        data: { acknowledgedAt: now, status: "ACKNOWLEDGED" },
+        data: { acknowledgedAt: now },
       });
     }
     if (row.trustedContactId) {
@@ -1174,7 +1390,7 @@ export class PlatformService {
     const now = this.clock.now();
     await this.prisma.notificationDelivery.update({
       where: { id: deliveryId },
-      data: { acknowledgedAt: now, status: "ACKNOWLEDGED" },
+      data: { acknowledgedAt: now },
     });
     if (guardian) {
       await this.prisma.trustedContact.update({ where: { id: guardian.id }, data: { lastAcknowledgedAt: now } });
@@ -1308,6 +1524,10 @@ export class PlatformService {
         if (event.type === "INCIDENT_GUARDIAN_NOTIFY") {
           const payload = event.payload as { incidentId: string; userId: string; userDisplayName: string; state: string };
           await this.dispatchGuardianNotify(payload);
+        } else if (event.type === "GUARDIAN_ESCALATION_STEP") {
+          await this.sendGuardianEscalationStep(event.payload as {
+            incidentId: string; userId: string; userDisplayName: string; state: string; trustedContactId: string; stage: number;
+          });
         } else if (event.type === "AI_ASSESS") {
           const payload = event.payload as { incidentId?: string };
           if (!this.ai || !payload.incidentId) throw new Error("AI assessment needs an incident id.");
@@ -1356,8 +1576,7 @@ export class PlatformService {
         createdAt: now,
       },
     });
-    const origin = this.config.corsOrigins[0] ?? "http://localhost:5173";
-    return { url: `${origin}/room/${token}` };
+    return { url: `${this.config.publicWebUrl}/room/${token}` };
   }
 
   async applyDeliveryReceipt(input: {
@@ -1980,7 +2199,8 @@ export class PrismaMfaStore implements MfaStore {
   async secret(userId: string): Promise<string | null> {
     try {
       const row = await this.prisma.operatorMfa.findUnique({ where: { userId } });
-      return row?.secret ? openSecret(row.secret, this.keyMaterial) : null;
+      const sealed = row?.enabled ? row.secret : (row?.pendingSecret ?? row?.secret);
+      return sealed ? openSecret(sealed, this.keyMaterial) : null;
     } catch {
       return null;
     }
@@ -1992,15 +2212,26 @@ export class PrismaMfaStore implements MfaStore {
     await this.prisma.$transaction([
       this.prisma.operatorMfa.upsert({
         where: { userId },
-        create: { userId, secret: sealed, enabled: false, createdAt: now, updatedAt: now },
-        update: { secret: sealed, enabled: false, updatedAt: now },
+        create: { userId, secret: sealed, pendingSecret: sealed, pendingCreatedAt: now, enabled: false, createdAt: now, updatedAt: now },
+        update: { pendingSecret: sealed, pendingCreatedAt: now, updatedAt: now },
       }),
       this.prisma.operatorMfaRecoveryCode.deleteMany({ where: { userId } }),
     ]);
   }
 
   async enable(userId: string): Promise<void> {
-    await this.prisma.operatorMfa.updateMany({ where: { userId }, data: { enabled: true, updatedAt: new Date() } });
+    const row = await this.prisma.operatorMfa.findUnique({ where: { userId } });
+    if (!row) return;
+    await this.prisma.operatorMfa.update({
+      where: { userId },
+      data: {
+        secret: row.pendingSecret ?? row.secret,
+        pendingSecret: null,
+        pendingCreatedAt: null,
+        enabled: true,
+        updatedAt: new Date(),
+      },
+    });
   }
 
   async replaceRecoveryCodes(userId: string, codeHashes: string[]): Promise<void> {

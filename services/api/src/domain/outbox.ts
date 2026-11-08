@@ -17,6 +17,7 @@ export class OutboxService {
     aggregateId: string;
     payload: OutboxPayload;
     maxAttempts?: number;
+    nextAttemptAt?: Date;
   }): Promise<string> {
     const now = this.clock.now();
     const id = this.ids.uuid();
@@ -30,7 +31,7 @@ export class OutboxService {
         status: "PENDING",
         attempts: 0,
         maxAttempts: input.maxAttempts ?? 8,
-        nextAttemptAt: now,
+        nextAttemptAt: input.nextAttemptAt ?? now,
         createdAt: now,
         updatedAt: now,
       },

@@ -229,6 +229,7 @@ export const positionSchema = z
   .object({
     latitude: z.number().min(-90).max(90),
     longitude: z.number().min(-180).max(180),
+    ...liveTrackingMetadata,
   })
   .strict();
 
@@ -255,11 +256,20 @@ export const responderStatusSchema = z
   })
   .strict();
 
+const liveTrackingMetadata = {
+  sampleId: z.string().uuid().optional(),
+  recordedAt: isoTime.optional(),
+  accuracy: z.number().nonnegative().max(100000).optional(),
+  speedMps: z.number().min(0).max(200).optional(),
+  bearing: z.number().min(0).max(360).optional(),
+  source: z.string().trim().min(1).max(40).optional(),
+};
+
 export const responderLocationSchema = z
   .object({
     latitude: z.number().min(-90).max(90),
     longitude: z.number().min(-180).max(180),
-    speedMps: z.number().min(0).max(80).optional(),
+    ...liveTrackingMetadata,
   })
   .strict();
 
@@ -267,6 +277,29 @@ export const operatorHandoverSchema = z
   .object({
     note: z.string().trim().min(1).max(2000),
     handoverToId: z.string().uuid().optional(),
+  })
+  .strict();
+
+export const mfaSetupSchema = z
+  .object({
+    password: z.string().min(1).max(200),
+    currentCode: z.string().trim().regex(/^(?:\d{6}|[A-Fa-f0-9]{6}-[A-Fa-f0-9]{6})$/).optional(),
+  })
+  .strict();
+
+export const guardianPreferenceSchema = z
+  .object({
+    notificationMethods: z.string().trim().regex(/^(PUSH|SMS|EMAIL)(,(PUSH|SMS|EMAIL))*$/).max(40),
+  })
+  .strict();
+
+export const incidentCommunicationSchema = z
+  .object({
+    channel: z.enum(["PHONE", "SMS", "EMAIL", "RADIO", "IN_PERSON", "EMERGENCY_SERVICES", "OTHER"]),
+    type: z.enum(["ATTEMPT", "CONNECTED", "MESSAGE", "HANDOFF", "NOTE"]),
+    note: z.string().trim().min(1).max(2000),
+    occurredAt: isoTime.optional(),
+    externalReference: z.string().trim().max(200).optional(),
   })
   .strict();
 

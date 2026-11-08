@@ -56,6 +56,7 @@ model User {
   emailVerifiedAt DateTime?
   suspendedAt     DateTime?
   lastLoginAt     DateTime?
+  guardianNotificationMethods String @default("PUSH,SMS,EMAIL")
   createdAt       DateTime        @default(now())
   updatedAt       DateTime        @updatedAt
   devices         Device[]
@@ -184,6 +185,7 @@ model Incident {
   deliveries         NotificationDelivery[]
   rooms              IncidentRoom[]
   assignments        ResponderAssignment[]
+  communications     IncidentCommunication[]
 
   @@index([state, isTest, createdAt])
   @@index([userId, createdAt])
@@ -380,11 +382,13 @@ model EmergencyProfile {
 }
 
 model OperatorMfa {
-  userId    String   @id @db.Uuid
-  secret    String
-  enabled   Boolean  @default(false)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  userId           String   @id @db.Uuid
+  secret           String
+  pendingSecret    String?
+  pendingCreatedAt DateTime?
+  enabled          Boolean  @default(false)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
@@ -432,6 +436,22 @@ model EvidenceAccessLog {
   createdAt  DateTime @default(now())
 
   @@index([incidentId, createdAt])
+}
+
+model IncidentCommunication {
+  id                String   @id @db.Uuid
+  incidentId        String   @db.Uuid
+  actorId           String?  @db.Uuid
+  channel           String
+  type              String
+  note              String
+  externalReference String?
+  occurredAt        DateTime
+  createdAt         DateTime @default(now())
+  incident          Incident @relation(fields: [incidentId], references: [id], onDelete: Cascade)
+
+  @@index([incidentId, occurredAt])
+  @@index([actorId, occurredAt])
 }
 
 model IncidentRoom {

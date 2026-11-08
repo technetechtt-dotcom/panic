@@ -4,6 +4,8 @@ export interface AppConfig {
   databaseUrl: string;
   redisUrl: string | null;
   jwtSecret: string;
+  mfaEncryptionKey: string;
+  publicWebUrl: string;
   accessTtlSeconds: number;
   refreshTtlDays: number;
   corsOrigins: string[];
@@ -29,6 +31,14 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     const publicUrl = env.PUBLIC_API_URL?.trim() ?? "";
     if (!publicUrl.startsWith("https://")) {
       throw new Error("Production requires PUBLIC_API_URL to be an https URL.");
+    }
+    const publicWebUrl = env.PUBLIC_WEB_URL?.trim() ?? "";
+    if (!publicWebUrl.startsWith("https://")) {
+      throw new Error("Production requires PUBLIC_WEB_URL to be an https URL.");
+    }
+    const mfaEncryptionKey = env.MFA_ENCRYPTION_KEY?.trim() ?? "";
+    if (mfaEncryptionKey.length < 32 || mfaEncryptionKey === jwtSecret) {
+      throw new Error("Production requires a dedicated MFA_ENCRYPTION_KEY of at least 32 characters and different from JWT_ACCESS_SECRET.");
     }
     const fcmBits = [env.FCM_PROJECT_ID, env.FCM_CLIENT_EMAIL, env.FCM_PRIVATE_KEY].filter((value) => value?.trim());
     if (fcmBits.length > 0 && fcmBits.length < 3) {
@@ -81,6 +91,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     databaseUrl: env.DATABASE_URL,
     redisUrl,
     jwtSecret,
+    mfaEncryptionKey: env.MFA_ENCRYPTION_KEY?.trim() || jwtSecret,
+    publicWebUrl: (env.PUBLIC_WEB_URL?.trim() || (env.CORS_ORIGIN ?? "http://localhost:5173").split(",")[0]!.trim()).replace(/\/$/, ""),
     accessTtlSeconds: Number(env.JWT_ACCESS_TTL_SECONDS ?? 900),
     refreshTtlDays: Number(env.JWT_REFRESH_TTL_DAYS ?? 30),
     corsOrigins: (env.CORS_ORIGIN ?? "http://localhost:5173")

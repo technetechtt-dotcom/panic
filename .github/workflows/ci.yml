@@ -44,6 +44,8 @@ jobs:
         env:
           POSTGRES_PASSWORD: ci-postgres-password
           JWT_ACCESS_SECRET: ci-jwt-secret-that-is-long-enough-for-hs256
+          MFA_ENCRYPTION_KEY: ci-mfa-encryption-key-that-is-separate-and-long
+          PUBLIC_WEB_URL: https://guardian.example.test
           EVIDENCE_VAULT_KEY: ci-evidence-vault-key-that-is-long-enough
           PUBLIC_API_URL: https://api.guardian.test
           CORS_ORIGIN: https://hub.guardian.test

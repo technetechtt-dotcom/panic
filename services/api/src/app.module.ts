@@ -154,7 +154,7 @@ import { WebhooksController } from "./modules/webhooks/webhooks.controller";
               createdAt: clock.now(),
             });
           },
-          { store: new PrismaMfaStore(prisma, config.jwtSecret), secret: config.jwtSecret },
+          { store: new PrismaMfaStore(prisma, config.mfaEncryptionKey), secret: config.jwtSecret },
           new PrismaRecoveryStore(prisma),
         ),
       inject: [USER_STORE, REFRESH_STORE, CONSENT_STORE, PASSWORD_HASHER, ACCESS_TOKENS, IDS, CLOCK, APP_CONFIG, AUDIT_STORE, PrismaService],

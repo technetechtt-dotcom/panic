@@ -47,6 +47,7 @@ export class AuthGuard implements CanActivate {
       if (!binding) throw new AppError("UNAUTHENTICATED", 401, "Sign in required.");
       const user = await this.users.findById(binding.userId);
       if (!user) throw new AppError("UNAUTHENTICATED", 401, "Sign in required.");
+      if (user.suspendedAt) throw new AppError("ACCOUNT_SUSPENDED", 403, "This account is suspended.");
       request.user = user;
       request.emergencyOnly = true;
       request.emergencyDeviceId = binding.deviceId;

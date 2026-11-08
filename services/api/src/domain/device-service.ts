@@ -80,8 +80,24 @@ export class DeviceService {
     return device;
   }
 
-  async list(actor: Actor): Promise<DeviceRecord[]> {
-    return this.devices.listForUser(actor.id);
+  async list(actor: Actor) {
+    const rows = await this.devices.listForUser(actor.id);
+    return rows.map((row) => ({
+      id: row.id,
+      devicePublicId: row.devicePublicId,
+      platform: row.platform,
+      manufacturer: row.manufacturer,
+      model: row.model,
+      osVersion: row.osVersion,
+      appVersion: row.appVersion,
+      revokedAt: row.revokedAt,
+      lastSeenAt: row.lastSeenAt,
+      nickname: row.nickname,
+      fcmToken: row.fcmToken,
+      emergencyCredentialProvisioned: Boolean(row.emergencyTokenHash),
+      createdAt: row.createdAt,
+      updatedAt: row.updatedAt,
+    }));
   }
 
   async revoke(actor: Actor, deviceId: string, requestId: string | null): Promise<void> {

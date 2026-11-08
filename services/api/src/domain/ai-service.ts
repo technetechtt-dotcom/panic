@@ -388,8 +388,12 @@ export class AiService {
     const [locationCount, evidenceCount, guardianTotal, guardianAcked] = await Promise.all([
       this.prisma.incidentLocation.count({ where: { incidentId } }),
       this.prisma.evidenceChunk.count({ where: { incidentId } }),
-      this.prisma.trustedContact.count({ where: { userId: incident.userId, active: true } }),
-      this.prisma.notificationDelivery.count({ where: { incidentId, acknowledgedAt: { not: null } } }),
+      this.prisma.trustedContact.count({ where: { userId: incident.userId, active: true, invitationStatus: "ACCEPTED" } }),
+      this.prisma.notificationDelivery.findMany({
+        where: { incidentId, acknowledgedAt: { not: null }, trustedContactId: { not: null } },
+        distinct: ["trustedContactId"],
+        select: { trustedContactId: true },
+      }).then((rows) => rows.length),
     ]);
     return {
       displayName: incident.user.displayName,

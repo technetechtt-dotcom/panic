@@ -1,9 +1,13 @@
-import { Body, Controller, Get, HttpCode, Inject, Param, Post, Query, Req } from "@nestjs/common";
+import { Body, Controller, Get, HttpCode, Inject, Param, Post, Query, Req, Res } from "@nestjs/common";
+import type { Response } from "express";
 import {
   eraseAccountSchema,
   evidenceGovernanceSchema,
   fusionSignalSchema,
+  guardianPreferenceSchema,
+  incidentCommunicationSchema,
   mfaCodeSchema,
+  mfaSetupSchema,
   operatorHandoverSchema,
   positionSchema,
   profileSchema,
@@ -129,8 +133,8 @@ export class PlatformController {
 
   @Post("auth/mfa/setup")
   @RequirePermissions(Permission.UserReadSelf)
-  setup(@Req() request: RequestWithUser) {
-    return this.platform.beginMfa(actorFrom(request)).then((data) => ({ data }));
+  setup(@Body() body: unknown, @Req() request: RequestWithUser) {
+    return this.platform.beginMfa(actorFrom(request), parseBody(mfaSetupSchema, body)).then((data) => ({ data }));
   }
 
   @Post("auth/mfa/confirm")
@@ -233,6 +237,13 @@ export class PlatformController {
     return this.platform.incidentCommunications(actorFrom(request), id).then((data) => ({ data }));
   }
 
+  @Post("incidents/:id/communications")
+  @HttpCode(200)
+  @RequirePermissions(Permission.IncidentAcknowledge)
+  recordCommunication(@Param("id") id: string, @Body() body: unknown, @Req() request: RequestWithUser) {
+    return this.platform.logCommunication(actorFrom(request), id, parseBody(incidentCommunicationSchema, body)).then((data) => ({ data }));
+  }
+
   @Get("admin/demo")
   @RequirePermissions(Permission.UserManage)
   demoStatus(@Req() request: RequestWithUser) {
@@ -291,14 +302,20 @@ export class PlatformController {
 
   @Public()
   @Get("rooms/:token")
-  room(@Param("token") token: string) {
+  room(@Param("token") token: string, @Res({ passthrough: true }) response: Response) {
+    response.setHeader("Cache-Control", "no-store, private");
+    response.setHeader("Pragma", "no-cache");
+    response.setHeader("X-Robots-Tag", "noindex, nofollow");
     return this.platform.room(token).then((data) => ({ data }));
   }
 
   @Public()
   @Post("rooms/:token/ack")
   @HttpCode(200)
-  acknowledgeRoom(@Param("token") token: string) {
+  acknowledgeRoom(@Param("token") token: string, @Res({ passthrough: true }) response: Response) {
+    response.setHeader("Cache-Control", "no-store, private");
+    response.setHeader("Pragma", "no-cache");
+    response.setHeader("X-Robots-Tag", "noindex, nofollow");
     return this.platform.acknowledgeRoom(token).then((data) => ({ data }));
   }
 
@@ -306,6 +323,26 @@ export class PlatformController {
   @RequirePermissions(Permission.UserReadSelf)
   guardianInbox(@Req() request: RequestWithUser) {
     return this.platform.guardianInbox(actorFrom(request)).then((data) => ({ data }));
+  }
+
+  @Get("guardian/incidents/:id/access")
+  @RequirePermissions(Permission.UserReadSelf)
+  guardianIncidentAccess(@Param("id") id: string, @Req() request: RequestWithUser) {
+    return this.platform.guardianIncidentAccess(actorFrom(request), id).then((data) => ({ data }));
+  }
+
+  @Get("guardian/preferences")
+  @RequirePermissions(Permission.UserReadSelf)
+  guardianPreferences(@Req() request: RequestWithUser) {
+    return this.platform.guardianPreferences(actorFrom(request)).then((data) => ({ data }));
+  }
+
+  @Post("guardian/preferences")
+  @HttpCode(200)
+  @RequirePermissions(Permission.UserReadSelf)
+  updateGuardianPreferences(@Body() body: unknown, @Req() request: RequestWithUser) {
+    const input = parseBody(guardianPreferenceSchema, body);
+    return this.platform.updateGuardianPreferences(actorFrom(request), input.notificationMethods).then((data) => ({ data }));
   }
 
   @Get("responders/me/profile")
