@@ -14,3 +14,12 @@ body {
   width: 100%;
   background: #10151c;
 }
+
+@media print {
+  @page { size: A4; margin: 14mm; }
+  body, body * { color: #000 !important; background: transparent !important; box-shadow: none !important; }
+  body { background: #fff !important; }
+  article, tr { break-inside: avoid; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { border-bottom: 1px solid #aaa; }
+}

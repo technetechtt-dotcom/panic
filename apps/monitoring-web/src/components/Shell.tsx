@@ -22,12 +22,12 @@ export function Shell({ children }: { children: ReactNode }) {
     refetchInterval: 5_000,
   });
   const openSos = useMemo(
-    () => (incidents.data ?? []).filter((row) => row.state === "SOS" && !row.isTest && !row.acknowledgedAt),
-    [incidents.data],
+    () => (platform ? incidents.data ?? [] : []).filter((row) => row.state === "SOS" && !row.isTest && !row.acknowledgedAt),
+    [incidents.data, platform],
   );
   const overdue = openSos.find((row) => Date.now() - new Date(row.createdAt).getTime() >= 30_000);
 
-  useMonitorSocket(session?.accessToken ?? null, (name) => {
+  useMonitorSocket(platform ? token : null, (name) => {
     void queryClient.invalidateQueries();
     if (name === "incident.created" || name === "duress.detected") setAlarm(true);
   });
@@ -65,8 +65,8 @@ export function Shell({ children }: { children: ReactNode }) {
     : 0;
 
   return (
-    <div className="min-h-screen md:grid md:grid-cols-[220px_1fr]">
-      <aside className="border-b border-line bg-panel px-4 py-4 md:border-b-0 md:border-r">
+    <div className="min-h-screen md:grid md:grid-cols-[220px_1fr] print:block">
+      <aside className="print:hidden border-b border-line bg-panel px-4 py-4 md:border-b-0 md:border-r">
         <p className="text-sm uppercase tracking-[0.2em] text-warn">Guardian</p>
         <p className="mt-1 text-sm text-slate-300">{session?.user.displayName}</p>
         <p className="text-xs text-slate-400">{role.replace(/_/g, " ")}</p>

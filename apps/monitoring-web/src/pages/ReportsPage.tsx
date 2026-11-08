@@ -30,6 +30,7 @@ export function ReportsPage() {
   }
   return <main className="mx-auto max-w-6xl px-4 py-6">
     <h1 className="text-3xl font-semibold">Reports</h1><p className="mt-2 text-slate-300">Measured operational results. TEST incidents are excluded.</p>
+    <p className="mt-2 text-sm">Window: {days} days</p>
     <div className="mt-4 flex flex-wrap gap-3 print:hidden"><label>Window <select className="bg-ink p-2" value={days} onChange={e => setDays(Number(e.target.value))}>{[7, 30, 90, 365].map(value => <option key={value} value={value}>{value} days</option>)}</select></label><button disabled={!r} onClick={exportCsv}>Export CSV</button><button disabled={!r} onClick={() => window.print()}>Print / Save PDF</button></div>
     {report.isPending ? <p role="status" className="mt-6">Loading operational report…</p> : null}
     {report.isError ? <p role="alert" className="mt-6 text-sos">Report could not be loaded. <button onClick={() => void report.refetch()}>Retry</button></p> : null}
