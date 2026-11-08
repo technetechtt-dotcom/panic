@@ -4,6 +4,8 @@ export interface AppConfig {
   databaseUrl: string;
   redisUrl: string | null;
   jwtSecret: string;
+  mfaEncryptionKey: string;
+  publicWebUrl: string;
   accessTtlSeconds: number;
   refreshTtlDays: number;
   corsOrigins: string[];
@@ -19,7 +21,19 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   if (!env.DATABASE_URL) {
     throw new Error("DATABASE_URL is required.");
   }
-  if ((env.NODE_ENV ?? "development") === "production") {
+  const nodeEnv = env.NODE_ENV ?? "development";
+  const mfaEncryptionKey = env.MFA_ENCRYPTION_KEY?.trim() || (nodeEnv === "production" ? "" : "development-only-mfa-key-change-me-2026");
+  const publicWebUrl = (env.PUBLIC_WEB_URL?.trim() || (nodeEnv === "production" ? "" : "http://localhost:5173")).replace(/\/$/, "");
+  if (nodeEnv === "production") {
+    if (mfaEncryptionKey.length < 32) {
+      throw new Error("Production requires MFA_ENCRYPTION_KEY of at least 32 characters and separate from JWT_ACCESS_SECRET.");
+    }
+    if (mfaEncryptionKey === jwtSecret) {
+      throw new Error("MFA_ENCRYPTION_KEY must be different from JWT_ACCESS_SECRET.");
+    }
+    if (!publicWebUrl.startsWith("https://")) {
+      throw new Error("Production requires PUBLIC_WEB_URL to be an https URL.");
+    }
     if (!env.EVIDENCE_VAULT_KEY?.trim() || env.EVIDENCE_VAULT_KEY.trim().length < 32) {
       throw new Error("Production requires EVIDENCE_VAULT_KEY of at least 32 characters.");
     }
@@ -76,11 +90,13 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   }
   const redisUrl = env.REDIS_URL?.trim() ? env.REDIS_URL.trim() : null;
   return {
-    nodeEnv: env.NODE_ENV ?? "development",
+    nodeEnv,
     port: Number(env.PORT ?? 3000),
     databaseUrl: env.DATABASE_URL,
     redisUrl,
     jwtSecret,
+    mfaEncryptionKey,
+    publicWebUrl,
     accessTtlSeconds: Number(env.JWT_ACCESS_TTL_SECONDS ?? 900),
     refreshTtlDays: Number(env.JWT_REFRESH_TTL_DAYS ?? 30),
     corsOrigins: (env.CORS_ORIGIN ?? "http://localhost:5173")
