@@ -1628,7 +1628,6 @@ export class PlatformService {
           entityId: actor.id,
           correlationId: null,
           requestId: null,
-          metadata: null,
           createdAt: now,
           updatedAt: now,
         },
