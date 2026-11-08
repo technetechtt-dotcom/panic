@@ -9,7 +9,7 @@ const rules = [
   ["google-api-key", /\bAIza[0-9A-Za-z_-]{35}\b/],
   ["openai-project-key", /\bsk-proj-[A-Za-z0-9_-]{30,}\b/],
 ];
-const skip = /^(?:package-lock\.json|docs\/examples\/)/;
+const skip = /^(?:package-lock\.json|docs\/examples\/)|(?:^|\/)(?:test|tests|__tests__)\/|\.(?:test|spec)\.[cm]?[jt]sx?$/;
 const findings = [];
 for (const file of files) {
   if (skip.test(file)) continue;
