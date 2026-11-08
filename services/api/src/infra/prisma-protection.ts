@@ -101,7 +101,15 @@ export class PrismaJourneyStore implements JourneyStore {
 
   async insert(journey: JourneyRecord): Promise<void> {
     const now = new Date();
-    await this.prisma.protectionSession.create({ data: { ...journey, createdAt: now, updatedAt: now } });
+    const { routeGeometry, ...rest } = journey;
+    await this.prisma.protectionSession.create({
+      data: {
+        ...rest,
+        routeGeometry: routeGeometry === null ? Prisma.JsonNull : routeGeometry as Prisma.InputJsonValue,
+        createdAt: now,
+        updatedAt: now,
+      },
+    });
   }
 
   async find(id: string, userId: string): Promise<JourneyRecord | null> {
