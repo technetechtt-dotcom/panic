@@ -79,21 +79,39 @@ export interface PinStore {
 export interface EvidenceRecord {
   id?: string;
   incidentId: string;
+  artifactId?: string | null;
   clientChunkId: string;
   sequence: number;
+  chunkIndex?: number | null;
   sha256: string;
   byteLength: number;
   contentType?: string;
   storageKey?: string | null;
+  payload?: Buffer;
   retentionUntil?: Date | null;
   legalHold?: boolean;
   retentionPolicy?: string;
+}
+
+export interface EvidenceArtifactRecord {
+  id: string;
+  incidentId: string;
+  clientCaptureId: string;
+  contentType: string;
+  originalSha256: string;
+  originalByteLength: number;
+  capturedAt: Date;
+  chunkCount: number;
+  status: string;
 }
 
 export interface EvidenceStore {
   insert(chunk: EvidenceRecord & { id: string; contentType: string; payload: Buffer; createdAt: Date }): Promise<"created" | "exists">;
   list(incidentId: string): Promise<EvidenceRecord[]>;
   read?(incidentId: string, clientChunkId: string): Promise<(EvidenceRecord & { payload: Buffer }) | null>;
+  upsertArtifact?(artifact: Omit<EvidenceArtifactRecord, "status"> & { createdAt: Date; retentionUntil: Date; retentionPolicy: string }): Promise<EvidenceArtifactRecord>;
+  listArtifactChunks?(artifactId: string): Promise<Array<EvidenceRecord & { payload: Buffer }>>;
+  markArtifact?(artifactId: string, status: "COMPLETE" | "CORRUPT", completedAt: Date | null): Promise<void>;
 }
 
 function maxEvidenceBytes(contentType: string): number {
@@ -411,7 +429,7 @@ export class ProtectionService {
     return { appearance: "CANCELLED" };
   }
 
-  async addEvidence(actor: Actor, incidentId: string, input: EvidenceChunkInput): Promise<{ stored: boolean; byteLength: number }> {
+  async addEvidence(actor: Actor, incidentId: string, input: EvidenceChunkInput): Promise<{ stored: boolean; byteLength: number; artifactComplete: boolean }> {
     if (!hasPermission(actor.role, Permission.IncidentCreateOwn)) {
       throw new AppError("FORBIDDEN", 403, "You cannot add evidence.");
     }
@@ -429,6 +447,43 @@ export class ProtectionService {
     }
     const actual = createHash("sha256").update(payload).digest("hex");
     if (actual !== input.sha256) throw new AppError("EVIDENCE_HASH_MISMATCH", 422, "The evidence hash does not match the bytes.");
+
+    const now = this.clock.now();
+    const captureId = input.captureId ?? input.clientChunkId;
+    const chunkIndex = input.chunkIndex ?? 0;
+    const chunkCount = input.chunkCount ?? 1;
+    const originalSha256 = input.originalSha256 ?? input.sha256;
+    const originalByteLength = input.originalByteLength ?? payload.length;
+    const capturedAt = input.capturedAt ? new Date(input.capturedAt) : now;
+    const retentionUntil = new Date(now.getTime() + Number(process.env.EVIDENCE_RETENTION_DAYS ?? 365) * 24 * 60 * 60 * 1000);
+    const retentionPolicy = process.env.EVIDENCE_RETENTION_POLICY?.trim() || "STANDARD";
+
+    let artifactId: string | null = null;
+    if (this.evidence.upsertArtifact) {
+      const artifact = await this.evidence.upsertArtifact({
+        id: this.ids.uuid(),
+        incidentId,
+        clientCaptureId: captureId,
+        contentType: input.contentType,
+        originalSha256,
+        originalByteLength,
+        capturedAt,
+        chunkCount,
+        createdAt: now,
+        retentionUntil,
+        retentionPolicy,
+      });
+      if (
+        artifact.contentType !== input.contentType ||
+        artifact.originalSha256 !== originalSha256 ||
+        artifact.originalByteLength !== originalByteLength ||
+        artifact.chunkCount !== chunkCount
+      ) {
+        throw new AppError("EVIDENCE_ARTIFACT_CONFLICT", 409, "Evidence artifact metadata changed between chunks.");
+      }
+      artifactId = artifact.id;
+    }
+
     let storageKey: string | null = null;
     let storedPayload = payload;
     if (this.vault) {
@@ -439,20 +494,50 @@ export class ProtectionService {
     const outcome = await this.evidence.insert({
       id: this.ids.uuid(),
       incidentId,
+      artifactId,
       clientChunkId: input.clientChunkId,
       sequence: input.sequence,
+      chunkIndex,
       sha256: input.sha256,
       contentType: input.contentType,
       byteLength: payload.length,
       storageKey,
-      retentionUntil: new Date(this.clock.now().getTime() + Number(process.env.EVIDENCE_RETENTION_DAYS ?? 365) * 24 * 60 * 60 * 1000),
+      retentionUntil,
       legalHold: false,
-      retentionPolicy: process.env.EVIDENCE_RETENTION_POLICY?.trim() || "STANDARD",
+      retentionPolicy,
       payload: storedPayload,
-      createdAt: this.clock.now(),
+      createdAt: now,
     });
-    if (outcome === "created") this.publisher.publish("evidence.received", { incidentId, sequence: input.sequence });
-    return { stored: true, byteLength: payload.length };
+
+    let artifactComplete = false;
+    if (artifactId && this.evidence.listArtifactChunks && this.evidence.markArtifact) {
+      const chunks = await this.evidence.listArtifactChunks(artifactId);
+      if (chunks.length === chunkCount) {
+        const ordered = chunks.slice().sort((a, b) => (a.chunkIndex ?? 0) - (b.chunkIndex ?? 0));
+        const opened: Buffer[] = [];
+        for (const chunk of ordered) {
+          const bytes = chunk.storageKey && this.vault ? await this.vault.get(chunk.storageKey) : chunk.payload;
+          if (!bytes) {
+            await this.evidence.markArtifact(artifactId, "CORRUPT", null);
+            throw new AppError("EVIDENCE_ARTIFACT_MISSING", 409, "An evidence artifact chunk is unavailable.");
+          }
+          opened.push(bytes);
+        }
+        const original = Buffer.concat(opened);
+        const digest = createHash("sha256").update(original).digest("hex");
+        if (original.length !== originalByteLength || digest !== originalSha256) {
+          await this.evidence.markArtifact(artifactId, "CORRUPT", null);
+          throw new AppError("EVIDENCE_ARTIFACT_HASH_MISMATCH", 422, "The reconstructed evidence artifact does not match its original hash or size.");
+        }
+        await this.evidence.markArtifact(artifactId, "COMPLETE", now);
+        artifactComplete = true;
+      }
+    }
+
+    if (outcome === "created") {
+      this.publisher.publish("evidence.received", { incidentId, sequence: input.sequence, captureId, chunkIndex, chunkCount, artifactComplete });
+    }
+    return { stored: true, byteLength: payload.length, artifactComplete };
   }
 
   private own(actor: Actor): void {
