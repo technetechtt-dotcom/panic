@@ -418,9 +418,14 @@ class IncidentFlushWorker @AssistedInject constructor(
 class ResumeProtectionReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         if (intent.action != Intent.ACTION_BOOT_COMPLETED) return
-        val prefs = context.getSharedPreferences("guardian_settings", Context.MODE_PRIVATE)
-        val active = prefs.getBoolean("incident_active", false)
-        if (!active) return
+        val settings = za.co.guardian.data.SettingsStore(context)
+        val activeIncident = settings.incidentActive()
+        val activeJourney = settings.journeyId() != null
+        val activeResponder = settings.responderIncidentId() != null
+        if (!activeIncident && !activeJourney && !activeResponder) return
+        if (activeJourney || activeResponder) {
+            ProtectionTrackingService.ensureRunning(context)
+        }
         val channelId = "guardian.resume"
         val manager = context.getSystemService(NotificationManager::class.java)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -437,7 +442,13 @@ class ResumeProtectionReceiver : BroadcastReceiver() {
         val notification = NotificationCompat.Builder(context, channelId)
             .setSmallIcon(android.R.drawable.ic_dialog_alert)
             .setContentTitle("Guardian needs you to reopen the app")
-            .setContentText("An emergency was active. Android does not let Guardian resume tracking until you open it.")
+            .setContentText(
+                when {
+                    activeIncident -> "An emergency was active. Reopen Guardian so Android can restore all emergency monitoring."
+                    activeResponder -> "A responder assignment was active. Guardian is restoring visible location sharing; reopen the app to verify it."
+                    else -> "Journey Protection was active. Guardian is restoring visible location sharing; reopen the app to verify it."
+                },
+            )
             .setContentIntent(open)
             .setAutoCancel(true)
             .build()
