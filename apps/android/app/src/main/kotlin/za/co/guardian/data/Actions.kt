@@ -63,6 +63,7 @@ class DefaultSosActions @Inject constructor(
     private val repository: OfflineIncidentRepository,
     private val tokens: TokenStore,
     private val settings: SettingsStore,
+    private val tokens: TokenStore,
     private val signals: PhoneSignals,
     private val health: AndroidProtectionHealth,
     private val controller: EmergencyServiceController,
@@ -428,7 +429,15 @@ class ProtectionActions @Inject constructor(
     suspend fun eraseAccount(password: String): String {
         if (password.length < 12) return "Enter the account password to erase this profile."
         api.eraseAccount(EraseBody(password))
-        return "Profile and guardian contacts were erased. Incident rows stay so an open emergency is not deleted."
+        settings.setIncidentActive(false)
+        settings.clearTrigger()
+        settings.setJourneyId(null)
+        settings.setResponderIncidentId(null)
+        za.co.guardian.service.ProtectionTrackingService.stopIfIdle(context, settings)
+        context.stopService(android.content.Intent(context, za.co.guardian.service.EmergencyMonitoringService::class.java))
+        context.stopService(android.content.Intent(context, za.co.guardian.service.SafeWordService::class.java))
+        tokens.clear()
+        return "Account profile erased and this phone signed out. Retained incident records remain only for safety/audit obligations."
     }
 
     suspend fun previewJourney(label: String): JourneyPreviewWire? {
