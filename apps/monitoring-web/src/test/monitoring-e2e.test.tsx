@@ -74,6 +74,7 @@ describe("monitoring incident workflow", () => {
         if (url.endsWith("/heartbeats")) return json([{ id: "h1", recordedAt: incident.lastHeartbeatAt, batteryLevel: 71, networkType: "CELLULAR" }]);
         if (url.endsWith("/deliveries")) return json([]);
         if (url.endsWith("/evidence")) return json([]);
+        if (url.endsWith("/live")) return json({ responders: [{ responderId: "resp-1", status: "ACCEPTED" }] });
         return json(null);
       }),
     );
@@ -93,11 +94,12 @@ describe("monitoring incident workflow", () => {
     );
     expect(await screen.findByText("Alex")).toBeInTheDocument();
     expect(screen.getByText(/Contact:/)).toHaveTextContent("ONLINE");
-    expect(screen.getByRole("button", { name: "Accept assignment" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Accept assignment" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "En route" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "On scene" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Report person located" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Complete assignment" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Decline assignment" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "On scene" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Report person located" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Complete assignment" })).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "En route" }));
     const calls = vi.mocked(fetch).mock.calls.filter((call) => String(call[0]).includes("/responder-status"));
     expect(calls.length).toBeGreaterThan(0);
