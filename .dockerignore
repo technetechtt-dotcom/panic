@@ -1,0 +1,16 @@
+.git
+**/node_modules
+**/dist
+**/build
+**/.gradle
+.env
+.env.local
+**/*.jks
+**/*.keystore
+**/google-services.json
+**/local.properties
+**/data/evidence-vault
+**/data/backups
+work
+output
+*.log

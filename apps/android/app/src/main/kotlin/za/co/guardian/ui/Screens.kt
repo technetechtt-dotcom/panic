@@ -1,5 +1,9 @@
 package za.co.guardian.ui
 
+import android.content.Context
+import android.content.Intent
+import android.net.Uri
+
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -672,6 +676,7 @@ class SettingsViewModel @Inject constructor(
         "Guardian ${saved.displayName} preferences updated."
     }
     fun removeGuardian(id: String) = run { protection.removeGuardian(id) }
+    fun isCurrentDevice(id: String): Boolean = tokens.deviceServerId() == id
     fun revokeDevice(id: String) = run { protection.revokeDevice(id) }
     fun extendJourney(minutes: String) = run { protection.extendJourney(minutes.toIntOrNull() ?: 15) }
     fun completeJourney() = run { protection.completeJourney() }
@@ -680,12 +685,15 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
             status = try {
                 val json = protection.exportAccount()
-                val file = java.io.File(context.cacheDir, "guardian-account-export-${System.currentTimeMillis()}.json")
+                val directory = java.io.File(context.cacheDir, "guardian_exports").apply { mkdirs() }
+                directory.listFiles()?.filter { System.currentTimeMillis() - it.lastModified() > 24 * 60 * 60_000L }?.forEach { it.delete() }
+                val file = java.io.File(directory, "guardian-account-export-${System.currentTimeMillis()}.json")
                 file.writeText(json)
                 val uri = androidx.core.content.FileProvider.getUriForFile(context, "${context.packageName}.files", file)
                 val send = android.content.Intent(android.content.Intent.ACTION_SEND)
                     .setType("application/json")
                     .putExtra(android.content.Intent.EXTRA_STREAM, uri)
+                    .apply { clipData = android.content.ClipData.newUri(context.contentResolver, "Guardian account export", uri) }
                     .addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION or android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
                 context.startActivity(android.content.Intent.createChooser(send, "Share Guardian account export").addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK))
                 "Account export created. Choose where to save or share the JSON file."
@@ -694,7 +702,24 @@ class SettingsViewModel @Inject constructor(
             }
         }
     }
-    fun eraseAccount(password: String) = run { protection.eraseAccount(password) }
+    fun eraseAccount(password: String, onDone: () -> Unit) {
+        viewModelScope.launch {
+            try {
+                protection.eraseAccount(password)
+                settings.clearAccountState()
+                context.stopService(android.content.Intent(context, za.co.guardian.service.ProtectionTrackingService::class.java))
+                context.stopService(android.content.Intent(context, za.co.guardian.service.EmergencyMonitoringService::class.java))
+                auth.logout()
+                androidx.work.WorkManager.getInstance(context).cancelAllWork()
+                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    database.clearAllTables()
+                    java.io.File(context.filesDir, "evidence").deleteRecursively()
+                    java.io.File(context.cacheDir, "guardian_exports").deleteRecursively()
+                }
+                onDone()
+            } catch (error: Exception) { status = error.userMessage() }
+        }
+    }
     fun previewJourney(label: String) = run {
         val preview = protection.previewJourney(label)
         journeyPreview = preview
@@ -1343,6 +1368,16 @@ fun GuardiansScreen(
     initialInviteToken: String = "",
     viewModel: SettingsViewModel = hiltViewModel(),
 ) {
+    var pendingRemoval by remember { mutableStateOf<za.co.guardian.data.GuardianWire?>(null) }
+    pendingRemoval?.let { contact ->
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { pendingRemoval = null },
+            title = { Text("Remove Guardian?") },
+            text = { Text("${contact.displayName} will stop receiving your alerts.") },
+            confirmButton = { TextButton(onClick = { viewModel.removeGuardian(contact.id); pendingRemoval = null }) { Text("Remove") } },
+            dismissButton = { TextButton(onClick = { pendingRemoval = null }) { Text("Cancel") } },
+        )
+    }
     var guardian by remember { mutableStateOf("") }
     var guardianPhone by remember { mutableStateOf("") }
     var guardianEmail by remember { mutableStateOf("") }
@@ -1393,7 +1428,7 @@ fun GuardiansScreen(
                             },
                             modifier = Modifier.fillMaxWidth(),
                         ) { Text("Save preferences") }
-                        Button(onClick = { viewModel.removeGuardian(row.id) }, modifier = Modifier.fillMaxWidth()) { Text("Remove ${row.displayName}") }
+                        Button(onClick = { pendingRemoval = row }, modifier = Modifier.fillMaxWidth()) { Text("Remove ${row.displayName}") }
                     }
                 }
             }

@@ -58,7 +58,7 @@ jobs:
           GEOCODER_URL: https://geocoder.guardian.test/search
           VITE_MAP_TILE_URL: https://tiles.guardian.test/{z}/{x}/{y}.png
           VITE_MAP_TILE_ATTRIBUTION: Guardian CI Tiles
-          GUARDIAN_ANDROID_CERT_SHA256: AA:BB:CC:DD:EE:FF
+          GUARDIAN_ANDROID_CERT_SHA256: 11:22:33:44:55:66:77:88:99:AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99:AA:BB:CC:DD:EE:FF:00
           BACKUP_ENCRYPTION_KEY: ci-backup-secret-that-is-long-enough
         run: |
           set -euo pipefail
@@ -71,7 +71,7 @@ jobs:
       - name: Build
         run: npm run build
       - name: Production dependency audit
-        run: npm audit --omit=dev --audit-level=critical
+        run: npm audit --omit=dev --audit-level=high
 
   android:
     name: Android unit tests, lint, debug APK
@@ -103,53 +103,18 @@ jobs:
         run: |
           chmod +x ./gradlew
           ./gradlew :core:test :app:testDebugUnitTest :app:lintDebug :app:assembleDebug --no-daemon
-      - name: Release config check
+      - name: Release configuration rejects missing production inputs
         env:
           ANDROID_HOME: /usr/local/lib/android/sdk
           ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
         working-directory: apps/android
         run: |
-          set +e
-          if [ -n "${{ secrets.GOOGLE_SERVICES_JSON }}" ] && [ -n "${{ secrets.RELEASE_API_BASE_URL }}" ]; then
-            printf '%s' "${{ secrets.GOOGLE_SERVICES_JSON }}" > app/google-services.json
-            ./gradlew :app:checkReleaseConfig :app:assembleRelease --no-daemon -PreleaseApiBaseUrl="${{ secrets.RELEASE_API_BASE_URL }}"
-            status=$?
-            if [ "$status" -ne 0 ]; then exit $status; fi
-            if [ -n "${{ secrets.GUARDIAN_UPLOAD_STORE_BASE64 }}" ] && [ -n "${{ secrets.GUARDIAN_UPLOAD_STORE_PASSWORD }}" ] && [ -n "${{ secrets.GUARDIAN_UPLOAD_KEY_ALIAS }}" ] && [ -n "${{ secrets.GUARDIAN_UPLOAD_KEY_PASSWORD }}" ]; then
-              echo "${{ secrets.GUARDIAN_UPLOAD_STORE_BASE64 }}" | base64 -d > /tmp/guardian-upload.jks
-              export GUARDIAN_UPLOAD_STORE_FILE=/tmp/guardian-upload.jks
-              export GUARDIAN_UPLOAD_STORE_PASSWORD="${{ secrets.GUARDIAN_UPLOAD_STORE_PASSWORD }}"
-              export GUARDIAN_UPLOAD_KEY_ALIAS="${{ secrets.GUARDIAN_UPLOAD_KEY_ALIAS }}"
-              export GUARDIAN_UPLOAD_KEY_PASSWORD="${{ secrets.GUARDIAN_UPLOAD_KEY_PASSWORD }}"
-              export GUARDIAN_VERSION_CODE="${{ github.run_number }}"
-              export GUARDIAN_VERSION_NAME="0.1.${{ github.run_number }}"
-              ./gradlew :app:checkSignedBundleConfig :app:assembleRelease :app:bundleRelease --no-daemon -PreleaseApiBaseUrl="${{ secrets.RELEASE_API_BASE_URL }}" -PversionCode="${{ github.run_number }}" -PversionName="0.1.${{ github.run_number }}"
-              exit $?
-            fi
-            exit 0
-          fi
-          ./gradlew :app:checkReleaseConfig --no-daemon
-          status=$?
-          if [ "$status" -eq 0 ]; then
-            echo "checkReleaseConfig must fail when production configuration is absent."
+          if ./gradlew :app:checkReleaseConfig --no-daemon; then
+            echo "Release configuration must reject missing production inputs."
             exit 1
           fi
-          exit 0
-      - name: Create Android release checksums
-        if: always()
-        working-directory: apps/android
-        run: |
-          set -euo pipefail
-          mkdir -p release-artifacts
-          find app/build/outputs -type f \( -name '*.aab' -o -name '*release*.apk' \) -print -exec cp {} release-artifacts/ \; 2>/dev/null || true
-          if find release-artifacts -type f | grep -q .; then
-            (cd release-artifacts && sha256sum * > SHA256SUMS.txt)
-          fi
-      - name: Upload Android release artifacts
-        if: always()
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
-          name: guardian-android-release
-          path: apps/android/release-artifacts/
-          if-no-files-found: ignore
-          retention-days: 30
+          name: guardian-android-debug
+          path: apps/android/app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error

@@ -132,7 +132,9 @@ export class ProtectionController {
   @HttpCode(200)
   @RequirePermissions(Permission.IncidentCreateOwn)
   evidence(@Param("id") id: string, @Body() body: unknown, @Req() request: RequestWithUser) {
-    return this.protection.addEvidence(actorFrom(request), id, parseBody(evidenceChunkSchema, body)).then((data) => {
+    const input = parseBody(evidenceChunkSchema, body);
+    return this.protection.addEvidence(actorFrom(request), id, input).then(async (data) => {
+      if (input.capture) await this.platform.completeArtifact(id, input.capture.captureId);
       void this.platform.queueAiAssessment(id).catch(() => undefined);
       return { data };
     });

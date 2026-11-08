@@ -92,7 +92,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     redisUrl,
     jwtSecret,
     mfaEncryptionKey: env.MFA_ENCRYPTION_KEY?.trim() || jwtSecret,
-    publicWebUrl: (env.PUBLIC_WEB_URL?.trim() || (env.CORS_ORIGIN ?? "http://localhost:5173").split(",")[0]!.trim()).replace(/\/$/, ""),
+    publicWebUrl: (env.PUBLIC_WEB_URL?.trim() || "http://localhost:5173").replace(/\/$/, ""),
     accessTtlSeconds: Number(env.JWT_ACCESS_TTL_SECONDS ?? 900),
     refreshTtlDays: Number(env.JWT_REFRESH_TTL_DAYS ?? 30),
     corsOrigins: (env.CORS_ORIGIN ?? "http://localhost:5173")

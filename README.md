@@ -4,6 +4,8 @@ Guardian is an Android-first personal-safety, emergency-intelligence and coordin
 
 > Guardian assists emergency response. It is not a replacement for official emergency services.
 
+See the [85-item remediation status](docs/REMEDIATION_2026-11-08.md) and [rollout requirements](docs/ROLLOUT_SAFETY_FIXES.md) for source fixes, validation evidence and production gates that remain open.
+
 ## Current product
 
 ### Android

@@ -1,0 +1,11 @@
+import assert from 'node:assert/strict';
+const expected = process.env.GUARDIAN_ANDROID_CERT_SHA256?.toUpperCase();
+assert.match(expected ?? '', /^([0-9A-F]{2}:){31}[0-9A-F]{2}$/, 'Set the real production signing certificate fingerprint.');
+const base = new URL(process.env.DEEP_LINK_BASE || 'https://links.guardian.app');
+assert.equal(base.protocol, 'https:');
+const response = await fetch(new URL('/.well-known/assetlinks.json', base), { redirect: 'error', signal: AbortSignal.timeout(15000) });
+assert.equal(response.status, 200, 'App Links must return HTTP 200 without redirects.');
+assert.match(response.headers.get('content-type') || '', /application\/json/);
+const links = await response.json();
+assert.ok(Array.isArray(links) && links.some(row => row.relation?.includes('delegate_permission/common.handle_all_urls') && row.target?.namespace === 'android_app' && row.target?.package_name === (process.env.GUARDIAN_ANDROID_PACKAGE || 'za.co.guardian.app') && row.target?.sha256_cert_fingerprints?.some(value => value.toUpperCase() === expected)), 'Hosted asset links do not match this release signing identity.');
+console.log(JSON.stringify({ appLinksVerified: true, origin: base.origin }));

@@ -1,4 +1,7 @@
 import { Body, Controller, Get, HttpCode, Inject, Param, Post, Query, Req, Res } from "@nestjs/common";
+import { Readable } from "node:stream";
+import { pipeline } from "node:stream/promises";
+import { byteRange } from "../../domain/byte-range";
 import type { Response } from "express";
 import {
   eraseAccountSchema,
@@ -65,6 +68,30 @@ export class PlatformController {
     return this.platform.setEvidenceGovernance(actorFrom(request), id, { ...input, policy: input.policy ?? "STANDARD" }).then((data) => ({ data }));
   }
 
+  @Get("incidents/:id/artifacts")
+  @RequirePermissions(Permission.IncidentReadActive)
+  artifacts(@Param("id") id: string, @Req() request: RequestWithUser) {
+    return this.platform.artifacts(actorFrom(request), id).then(data => ({ data }));
+  }
+
+  @Get("incidents/:id/artifacts/:artifactId/stream")
+  @RequirePermissions(Permission.IncidentReadActive)
+  async artifactStream(@Param("id") id: string, @Param("artifactId") artifactId: string, @Req() request: RequestWithUser, @Res() response: Response) {
+    const file = await this.platform.artifactStream(actorFrom(request), id, artifactId);
+    response.setHeader("Cache-Control", "no-store, private");
+    response.setHeader("Accept-Ranges", "bytes");
+    response.setHeader("X-Content-Type-Options", "nosniff");
+    response.setHeader("Content-Type", file.contentType);
+    response.setHeader("Content-Disposition", `inline; filename="${artifactId}.${file.contentType === "video/mp4" ? "mp4" : file.contentType === "image/jpeg" ? "jpg" : file.contentType === "audio/wav" ? "wav" : "pcm"}"`);
+    const range = byteRange(request.header("range"), file.size);
+    if (!range) { response.setHeader("Content-Range", `bytes */${file.size}`); response.status(416).end(); return; }
+    const partial = Boolean(request.header("range"));
+    response.status(partial ? 206 : 200);
+    if (partial) response.setHeader("Content-Range", `bytes ${range.start}-${range.end}/${file.size}`);
+    response.setHeader("Content-Length", String(range.end - range.start + 1));
+    await pipeline(Readable.from(file.read(range.start, range.end)), response);
+  }
+
   @Get("incidents/:id/evidence/:chunkId")
   @RequirePermissions(Permission.IncidentReadActive)
   evidenceFile(@Param("id") id: string, @Param("chunkId") chunkId: string, @Req() request: RequestWithUser) {
@@ -103,7 +130,7 @@ export class PlatformController {
   @RequirePermissions(Permission.ProtectionManageOwn)
   position(@Param("id") id: string, @Body() body: unknown, @Req() request: RequestWithUser) {
     const input = parseBody(positionSchema, body);
-    return this.platform.position(actorFrom(request), id, input.latitude, input.longitude).then((data) => ({ data }));
+    return this.platform.position(actorFrom(request), id, input.latitude, input.longitude, input).then((data) => ({ data }));
   }
 
   @Get("users/me/profile")
@@ -379,7 +406,7 @@ export class PlatformController {
   responderLocation(@Param("id") id: string, @Body() body: unknown, @Req() request: RequestWithUser) {
     const input = parseBody(responderLocationSchema, body);
     return this.platform
-      .updateResponderLocation(actorFrom(request), id, input.latitude, input.longitude, input.speedMps)
+      .updateResponderLocation(actorFrom(request), id, input.latitude, input.longitude, input.speedMps, input)
       .then((data) => ({ data }));
   }
 

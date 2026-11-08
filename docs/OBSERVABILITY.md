@@ -38,3 +38,7 @@ Track:
 ## Logs and traces
 
 The API emits structured JSON for important process/sweep errors and includes an `x-request-id` response header. Forward container stdout/stderr to the deployment's central log system. Add a managed OpenTelemetry collector/APM when the hosting target is selected; do not put emergency evidence or Guardian Room tokens into trace attributes.
+
+## Distributed tracing
+
+Set `OTEL_EXPORTER_OTLP_ENDPOINT` (or `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`) to the private OTLP HTTP collector. The API initializes OpenTelemetry before Nest imports, accepts/propagates W3C trace context for HTTP, and exports HTTP/Nest spans. Responses include `x-trace-id` when a span is active; request IDs are attached to spans. No collector means tracing stays off. Capability-room requests and outgoing routing/geocoding URLs are excluded to avoid recording bearer room tokens or exact coordinates. Keep the collector private and apply access/retention controls. This does not by itself prove deployed trace collection or add Android tracing.

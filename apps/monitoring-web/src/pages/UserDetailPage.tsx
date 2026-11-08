@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useParams } from "react-router-dom";
 import { api } from "../api/client";
@@ -11,10 +12,13 @@ interface UserDetail {
 }
 export function UserDetailPage(){
  const {id=""}=useParams(); const {session}=useAuth(); const token=session?.accessToken??null; const qc=useQueryClient();
+ const [error,setError]=useState<string|null>(null);
  const user=useQuery({queryKey:["admin-user",id],queryFn:()=>api<UserDetail>(`/api/v1/admin/users/${id}`,token)});
  async function action(name:"suspend"|"reactivate"|"revoke-sessions"|"reset-mfa"){
-   await api(`/api/v1/admin/users/${id}/${name}`,token,{method:"POST",body:JSON.stringify({})});
-   await Promise.all([qc.invalidateQueries({queryKey:["admin-user",id]}),qc.invalidateQueries({queryKey:["admin-users"]})]);
+   if (!window.confirm(`${name.replaceAll("-", " ")} for this account? This affects the user's access.`)) return;
+   setError(null);
+   try { await api(`/api/v1/admin/users/${id}/${name}`,token,{method:"POST",body:JSON.stringify({})});
+   await Promise.all([qc.invalidateQueries({queryKey:["admin-user",id]}),qc.invalidateQueries({queryKey:["admin-users"]})]); } catch (e) { setError(e instanceof Error ? e.message : "Account update failed."); }
  }
  const row=user.data;
  return <main className="mx-auto max-w-5xl px-4 py-6">
@@ -32,6 +36,7 @@ export function UserDetailPage(){
    <section className="mt-7"><h2 className="text-xl font-semibold">Devices</h2><div className="mt-3 space-y-2">{row.devices.map(d=><article key={d.id} className="rounded-xl border border-line bg-panel p-3 text-sm"><strong>{d.nickname??d.model??"Device"}</strong><p className="text-slate-300">{d.platform} · {d.osVersion} · app {d.appVersion}</p><p className="text-xs text-slate-400">Last seen {d.lastSeenAt?new Date(d.lastSeenAt).toLocaleString():"unknown"} · push {d.pushReady?"ready":"not ready"} · emergency credential {d.emergencyCredentialProvisioned?"provisioned":"none"} · {d.revokedAt?"REVOKED":"active"}</p></article>)}</div></section>
    <section className="mt-7"><h2 className="text-xl font-semibold">Sign-in sessions</h2><div className="mt-3 space-y-2">{row.sessions.map(s=><article key={s.id} className="rounded-xl border border-line bg-panel p-3 text-sm"><p>Created {new Date(s.createdAt).toLocaleString()} · expires {new Date(s.expiresAt).toLocaleString()}</p><p className="text-xs text-slate-400">{s.revokedAt?`Revoked ${new Date(s.revokedAt).toLocaleString()}`:"Active refresh token record"}</p></article>)}</div></section>
    </>:null}
+   {error?<p role="alert" className="mt-5 text-sos">{error}</p>:null}
    {user.isError?<p className="mt-5 text-sos">Account detail could not be loaded.</p>:null}
  </main>
 }

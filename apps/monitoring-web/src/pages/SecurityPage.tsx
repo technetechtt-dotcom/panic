@@ -6,6 +6,8 @@ import { useAuth } from "../auth/AuthContext";
 export function SecurityPage() {
   const { session } = useAuth();
   const token = session?.accessToken ?? null;
+  const [password, setPassword] = useState("");
+  const [currentCode, setCurrentCode] = useState("");
   const [secret, setSecret] = useState<string | null>(null);
   const [otpauth, setOtpauth] = useState<string | null>(null);
   const [code, setCode] = useState("");
@@ -14,8 +16,10 @@ export function SecurityPage() {
   const [error, setError] = useState<string | null>(null);
 
   const setup = useMutation({
-    mutationFn: () => api<{ secret: string; otpauth: string }>("/api/v1/auth/mfa/setup", token, { method: "POST", body: JSON.stringify({}) }),
+    mutationFn: () => api<{ secret: string; otpauth: string }>("/api/v1/auth/mfa/setup", token, { method: "POST", body: JSON.stringify({ password, currentCode: currentCode || undefined }) }),
     onSuccess: (data) => {
+      setPassword("");
+      setCurrentCode("");
       setSecret(data.secret);
       setOtpauth(data.otpauth);
       setError(null);
@@ -30,6 +34,9 @@ export function SecurityPage() {
       const result = await api<{ enabled: boolean; recoveryCodes: string[] }>("/api/v1/auth/mfa/confirm", token, { method: "POST", body: JSON.stringify({ code }) });
       setRecoveryCodes(result.recoveryCodes ?? []);
       setDone(true);
+      setSecret(null);
+      setOtpauth(null);
+      setCode("");
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "That code was not accepted.");
     }
@@ -41,12 +48,15 @@ export function SecurityPage() {
       <p className="mt-2 text-sm text-slate-300">
         Operators enroll an authenticator. After verification Guardian generates one-time recovery codes; save them securely because they are shown only once.
       </p>
+      <label className="mt-6 block">Current password<input type="password" autoComplete="current-password" value={password} onChange={e => setPassword(e.target.value)} className="mt-1 w-full rounded-lg border border-line bg-ink p-3" /></label>
+      <label className="mt-3 block">Current authenticator or recovery code (required for replacement)<input autoComplete="one-time-code" value={currentCode} onChange={e => setCurrentCode(e.target.value)} className="mt-1 w-full rounded-lg border border-line bg-ink p-3" /></label>
       <button
         type="button"
         className="mt-6 rounded-lg bg-slate-100 px-4 py-3 font-semibold text-ink"
+        disabled={!password || setup.isPending}
         onClick={() => setup.mutate()}
       >
-        Start MFA setup
+        Set up / Replace authenticator
       </button>
       {otpauth ? (
         <section className="mt-6 space-y-3 rounded-2xl border border-line bg-panel p-4 text-sm">

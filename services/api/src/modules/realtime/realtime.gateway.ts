@@ -83,7 +83,7 @@ export class RealtimeGateway implements OnGatewayInit, RealtimePublisher {
     try {
       const claims = await this.tokens.verify(token);
       const user = await this.users.findById(claims.sub);
-      if (!user || !hasPermission(user.role, Permission.IncidentReadActive)) {
+      if (!user || user.suspendedAt || !hasPermission(user.role, Permission.IncidentReadActive)) {
         client.emit("auth.error", { code: "FORBIDDEN" });
         client.disconnect();
         return;
@@ -105,7 +105,7 @@ export class RealtimeGateway implements OnGatewayInit, RealtimePublisher {
       const userId = typeof socket.data.userId === "string" ? socket.data.userId : "";
       if (!userId) continue;
       const user = await this.users.findById(userId);
-      if (!user || !hasPermission(user.role, Permission.IncidentReadActive)) {
+      if (!user || user.suspendedAt || !hasPermission(user.role, Permission.IncidentReadActive)) {
         socket.disconnect(true);
         dropped += 1;
       }

@@ -1,5 +1,6 @@
 import { Prisma, type PrismaClient } from "@prisma/client";
 import type {
+  EvidenceRecord,
   EvidenceStore,
   GuardianStore,
   JourneyRecord,
@@ -101,7 +102,8 @@ export class PrismaJourneyStore implements JourneyStore {
 
   async insert(journey: JourneyRecord): Promise<void> {
     const now = new Date();
-    await this.prisma.protectionSession.create({ data: { ...journey, createdAt: now, updatedAt: now } });
+    const { routePolyline, ...data } = journey;
+    await this.prisma.protectionSession.create({ data: { ...data, routePolyline: routePolyline ? routePolyline as unknown as Prisma.InputJsonValue : Prisma.DbNull, createdAt: now, updatedAt: now } });
   }
 
   async find(id: string, userId: string): Promise<JourneyRecord | null> {
@@ -133,6 +135,8 @@ export class PrismaJourneyStore implements JourneyStore {
 }
 
 function toJourney(row: {
+  routePolyline?: Prisma.JsonValue;
+  routeStatus?: string;
   id: string;
   userId: string;
   destinationLabel: string;
@@ -149,6 +153,8 @@ function toJourney(row: {
 }): JourneyRecord {
   const mode = row.mode === "RIDE" || row.mode === "DRIVE" || row.mode === "MEETING" || row.mode === "HIGH_RISK" ? row.mode : "WALK";
   return {
+    routePolyline: Array.isArray(row.routePolyline) ? row.routePolyline as unknown as import("../domain/routing").RoutePoint[] : null,
+    routeStatus: row.routeStatus,
     id: row.id,
     userId: row.userId,
     destinationLabel: row.destinationLabel,
@@ -200,35 +206,27 @@ export class PrismaPinStore implements PinStore {
 export class PrismaEvidenceStore implements EvidenceStore {
   constructor(private readonly prisma: PrismaClient) {}
 
-  async insert(chunk: {
-    id: string;
-    incidentId: string;
-    clientChunkId: string;
-    sequence: number;
-    sha256: string;
-    contentType: string;
-    byteLength: number;
-    storageKey?: string | null;
-    retentionUntil?: Date | null;
-    legalHold?: boolean;
-    retentionPolicy?: string;
-    payload: Buffer;
-    createdAt: Date;
-  }): Promise<"created" | "exists"> {
-    try {
-      await this.prisma.evidenceChunk.create({
-        data: {
-          ...chunk,
-          storageKey: chunk.storageKey ?? null,
-          payload: new Uint8Array(chunk.payload),
-          updatedAt: chunk.createdAt,
-        },
-      });
-      return "created";
-    } catch (error) {
-      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") return "exists";
-      throw error;
+  async insert(chunk: EvidenceRecord & { id: string; contentType: string; payload: Buffer; createdAt: Date }): Promise<"created" | "exists"> {
+    const { capture, ...data } = chunk;
+    const existing = await this.prisma.evidenceChunk.findUnique({ where: { incidentId_clientChunkId: { incidentId: chunk.incidentId, clientChunkId: chunk.clientChunkId } } });
+    if (existing) {
+      if (existing.sha256 !== chunk.sha256) throw new Error("Evidence chunk ID reused with different bytes.");
+      return "exists";
     }
+    return this.prisma.$transaction(async tx => {
+      let artifactId: string | null = null;
+      if (capture) {
+        const artifact = await tx.evidenceArtifact.upsert({
+          where: { incidentId_captureId: { incidentId: chunk.incidentId, captureId: capture.captureId } },
+          create: { id: capture.captureId, incidentId: chunk.incidentId, captureId: capture.captureId, capturedAt: new Date(capture.capturedAt), contentType: chunk.contentType, totalSize: capture.originalSize, sha256: capture.originalSha256, chunkCount: capture.chunkCount },
+          update: {},
+        });
+        if (artifact.contentType !== chunk.contentType || artifact.totalSize !== capture.originalSize || artifact.sha256 !== capture.originalSha256 || artifact.chunkCount !== capture.chunkCount || artifact.capturedAt.toISOString() !== new Date(capture.capturedAt).toISOString()) throw new Error("Capture metadata does not match earlier chunks.");
+        artifactId = artifact.id;
+      }
+      await tx.evidenceChunk.create({ data: { ...data, artifactId, chunkIndex: capture?.chunkIndex ?? null, storageKey: chunk.storageKey ?? null, payload: new Uint8Array(chunk.payload), updatedAt: chunk.createdAt } });
+      return "created" as const;
+    });
   }
 
   async list(incidentId: string) {

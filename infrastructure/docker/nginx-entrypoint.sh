@@ -18,6 +18,14 @@ if [ -n "${GUARDIAN_ANDROID_CERT_SHA256:-}" ]; then
   mkdir -p /usr/share/nginx/html/.well-known
   package="${GUARDIAN_ANDROID_PACKAGE:-za.co.guardian.app}"
   fingerprint=$(printf "%s" "$GUARDIAN_ANDROID_CERT_SHA256" | tr "[:lower:]" "[:upper:]")
+  if ! printf '%s' "$fingerprint" | grep -Eq '^([0-9A-F]{2}:){31}[0-9A-F]{2}$'; then
+    echo "Production Android signing fingerprint must contain exactly 32 colon-separated SHA-256 bytes." >&2
+    exit 1
+  fi
+  if ! printf '%s' "$package" | grep -Eq '^[a-zA-Z][a-zA-Z0-9_]*(\.[a-zA-Z][a-zA-Z0-9_]*)+$'; then
+    echo "Invalid Android application ID." >&2
+    exit 1
+  fi
   cat > /usr/share/nginx/html/.well-known/assetlinks.json <<EOF
 [
   {

@@ -1,3 +1,4 @@
+import { trace } from "@opentelemetry/api";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { randomUUID } from "node:crypto";
 import type { NextFunction, Request, Response } from "express";
@@ -13,6 +14,9 @@ export function requestIdMiddleware(req: Request, res: Response, next: NextFunct
   requestMetrics.total += 1;
   const requestId = incoming && /^[A-Za-z0-9_-]{8,80}$/.test(incoming) ? incoming : randomUUID();
   res.setHeader("x-request-id", requestId);
+  res.setHeader("Cache-Control", "no-store, private");
+  const span = trace.getActiveSpan();
+  if (span) { span.setAttribute("guardian.request_id", requestId); res.setHeader("x-trace-id", span.spanContext().traceId); }
   (req as Request & { requestId: string }).requestId = requestId;
   requestContext.run({ requestId }, () => next());
 }

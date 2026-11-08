@@ -55,6 +55,25 @@ export class FileEvidenceVault {
     }
   }
 
+  async probeRemote(): Promise<{ ok: boolean; detail: string }> {
+    if (!s3Configured()) return { ok: false, detail: "S3 object storage is not configured." };
+    const key = `health-${randomBytes(16).toString("hex")}`;
+    const iv = randomBytes(12);
+    const cipher = createCipheriv("aes-256-gcm", this.key(), iv);
+    const sealed = Buffer.concat([iv, cipher.update(Buffer.from("guardian-isolated-storage-probe")), cipher.final(), cipher.getAuthTag()]);
+    let result = { ok: false, detail: "Remote object storage probe failed." };
+    try {
+      const put = await putObjectIfConfigured(key, sealed);
+      if (!put.stored) return { ok: false, detail: put.detail };
+      const read = await getObjectIfConfigured(key);
+      result = { ok: Boolean(read?.equals(sealed)), detail: read?.equals(sealed) ? "Isolated S3 write/read/delete succeeded." : "Remote object did not round-trip." };
+    } finally {
+      const deleted = await deleteObjectIfConfigured(key);
+      if (!deleted) result = { ok: false, detail: "Remote probe cleanup failed. Remove the health probe object from the bucket." };
+    }
+    return result;
+  }
+
   async get(storageKey: string): Promise<Buffer | null> {
     const remote = await getObjectIfConfigured(storageKey);
     const local = await readFile(path.join(this.directory, `${storageKey}.bin`)).catch(() => null);
@@ -120,6 +139,7 @@ export async function putObjectIfConfigured(storageKey: string, body: Buffer, en
   const signature = createHmac("sha256", signingKey).update(stringToSign).digest("hex");
   const authorization = `AWS4-HMAC-SHA256 Credential=${env.S3_ACCESS_KEY_ID!.trim()}/${scope}, SignedHeaders=${signedHeaders}, Signature=${signature}`;
   const response = await fetch(`${endpoint.origin}${canonicalUri}`, {
+    signal: AbortSignal.timeout(10_000),
     method: "PUT",
     headers: {
       Host: endpoint.host,
@@ -152,6 +172,7 @@ export async function getObjectIfConfigured(storageKey: string, env: NodeJS.Proc
   const signature = createHmac("sha256", signingKey).update(stringToSign).digest("hex");
   const authorization = `AWS4-HMAC-SHA256 Credential=${env.S3_ACCESS_KEY_ID!.trim()}/${scope}, SignedHeaders=${signedHeaders}, Signature=${signature}`;
   const response = await fetch(`${endpoint.origin}${canonicalUri}`, {
+    signal: AbortSignal.timeout(10_000),
     method: "GET",
     headers: {
       Host: endpoint.host,
@@ -182,6 +203,7 @@ export async function deleteObjectIfConfigured(storageKey: string, env: NodeJS.P
   const signature = createHmac("sha256", signingKey).update(stringToSign).digest("hex");
   const authorization = `AWS4-HMAC-SHA256 Credential=${env.S3_ACCESS_KEY_ID!.trim()}/${scope}, SignedHeaders=${signedHeaders}, Signature=${signature}`;
   const response = await fetch(`${endpoint.origin}${canonicalUri}`, {
+    signal: AbortSignal.timeout(10_000),
     method: "DELETE",
     headers: {
       Host: endpoint.host,

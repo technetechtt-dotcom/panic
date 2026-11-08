@@ -413,7 +413,7 @@ class ProtectionActions @Inject constructor(
     }
 
     suspend fun eraseAccount(password: String): String {
-        if (password.length < 12) return "Enter the account password to erase this profile."
+        require(password.length >= 12) { "Enter the account password to erase this profile." }
         api.eraseAccount(EraseBody(password))
         return "Profile and guardian contacts were erased. Incident rows stay so an open emergency is not deleted."
     }
@@ -453,7 +453,8 @@ class ProtectionActions @Inject constructor(
         settings.setProtectionMode(mode)
         settings.setJourneyId(journey.id)
         za.co.guardian.service.ProtectionTrackingService.ensureRunning(context)
-        return "${mode.lowercase().replace('_', ' ')} watch is ${journey.status.lowercase()}. Live route positions are shared while the visible Guardian tracking notification is active. A missed check-in raises concern on the server. It does not replace the SOS button."
+        val routeNotice = if (mode in setOf("DRIVE", "RIDE") && journey.routeStatus != "ROUTED") " Road route unavailable: route-deviation alerts are not active; timed check-ins remain active." else ""
+        return "${mode.lowercase().replace('_', ' ')} watch is ${journey.status.lowercase()}. Live route positions are shared while the visible Guardian tracking notification is active. A missed check-in raises concern on the server. It does not replace the SOS button.$routeNotice"
     }
 
     suspend fun saveProfile(bloodType: String, allergies: String, medications: String, notes: String): String {

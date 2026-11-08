@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
@@ -60,14 +60,18 @@ const incident = {
 };
 
 describe("monitoring incident workflow", () => {
+  let assignmentStatus = "ASSIGNED";
   beforeEach(() => {
+    assignmentStatus = "ASSIGNED";
     vi.stubGlobal(
       "fetch",
       vi.fn(async (input: RequestInfo, init?: RequestInit) => {
         const url = String(input);
         if (url.includes("/responder-status") && init?.method === "POST") {
+          assignmentStatus = JSON.parse(String(init.body)).status;
           return json({ ok: true });
         }
+        if (url.endsWith("/api/v1/incidents")) return json([{ ...incident, assignment: assignmentStatus }]);
         if (url.endsWith("/api/v1/incidents/inc-live")) return json(incident);
         if (url.endsWith("/timeline")) return json([{ id: "t1", type: "CREATED", message: "SOS opened", occurredAt: incident.createdAt }]);
         if (url.endsWith("/locations")) return json([{ id: "p1", latitude: -26.2, longitude: 28.04, accuracy: 8, speed: null, bearing: null, recordedAt: incident.createdAt, source: "gps" }]);
@@ -93,15 +97,21 @@ describe("monitoring incident workflow", () => {
     );
     expect(await screen.findByText("Alex")).toBeInTheDocument();
     expect(screen.getByText(/Contact:/)).toHaveTextContent("ONLINE");
-    expect(screen.getByRole("button", { name: "Accept assignment" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "En route" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "On scene" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Report person located" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Complete assignment" })).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "En route" }));
-    const calls = vi.mocked(fetch).mock.calls.filter((call) => String(call[0]).includes("/responder-status"));
-    expect(calls.length).toBeGreaterThan(0);
-    expect(String(calls[0]?.[1]?.body)).toContain("EN_ROUTE");
+    expect(await screen.findByRole("button", { name: "Accept assignment" })).toBeInTheDocument();
+    for (const name of ["Acknowledge", "En route", "On scene", "Report person located", "Complete assignment"]) expect(screen.queryByRole("button", { name })).not.toBeInTheDocument();
+    for (const name of ["evidence", "guardians", "responders", "intelligence", "communications"]) expect(screen.queryByRole("tab", { name })).not.toBeInTheDocument();
+    for (const [label, status] of [["Accept assignment", "ACCEPTED"], ["En route", "EN_ROUTE"], ["On scene", "ON_SCENE"], ["Report person located", "USER_LOCATED"], ["Complete assignment", "COMPLETED"]]) {
+      await user.click(await screen.findByRole("button", { name: label }));
+      await waitFor(() => expect(assignmentStatus).toBe(status));
+    }
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Complete assignment" })).not.toBeInTheDocument());
+    expect(vi.mocked(fetch).mock.calls.some(call => /\/summary|\/deliveries|\/evidence|\/communications|\/ai\//.test(String(call[0])))).toBe(false);
+    const profile = screen.getByRole("tab", { name: "profile" });
+    await user.click(profile);
+    expect(document.querySelectorAll("#incident-panel-profile")).toHaveLength(1);
+    await user.keyboard("{ArrowLeft}");
+    expect(screen.getByRole("tab", { name: "timeline" })).toHaveFocus();
+
   });
 });
 

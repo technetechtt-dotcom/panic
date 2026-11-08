@@ -25,3 +25,7 @@ data/backups/
 *.jks
 *.keystore
 .cursor/
+
+apps/android/.kotlin/
+services/api/data/
+work/

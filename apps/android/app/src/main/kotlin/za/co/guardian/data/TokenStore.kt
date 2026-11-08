@@ -102,9 +102,11 @@ class SettingsStore @Inject constructor(@ApplicationContext context: Context) : 
                 is Set<*> -> editor.putStringSet(key, value.filterIsInstance<String>().toSet())
             }
         }
-        editor.putBoolean("__legacy_migrated", true).commit()
-        legacy.edit().clear().apply()
+        check(editor.putBoolean("__legacy_migrated", true).commit()) { "Secure settings migration could not be saved." }
+        check(legacy.edit().clear().commit()) { "Legacy settings could not be cleared." }
     }
+
+    fun clearAccountState() { check(prefs.edit().clear().putBoolean("__legacy_migrated", true).commit()) }
 
     override fun enabled(): Boolean = testSessionActive(System.currentTimeMillis())
     override fun remainingMs(): Long {

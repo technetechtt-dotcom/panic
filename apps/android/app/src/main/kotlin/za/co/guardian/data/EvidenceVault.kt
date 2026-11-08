@@ -19,7 +19,7 @@ class EvidenceVault @Inject constructor(
     @dagger.hilt.android.qualifiers.ApplicationContext private val context: Context,
     private val database: GuardianDatabase,
 ) {
-    suspend fun store(localIncidentId: String, type: String, bytes: ByteArray): EvidenceEntity? {
+    suspend fun store(localIncidentId: String, type: String, bytes: ByteArray, capture: CaptureMetadata? = null): EvidenceEntity? {
         if (bytes.isEmpty() || localIncidentId.isBlank()) return null
         val id = java.util.UUID.randomUUID().toString()
         val sequence = database.evidence().lastSequence(localIncidentId, type) + 1
@@ -40,6 +40,12 @@ class EvidenceVault @Inject constructor(
             uploadState = "QUEUED",
             retryCount = 0,
             size = bytes.size,
+            captureId = capture?.captureId ?: id,
+            chunkIndex = capture?.chunkIndex ?: 0,
+            chunkCount = capture?.chunkCount ?: 1,
+            originalSize = capture?.originalSize ?: bytes.size.toLong(),
+            originalSha256 = capture?.originalSha256 ?: hash,
+            capturedAt = capture?.capturedAt ?: java.time.Instant.now().toString(),
         )
         database.evidence().insert(row)
         return row
@@ -52,13 +58,29 @@ class EvidenceVault @Inject constructor(
         chunkBytes: Int = 900_000,
     ): Int {
         if (!file.exists() || file.length() <= 0L) return 0
+        val captureId = java.util.UUID.randomUUID().toString()
+        val size = file.length()
+        val capturedAt = java.time.Instant.now().toString()
+        val digest = MessageDigest.getInstance("SHA-256")
+        file.inputStream().buffered().use { input ->
+            val buffer = ByteArray(64 * 1024)
+            while (true) { val count = input.read(buffer); if (count <= 0) break; digest.update(buffer, 0, count) }
+        }
+        val originalHash = digest.digest().joinToString("") { "%02x".format(it) }
+        val blockSize = chunkBytes.coerceIn(64 * 1024, 1_400_000)
+        val chunkCount = ((size + blockSize - 1) / blockSize).toInt()
         var stored = 0
         file.inputStream().buffered().use { input ->
-            val buffer = ByteArray(chunkBytes.coerceIn(64 * 1024, 1_400_000))
+            val buffer = ByteArray(blockSize)
             while (true) {
-                val read = input.read(buffer)
+                var read = 0
+                while (read < buffer.size) {
+                    val count = input.read(buffer, read, buffer.size - read)
+                    if (count < 0) break
+                    read += count
+                }
                 if (read <= 0) break
-                if (store(localIncidentId, type, buffer.copyOf(read)) != null) stored += 1
+                if (store(localIncidentId, type, buffer.copyOf(read), CaptureMetadata(captureId, stored, chunkCount, size, originalHash, capturedAt)) != null) stored += 1
             }
         }
         return stored
@@ -83,7 +105,7 @@ class EvidenceVault @Inject constructor(
         File(row.localPath).delete()
     }
 
-    private fun encrypt(plain: ByteArray): ByteArray {
+    fun encrypt(plain: ByteArray): ByteArray {
         val cipher = Cipher.getInstance("AES/GCM/NoPadding")
         cipher.init(Cipher.ENCRYPT_MODE, key())
         val encrypted = cipher.doFinal(plain)
@@ -91,7 +113,7 @@ class EvidenceVault @Inject constructor(
         return header
     }
 
-    private fun decrypt(payload: ByteArray): ByteArray? {
+    fun decrypt(payload: ByteArray): ByteArray? {
         if (payload.size < 13) return null
         return try {
             val cipher = Cipher.getInstance("AES/GCM/NoPadding")
@@ -119,6 +141,14 @@ class EvidenceVault @Inject constructor(
 
     companion object {
         private const val ALIAS = "guardian.evidence"
+
+        fun pcm16MonoWav(bytes: ByteArray): ByteArray {
+            val header = java.nio.ByteBuffer.allocate(44).order(java.nio.ByteOrder.LITTLE_ENDIAN)
+            header.put("RIFF".toByteArray()).putInt(bytes.size + 36).put("WAVEfmt ".toByteArray())
+            header.putInt(16).putShort(1).putShort(1).putInt(16_000).putInt(32_000).putShort(2).putShort(16)
+            header.put("data".toByteArray()).putInt(bytes.size)
+            return header.array() + bytes
+        }
 
         fun sha256(bytes: ByteArray): String =
             MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }

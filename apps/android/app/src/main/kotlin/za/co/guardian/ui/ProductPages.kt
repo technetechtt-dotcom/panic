@@ -301,14 +301,22 @@ fun EmergencyProfilePage(onBack: () -> Unit, viewModel: SettingsViewModel = hilt
 
 @Composable
 fun PrivacyPage(onBack: () -> Unit, onSignedOut: () -> Unit, viewModel: SettingsViewModel = hiltViewModel()) {
+    var confirmErasure by remember { mutableStateOf(false) }
     var password by remember { mutableStateOf("") }
+    if (confirmErasure) androidx.compose.material3.AlertDialog(
+        onDismissRequest = { confirmErasure = false },
+        title = { Text("Erase this account?") },
+        text = { Text("Your sessions and devices will be revoked and your local safety data removed. Incident investigation records are retained.") },
+        confirmButton = { TextButton(onClick = { confirmErasure = false; viewModel.eraseAccount(password, onSignedOut) }) { Text("Erase account") } },
+        dismissButton = { TextButton(onClick = { confirmErasure = false }) { Text("Cancel") } },
+    )
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp)) {
         TextButton(onClick = onBack) { Text("Back") }
         Text("Account & privacy", fontSize = 32.sp, fontWeight = FontWeight.SemiBold)
         Text(privacyCopy(), modifier = Modifier.padding(vertical = 8.dp))
         Button(onClick = viewModel::exportAccount, modifier = Modifier.fillMaxWidth()) { Text("Export my data") }
         PasswordField(password, { password = it }, "Password to erase profile")
-        Button(onClick = { viewModel.eraseAccount(password) }, modifier = Modifier.fillMaxWidth()) { Text("Erase my profile") }
+        Button(onClick = { confirmErasure = true }, modifier = Modifier.fillMaxWidth()) { Text("Erase my profile") }
         Button(onClick = { viewModel.signOut(onSignedOut) }, modifier = Modifier.fillMaxWidth()) { Text("Sign out") }
         viewModel.status?.let { Text(it) }
     }
@@ -439,6 +447,16 @@ fun SetupOnboardingScreen(onDone: () -> Unit, viewModel: SettingsViewModel = hil
 
 @Composable
 fun DevicesPage(onBack: () -> Unit, viewModel: SettingsViewModel = hiltViewModel()) {
+    var pendingRevocation by remember { mutableStateOf<String?>(null) }
+    pendingRevocation?.let { id ->
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { pendingRevocation = null },
+            title = { Text("Revoke device?") },
+            text = { Text("This phone will lose push and emergency credentials. Sign in again to restore access.") },
+            confirmButton = { TextButton(onClick = { viewModel.revokeDevice(id); pendingRevocation = null }) { Text("Revoke") } },
+            dismissButton = { TextButton(onClick = { pendingRevocation = null }) { Text("Cancel") } },
+        )
+    }
     androidx.compose.runtime.LaunchedEffect(Unit) { viewModel.refresh() }
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp)) {
         TextButton(onClick = onBack) { Text("Back") }
@@ -447,10 +465,12 @@ fun DevicesPage(onBack: () -> Unit, viewModel: SettingsViewModel = hiltViewModel
         viewModel.devices.forEach { device ->
             val state = if (device.revokedAt != null) "revoked" else if (device.fcmToken != null) "push ready" else "no push token"
             Text("${device.nickname ?: device.model ?: "Phone"}", fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 12.dp))
+            if (viewModel.isCurrentDevice(device.id)) Text("THIS DEVICE", fontWeight = FontWeight.Bold)
             Text("${device.osVersion} · $state")
+            Text("Emergency credential: ${if (device.emergencyCredentialProvisioned) "provisioned" else "not provisioned"}")
             Text("Last seen ${device.lastSeenAt ?: "unknown"}")
             if (device.revokedAt == null) {
-                Button(onClick = { viewModel.revokeDevice(device.id) }, modifier = Modifier.fillMaxWidth()) { Text("Revoke this device") }
+                Button(onClick = { pendingRevocation = device.id }, modifier = Modifier.fillMaxWidth()) { Text("Revoke this device") }
             }
         }
         if (viewModel.devices.isEmpty()) Text("No devices on this account yet.")

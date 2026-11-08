@@ -9,7 +9,7 @@
     "dev": "node --env-file=../../.env --import tsx --watch src/main.ts",
     "dev:postgres": "node scripts/dev-postgres.mjs",
     "start": "node dist/main.js",
-    "test": "cross-env NODE_ENV=test JWT_ACCESS_SECRET=test-secret-that-is-long-enough-for-hs256 DATABASE_URL=postgresql://guardian:change-me@127.0.0.1:5432/guardian?schema=public REDIS_URL= tsx --test src/config.test.ts src/domain/domain.test.ts src/domain/protection.test.ts src/domain/operations.test.ts src/domain/sms.test.ts src/domain/geocode.test.ts src/domain/delivery.test.ts src/domain/email.test.ts src/domain/outbox.test.ts src/domain/ai-engine.test.ts src/domain/load-failover.test.ts src/domain/provider-e2e.test.ts src/common/rate-limit.test.ts src/http/api.http.test.ts src/infra/postgres.integration.test.ts",
+    "test": "cross-env NODE_ENV=test JWT_ACCESS_SECRET=test-secret-that-is-long-enough-for-hs256 DATABASE_URL=postgresql://guardian:change-me@127.0.0.1:5432/guardian?schema=public REDIS_URL= tsx --test src/config.test.ts src/domain/domain.test.ts src/domain/readiness.test.ts src/domain/protection.test.ts src/domain/operations.test.ts src/domain/sms.test.ts src/domain/geocode.test.ts src/domain/delivery.test.ts src/domain/email.test.ts src/domain/outbox.test.ts src/domain/ai-engine.test.ts src/domain/load-failover.test.ts src/domain/provider-e2e.test.ts src/common/rate-limit.test.ts src/http/api.http.test.ts src/http/readiness.http.test.ts src/infra/postgres.integration.test.ts",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "node --env-file=../../.env ../../node_modules/prisma/build/index.js migrate deploy",
     "seed:operator": "node --env-file=../../.env --import tsx scripts/seed-operator.ts"
@@ -22,6 +22,11 @@
     "@nestjs/platform-express": "^11.1.6",
     "@nestjs/platform-socket.io": "^11.1.6",
     "@nestjs/websockets": "^11.1.6",
+    "@opentelemetry/api": "^1.10.0",
+    "@opentelemetry/exporter-trace-otlp-http": "^0.301.0",
+    "@opentelemetry/instrumentation-http": "^0.301.0",
+    "@opentelemetry/instrumentation-nestjs-core": "^0.72.0",
+    "@opentelemetry/sdk-node": "^0.301.0",
     "@prisma/client": "^6.16.2",
     "@socket.io/redis-adapter": "^8.3.0",
     "cookie-parser": "^1.4.7",
@@ -32,7 +37,8 @@
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.2",
     "socket.io": "^4.8.1",
-    "zod": "^3.25.76"
+    "zod": "^4.6.7",
+    "prisma": "^6.16.2"
   },
   "devDependencies": {
     "@nestjs/testing": "^11.1.6",
@@ -43,7 +49,6 @@
     "@types/supertest": "^6.0.3",
     "cross-env": "^7.0.3",
     "embedded-postgres": "^18.4.0-beta.17",
-    "prisma": "^6.16.2",
     "supertest": "^7.1.4",
     "tsx": "^4.20.5",
     "typescript": "^5.9.2"

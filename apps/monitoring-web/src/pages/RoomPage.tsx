@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useEffect, useMemo } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useParams } from "react-router-dom";
 import { api } from "../api/client";
@@ -17,6 +17,13 @@ interface Room {
 
 export function RoomPage() {
   const { token = "" } = useParams();
+  useEffect(() => {
+    const meta = document.createElement("meta");
+    meta.name = "robots";
+    meta.content = "noindex,nofollow";
+    document.head.appendChild(meta);
+    return () => meta.remove();
+  }, []);
   const queryClient = useQueryClient();
   const room = useQuery({
     queryKey: ["room", token],

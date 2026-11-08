@@ -141,11 +141,23 @@ export function guardianSmsBody(input: { name: string; incidentState: string; ro
 const TOTP_STEP = 30;
 
 export function generateTotpSecret(): string {
-  return randomBytes(20).toString("base64url");
+  const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+  let bits = 0, accumulator = 0, encoded = "";
+  for (const byte of randomBytes(20)) {
+    accumulator = (accumulator << 8) | byte; bits += 8;
+    while (bits >= 5) { bits -= 5; encoded += alphabet[(accumulator >>> bits) & 31]; }
+  }
+  return encoded;
 }
 
 export function totpCode(secret: string, counter: number): string {
-  const key = Buffer.from(secret, "base64url");
+  // New authenticators use RFC 4648 Base32. Retain decoding of the legacy 27-character base64url records.
+  let key: Buffer;
+  if (/^[A-Z2-7]{32}$/.test(secret)) {
+    const bytes: number[] = []; let bits = 0, accumulator = 0;
+    for (const letter of secret) { accumulator = (accumulator << 5) | "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567".indexOf(letter); bits += 5; if (bits >= 8) { bits -= 8; bytes.push((accumulator >>> bits) & 255); } }
+    key = Buffer.from(bytes);
+  } else key = Buffer.from(secret, "base64url");
   const buffer = Buffer.alloc(8);
   buffer.writeBigUInt64BE(BigInt(counter));
   const digest = createHmac("sha1", key).update(buffer).digest();

@@ -4,6 +4,7 @@ import { api } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
 
 interface PlatformStatus {
+  email?:string; maps?:string; tiles?:string; providerChecks?:Array<{kind:string;lastSuccessAt:string|null;lastFailureAt:string|null;detail:string}>;
   postgres:string; redis?:string; websocket?:string; sms:string; fcm:string; apns:string; s3:string; vault:string; lastBackup?:string;
 }
 interface TestResult { kind:string; ok:boolean; detail:string }
@@ -21,9 +22,11 @@ export function IntegrationsPage(){
     ["WEBSOCKET","WebSocket",row?.websocket??"unknown"],
     ["SMS","Twilio SMS",row?.sms??"unknown"],
     ["PUSH","Firebase push",row?.fcm??"unknown"],
-    ["EMAIL","SMTP email","configured in production gate"],
+    ["EMAIL","SMTP email",row?.email??"unknown"],
     ["EVIDENCE","Encrypted evidence vault",row?.vault??"unknown"],
-    ["MAPS","Mapping / geocoding","configured by deployment"],
+    ["MAPS","Geocoding",row?.maps??"unknown"],
+    ["TILES","Map tile delivery",row?.tiles??"unknown"],
+    ["S3","Remote object storage",row?.s3??"unknown"],
   ] as const;
   async function run(kind:string){
     setBusy(kind);
@@ -40,6 +43,7 @@ export function IntegrationsPage(){
       {items.map(([kind,label,state])=><article key={kind} className="rounded-2xl border border-line bg-panel p-4">
         <div className="flex items-center justify-between gap-3"><div><h2 className="font-semibold">{label}</h2><p className="mt-1 text-sm text-slate-300">{state}</p></div>
         {canTest?<button type="button" disabled={busy===kind} onClick={()=>void run(kind)} className="rounded-lg border border-line px-3 py-2 text-sm disabled:opacity-40">{busy===kind?"Testing…":"Test"}</button>:null}</div>
+        {row?.providerChecks?.filter(check=>check.kind===kind).map(check=><p key={kind} className="mt-3 text-xs text-slate-400">Last success: {check.lastSuccessAt ? new Date(check.lastSuccessAt).toLocaleString() : "never proven"}<br/>Last failure: {check.lastFailureAt ? new Date(check.lastFailureAt).toLocaleString() : "none recorded"}<br/>{check.detail}</p>)}
         {results[kind]?<p className={`mt-3 text-sm ${results[kind].ok?"text-emerald-300":"text-sos"}`} role="status">{results[kind].ok?"PASS":"FAIL"} · {results[kind].detail}</p>:null}
       </article>)}
     </div>

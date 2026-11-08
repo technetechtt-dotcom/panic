@@ -16,6 +16,9 @@ export async function sendTransactionalEmail(input: { to: string; subject: strin
   const secure = url.protocol === "smtps:";
   const port = url.port ? Number(url.port) : secure ? 465 : 587;
   const transporter = nodemailer.createTransport({
+    connectionTimeout: 10_000,
+    greetingTimeout: 10_000,
+    socketTimeout: 20_000,
     host: url.hostname,
     port,
     secure,

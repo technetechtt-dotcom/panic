@@ -389,8 +389,8 @@ export class AiService {
       this.prisma.incidentLocation.count({ where: { incidentId } }),
       this.prisma.evidenceChunk.count({ where: { incidentId } }),
       this.prisma.trustedContact.count({ where: { userId: incident.userId, active: true, invitationStatus: "ACCEPTED" } }),
-      this.prisma.notificationDelivery.findMany({
-        where: { incidentId, acknowledgedAt: { not: null }, trustedContactId: { not: null } },
+      this.prisma.guardianAcknowledgement.findMany({
+        where: { incidentId },
         distinct: ["trustedContactId"],
         select: { trustedContactId: true },
       }).then((rows) => rows.length),

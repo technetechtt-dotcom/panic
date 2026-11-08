@@ -1,4 +1,6 @@
-import { randomBytes, randomUUID } from "node:crypto";
+import type { z } from "zod";
+import type { positionSchema } from "@guardian/shared-validation";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { readdir, stat } from "node:fs/promises";
 import { join } from "node:path";
 import type { Prisma, PrismaClient } from "@prisma/client";
@@ -149,7 +151,7 @@ export class PlatformService {
       this.prisma.trustedContact.findUnique({ where: { id: payload.trustedContactId } }),
     ]);
     if (!incident || !contact || !contact.active || contact.userId !== payload.userId || ["RESOLVED", "ARCHIVED", "FALSE_ALARM"].includes(incident.state)) return;
-    if (contact.lastAcknowledgedAt && contact.lastAcknowledgedAt.getTime() >= incident.createdAt.getTime()) return;
+    if (await this.prisma.guardianAcknowledgement.count({ where: { incidentId: incident.id } })) return;
 
     const recipient = contact.guardianUserId
       ? await this.prisma.user.findUnique({ where: { id: contact.guardianUserId }, select: { guardianNotificationMethods: true } })
@@ -183,13 +185,13 @@ export class PlatformService {
         const push = apple
           ? await sendApns(phone.fcmToken, "Guardian", `${payload.userDisplayName} needs help.`, process.env, pushData)
           : await sendFcm(phone.fcmToken, "Guardian", `${payload.userDisplayName} needs help.`, process.env, pushData);
-        await this.record(payload.incidentId, apple ? "APNS" : "FCM", contact.displayName, push.delivered ? "SENT" : "SKIPPED", push.reason, push.providerMessageId, contact.id);
+        await this.record(payload.incidentId, apple ? "APNS" : "FCM", contact.displayName, push.delivered ? "SENT" : push.simulated ? "SKIPPED" : "FAILED", push.reason, push.providerMessageId, contact.id);
       }
     } else if (channel === "SMS") {
       const sms = contact.phone
         ? await this.sms.send({ to: contact.phone, body, incidentId: payload.incidentId })
         : { delivered: false, simulated: true, reason: "This guardian has no phone number.", providerMessageId: undefined };
-      await this.record(payload.incidentId, "SMS", contact.phone ?? contact.displayName, sms.delivered ? "SENT" : "SKIPPED", sms.reason, sms.providerMessageId, contact.id);
+      await this.record(payload.incidentId, "SMS", contact.phone ?? contact.displayName, sms.delivered ? "SENT" : sms.simulated ? "SKIPPED" : "FAILED", sms.reason, sms.providerMessageId, contact.id);
     } else if (channel === "EMAIL") {
       let sent = false;
       let reason = "This guardian has no email address.";
@@ -205,7 +207,7 @@ export class PlatformService {
           reason = error instanceof Error ? error.message : "Email provider failed.";
         }
       }
-      await this.record(payload.incidentId, "EMAIL", contact.email ?? contact.displayName, sent ? "SENT" : "SKIPPED", reason, undefined, contact.id);
+      await this.record(payload.incidentId, "EMAIL", contact.email ?? contact.displayName, sent ? "SENT" : process.env.SMTP_URL && contact.email ? "FAILED" : "SKIPPED", reason, undefined, contact.id);
     }
 
     await this.queueGuardianEscalation({ ...payload, stage: payload.stage + 1 }, this.guardianEscalationDelayMs());
@@ -222,6 +224,7 @@ export class PlatformService {
     if (this.outbox) {
       await this.outbox.enqueue({
         type: "GUARDIAN_ESCALATION_STEP",
+        dedupeKey: `guardian:${payload.incidentId}:${payload.trustedContactId}:${payload.stage}`,
         aggregateType: "Incident",
         aggregateId: payload.incidentId,
         payload,
@@ -267,7 +270,7 @@ export class PlatformService {
     }
   }
 
-  async brief(actor: Actor, incidentId: string) {  async brief(actor: Actor, incidentId: string) {
+  async brief(actor: Actor, incidentId: string) {
     this.operator(actor);
     const incident = await this.incidents.get(actor, incidentId);
     const timeline = await this.incidents.timelineFor(actor, incidentId);
@@ -302,6 +305,7 @@ export class PlatformService {
       orderBy: { sequence: "asc" },
       select: {
         id: true,
+        artifactId: true,
         clientChunkId: true,
         sequence: true,
         contentType: true,
@@ -365,6 +369,7 @@ export class PlatformService {
     } catch {
       // In-memory HTTP tests have no delivery tables. The incident itself still returns.
     }
+    const incidentAcknowledgements = await this.prisma.guardianAcknowledgement.findMany({ where: { incidentId } });
     const userLat = incident.lastLatitude;
     const userLng = incident.lastLongitude;
     return {
@@ -385,7 +390,7 @@ export class PlatformService {
         displayName: row.displayName,
         lastAcknowledgedAt: row.lastAcknowledgedAt?.toISOString?.() ?? row.lastAcknowledgedAt ?? null,
         lastNotifiedAt: row.lastNotifiedAt?.toISOString?.() ?? row.lastNotifiedAt ?? null,
-        acknowledged: Boolean(row.lastAcknowledgedAt),
+        acknowledged: incidentAcknowledgements.some(ack => ack.trustedContactId === row.id),
       })),
       responders: responders.map((row) => {
         const distanceMeters =
@@ -427,6 +432,55 @@ export class PlatformService {
       destination: maskDestination(row.destination),
       createdAt: row.createdAt.toISOString(),
     }));
+  }
+
+  async completeArtifact(incidentId: string, captureId: string): Promise<void> {
+    const artifact = await this.prisma.evidenceArtifact.findFirst({ where: { incidentId, captureId }, include: { chunks: { orderBy: { chunkIndex: "asc" } } } });
+    if (!artifact || artifact.completedAt || artifact.chunks.length !== artifact.chunkCount) return;
+    const hash = createHash("sha256");
+    let size = 0;
+    for (const [index, chunk] of artifact.chunks.entries()) {
+      if (chunk.chunkIndex !== index) return;
+      const bytes = chunk.storageKey ? await this.vault.get(chunk.storageKey) : Buffer.from(chunk.payload);
+      if (!bytes || bytes.length !== chunk.byteLength || createHash("sha256").update(bytes).digest("hex") !== chunk.sha256) throw new AppError("EVIDENCE_HASH_MISMATCH", 422, "A stored chunk failed verification.");
+      hash.update(bytes); size += bytes.length;
+    }
+    if (size !== artifact.totalSize || hash.digest("hex") !== artifact.sha256) throw new AppError("EVIDENCE_HASH_MISMATCH", 422, "The reconstructed capture does not match the original file.");
+    await this.prisma.evidenceArtifact.update({ where: { id: artifact.id }, data: { completedAt: this.clock.now() } });
+  }
+
+  async artifacts(actor: Actor, incidentId: string) {
+    this.operator(actor);
+    await this.incidents.get(actor, incidentId);
+    return this.prisma.evidenceArtifact.findMany({ where: { incidentId }, orderBy: { capturedAt: "asc" }, select: { id: true, captureId: true, capturedAt: true, contentType: true, totalSize: true, sha256: true, chunkCount: true, completedAt: true } });
+  }
+
+  async artifactStream(actor: Actor, incidentId: string, artifactId: string) {
+    this.operator(actor);
+    await this.incidents.get(actor, incidentId);
+    const artifact = await this.prisma.evidenceArtifact.findFirst({ where: { id: artifactId, incidentId }, include: { chunks: { orderBy: { chunkIndex: "asc" }, select: { id: true, chunkIndex: true, byteLength: true, sha256: true } } } });
+    if (!artifact?.completedAt || artifact.chunks.length !== artifact.chunkCount) throw new AppError("NOT_FOUND", 404, "This capture is incomplete or unavailable.");
+    await this.prisma.evidenceAccessLog.create({ data: { id: this.ids.uuid(), incidentId, evidenceId: artifact.id, actorId: actor.id, action: "artifact.stream" } });
+    await this.prisma.auditEvent.create({ data: { id: this.ids.uuid(), actorId: actor.id, action: "evidence.artifact.read", entityType: "EvidenceArtifact", entityId: artifact.id, correlationId: incidentId, metadata: { sha256: artifact.sha256 }, createdAt: this.clock.now() } });
+    const vault = this.vault;
+    const prisma = this.prisma;
+    return {
+      size: artifact.totalSize, contentType: artifact.contentType, sha256: artifact.sha256,
+      async *read(start: number, end: number) {
+        let offset = 0;
+        for (const chunk of artifact.chunks) {
+          const chunkEnd = offset + chunk.byteLength - 1;
+          if (chunkEnd >= start && offset <= end) {
+            const stored = await prisma.evidenceChunk.findUniqueOrThrow({ where: { id: chunk.id } });
+            const bytes = stored.storageKey ? await vault.get(stored.storageKey) : Buffer.from(stored.payload);
+            if (!bytes || createHash("sha256").update(bytes).digest("hex") !== chunk.sha256) throw new Error("Evidence integrity check failed.");
+            yield bytes.subarray(Math.max(0, start - offset), Math.min(bytes.length, end - offset + 1));
+          }
+          offset += chunk.byteLength;
+          if (offset > end) break;
+        }
+      },
+    };
   }
 
   async evidenceBytes(actor: Actor, incidentId: string, chunkId: string): Promise<{ bytes: Buffer; contentType: string }> {
@@ -512,6 +566,8 @@ export class PlatformService {
         orderBy: { sequence: "asc" },
         select: {
           id: true,
+          artifactId: true,
+          chunkIndex: true,
           clientChunkId: true,
           sequence: true,
           sha256: true,
@@ -531,7 +587,9 @@ export class PlatformService {
         take: 5000,
       }),
     ]);
+    const artifacts = await this.artifacts(actor, incidentId);
     return {
+      artifacts,
       manifestVersion: 1,
       generatedAt: this.clock.now().toISOString(),
       incident: {
@@ -694,7 +752,7 @@ export class PlatformService {
     const rows = await this.prisma.incident.findMany({
       where: { createdAt: { gte: since }, isTest: false },
       include: {
-        assignments: true,
+        assignments: { include: { responder: { select: { displayName: true } } } },
         deliveries: true,
       },
       orderBy: { createdAt: "desc" },
@@ -707,10 +765,12 @@ export class PlatformService {
       .flatMap((row) => row.assignments.filter((a) => a.assignedAt).map((a) => a.assignedAt!.getTime() - row.createdAt.getTime()));
     const arrivals = rows
       .flatMap((row) => row.assignments.filter((a) => a.arrivedAt).map((a) => a.arrivedAt!.getTime() - row.createdAt.getTime()));
-    const deliveries = rows.flatMap((row) => row.deliveries).filter((row) => ["SMS", "FCM", "APNS", "ROOM"].includes(row.channel));
-    const delivered = deliveries.filter((row) => row.deliveredAt || row.status === "DELIVERED" || row.status === "ACKNOWLEDGED").length;
-    const notifiedGuardianKeys = new Set(deliveries.map((row) => row.trustedContactId).filter((value): value is string => Boolean(value)));
-    const acknowledgedGuardianKeys = new Set(deliveries.filter((row) => row.acknowledgedAt).map((row) => row.trustedContactId).filter((value): value is string => Boolean(value)));
+    const guardianRows = rows.flatMap(row => row.deliveries);
+    const deliveries = guardianRows.filter(row => ["SMS", "FCM", "APNS", "EMAIL"].includes(row.channel) && row.status !== "SKIPPED");
+    const delivered = deliveries.filter((row) => row.deliveredAt || row.status === "DELIVERED").length;
+    const notifiedGuardianKeys = new Set(guardianRows.filter(row => row.trustedContactId).map(row => `${row.incidentId}:${row.trustedContactId}`));
+    const acks = await this.prisma.guardianAcknowledgement.findMany({ where: { incidentId: { in: rows.map(row => row.id) } } });
+    const acknowledgedGuardianKeys = new Set(acks.map(row => `${row.incidentId}:${row.trustedContactId}`).filter(key => notifiedGuardianKeys.has(key)));
     const acknowledged = acknowledgedGuardianKeys.size;
     const byTrigger = Object.fromEntries(
       [...new Set(rows.map((row) => row.triggerType))].map((trigger) => [trigger, rows.filter((row) => row.triggerType === trigger).length]),
@@ -719,12 +779,35 @@ export class PlatformService {
       [...new Set(rows.map((row) => row.state))].map((state) => [state, rows.filter((row) => row.state === state).length]),
     );
     const avg = (values: number[]) => values.length ? Math.round(values.reduce((sum, value) => sum + value, 0) / values.length / 1000) : null;
+    const percentiles = (values: number[]) => {
+      const sorted = values.filter(value => value >= 0).sort((a,b) => a-b);
+      const at = (fraction: number) => sorted.length ? Math.round(sorted[Math.max(0, Math.ceil(sorted.length * fraction) - 1)]! / 1000) : null;
+      return { p50: at(.5), p90: at(.9), p95: at(.95), p99: at(.99), samples: sorted.length };
+    };
+    const assignments = rows.flatMap(row => row.assignments);
+    const responderPerformance = [...new Set(assignments.map(row => row.responderId))].map(responderId => {
+      const assigned = assignments.filter(row => row.responderId === responderId);
+      const times = assigned.filter(row => row.arrivedAt && row.assignedAt).map(row => row.arrivedAt!.getTime() - row.assignedAt!.getTime());
+      return { responderId, displayName: assigned[0]!.responder.displayName, assigned: assigned.length, completed: assigned.filter(row => row.status === "COMPLETED").length, declined: assigned.filter(row => row.status === "DECLINED").length, arrival: percentiles(times) };
+    });
+    const locationClusters: Record<string, number> = {};
+    for (const row of rows) {
+      const key = row.lastLatitude == null || row.lastLongitude == null ? "Unlocated" : `${row.lastLatitude.toFixed(1)}, ${row.lastLongitude.toFixed(1)}`;
+      locationClusters[key] = (locationClusters[key] ?? 0) + 1;
+    }
     return {
       windowDays: boundedDays,
+      sampleLimit: 5000,
+      possiblyTruncated: rows.length >= 5000,
+      sla: { acknowledgement: percentiles(acknowledgements), dispatch: percentiles(dispatches), arrival: percentiles(arrivals) },
+      responderPerformance,
+      locationClusters,
+      outcomes: { resolved: rows.filter(row => row.state === "RESOLVED").length, falseAlarm: rows.filter(row => row.state === "FALSE_ALARM").length, open: rows.filter(row => !["RESOLVED", "FALSE_ALARM", "ARCHIVED"].includes(row.state)).length },
       incidentCount: rows.length,
       averageAcknowledgementSeconds: avg(acknowledgements),
       averageDispatchSeconds: avg(dispatches),
       averageResponderArrivalSeconds: avg(arrivals),
+      guardianDeliveryAcceptedRate: deliveries.length ? Math.round(deliveries.filter(row => row.sentAt || row.deliveredAt).length / deliveries.length * 1000) / 10 : null,
       guardianDeliverySuccessRate: deliveries.length ? Math.round((delivered / deliveries.length) * 1000) / 10 : null,
       guardianChannelDeliverySuccessRate: deliveries.length ? Math.round((delivered / deliveries.length) * 1000) / 10 : null,
       guardianAcknowledgementRate: notifiedGuardianKeys.size ? Math.round((acknowledged / notifiedGuardianKeys.size) * 1000) / 10 : null,
@@ -823,7 +906,7 @@ export class PlatformService {
     return { ...row, occurredAt: row.occurredAt.toISOString(), createdAt: row.createdAt.toISOString() };
   }
 
-  async guardianInbox(actor: Actor) {  async guardianInbox(actor: Actor) {
+  async guardianInbox(actor: Actor) {
     if (actor.role !== "GUARDIAN" && !hasPermission(actor.role, Permission.IncidentReadActive)) {
       throw new AppError("FORBIDDEN", 403, "This inbox is only available to Guardian or monitoring accounts.");
     }
@@ -868,6 +951,8 @@ export class PlatformService {
       lastAcknowledgedAt: contact.lastAcknowledgedAt?.toISOString() ?? null,
       activeIncidents: contact.user.incidents.map((incident) => ({
         ...incident,
+        lastLatitude: contact.canViewLocation ? incident.lastLatitude : null,
+        lastLongitude: contact.canViewLocation ? incident.lastLongitude : null,
         createdAt: incident.createdAt.toISOString(),
       })),
     }));
@@ -1142,8 +1227,19 @@ export class PlatformService {
     return incidents;
   }
 
-  async position(actor: Actor, journeyId: string, latitude: number, longitude: number) {
+  private async saveTrackingSample(actor: Actor, kind: string, targetId: string, input: z.infer<typeof positionSchema>) {
+    const recordedAt = input.recordedAt ? new Date(input.recordedAt) : this.clock.now();
+    if (recordedAt.getTime() > this.clock.now().getTime() + 5 * 60_000) throw new AppError("INVALID_SAMPLE_TIME", 422, "Location time is in the future.");
+    const sampleId = input.sampleId ?? this.ids.uuid();
+    const existing = await this.prisma.trackingSample.findUnique({ where: { sampleId } });
+    if (existing && (existing.userId !== actor.id || existing.kind !== kind || existing.targetId !== targetId || existing.latitude !== input.latitude || existing.longitude !== input.longitude)) throw new AppError("SAMPLE_CONFLICT", 409, "Location sample ID was reused.");
+    await this.prisma.trackingSample.upsert({ where: { sampleId }, create: { sampleId, userId: actor.id, kind, targetId, latitude: input.latitude, longitude: input.longitude, recordedAt, accuracy: input.accuracy, speedMps: input.speedMps, bearing: input.bearing, source: input.source ?? "UNKNOWN" }, update: {} });
+  }
+
+  async position(actor: Actor, journeyId: string, latitude: number, longitude: number, metadata: z.infer<typeof positionSchema> = { latitude, longitude }) {
+    if (metadata.recordedAt && new Date(metadata.recordedAt).getTime() > this.clock.now().getTime() + 5 * 60_000) throw new AppError("INVALID_SAMPLE_TIME", 422, "Location time is in the future.");
     const result = await this.protection.notePosition(actor, journeyId, latitude, longitude);
+    await this.saveTrackingSample(actor, "JOURNEY", journeyId, metadata);
     const incident = await this.prisma.incident.findFirst({
       where: {
         userId: actor.id,
@@ -1206,12 +1302,16 @@ export class PlatformService {
     const now = this.clock.now();
     const replacementPassword = await this.passwords.hash(randomBytes(32).toString("hex"));
     await this.prisma.$transaction([
+      this.prisma.incidentRoom.deleteMany({ where: { OR: [{ incident: { userId: actor.id } }, { trustedContactId: { in: (await this.prisma.trustedContact.findMany({ where: { guardianUserId: actor.id }, select: { id: true } })).map(row => row.id) } }] } }),
       this.prisma.trustedContact.deleteMany({ where: { userId: actor.id } }),
       this.prisma.trustedContact.updateMany({
         where: { guardianUserId: actor.id },
         data: { guardianUserId: null, invitationStatus: "PENDING", verifiedAt: null, active: false, updatedAt: now },
       }),
       this.prisma.emergencyProfile.deleteMany({ where: { userId: actor.id } }),
+      this.prisma.safetyPin.deleteMany({ where: { userId: actor.id } }),
+      this.prisma.trackingSample.deleteMany({ where: { userId: actor.id } }),
+      this.prisma.protectionSession.updateMany({ where: { userId: actor.id, status: { in: ["ACTIVE", "CONCERN"] } }, data: { status: "COMPLETED", updatedAt: now } }),
       this.prisma.operatorMfaRecoveryCode.deleteMany({ where: { userId: actor.id } }),
       this.prisma.operatorMfa.deleteMany({ where: { userId: actor.id } }),
       this.prisma.recoveryToken.deleteMany({ where: { userId: actor.id } }),
@@ -1251,6 +1351,10 @@ export class PlatformService {
       const recovery = !totpOk && /^[A-F0-9]{12}$/.test(normalizedRecovery)
         ? await this.prisma.operatorMfaRecoveryCode.findFirst({ where: { userId: actor.id, codeHash: hashToken(normalizedRecovery), usedAt: null } })
         : null;
+      if (recovery) {
+        const consumed = await this.prisma.operatorMfaRecoveryCode.updateMany({ where: { id: recovery.id, usedAt: null }, data: { usedAt: this.clock.now() } });
+        if (consumed.count !== 1) throw new AppError("INVALID_MFA", 401, "This recovery code has already been used.");
+      }
       if (!totpOk && !recovery) throw new AppError("INVALID_MFA", 401, "Confirm your current authenticator or recovery code before replacing it.");
     }
     const secret = generateTotpSecret();
@@ -1273,30 +1377,25 @@ export class PlatformService {
     if (!row?.pendingSecret || !verifyTotp(openSecret(row.pendingSecret, this.config.mfaEncryptionKey), code, this.clock.now().getTime())) {
       throw new AppError("INVALID_MFA", 401, "That new authenticator code was not accepted.");
     }
-    if (row.pendingCreatedAt && this.clock.now().getTime() - row.pendingCreatedAt.getTime() > 15 * 60 * 1000) {
+    if (!row.pendingCreatedAt || this.clock.now().getTime() - row.pendingCreatedAt.getTime() > 15 * 60 * 1000) {
       throw new AppError("MFA_SETUP_EXPIRED", 410, "The MFA replacement session expired. Start again.");
     }
     const now = this.clock.now();
-    await this.prisma.operatorMfa.update({
-      where: { userId: actor.id },
-      data: { secret: row.pendingSecret, pendingSecret: null, pendingCreatedAt: null, enabled: true, updatedAt: now },
-    });
     const recoveryCodes = Array.from({ length: 10 }, () => {
       const raw = randomBytes(6).toString("hex").toUpperCase();
       return `${raw.slice(0, 6)}-${raw.slice(6)}`;
     });
-    await this.prisma.$transaction([
-      this.prisma.operatorMfaRecoveryCode.deleteMany({ where: { userId: actor.id } }),
-      this.prisma.operatorMfaRecoveryCode.createMany({
-        data: recoveryCodes.map((value) => ({
-          id: randomUUID(), userId: actor.id, codeHash: hashToken(value.replace("-", "")), createdAt: now,
-        })),
-      }),
-    ]);
+    await this.prisma.$transaction(async tx => {
+      const switched = await tx.operatorMfa.updateMany({ where: { userId: actor.id, pendingSecret: row.pendingSecret }, data: { secret: row.pendingSecret!, pendingSecret: null, pendingCreatedAt: null, enabled: true, updatedAt: now } });
+      if (switched.count !== 1) throw new AppError("MFA_SETUP_CHANGED", 409, "MFA setup has changed. Start again.");
+      await tx.operatorMfaRecoveryCode.deleteMany({ where: { userId: actor.id } });
+      await tx.operatorMfaRecoveryCode.createMany({ data: recoveryCodes.map(value => ({ id: randomUUID(), userId: actor.id, codeHash: hashToken(value.replace("-", "")), createdAt: now })) });
+      await tx.auditEvent.create({ data: { id: this.ids.uuid(), actorId: actor.id, action: "auth.mfa_replaced", entityType: "OperatorMfa", entityId: actor.id, metadata: {}, createdAt: now } });
+    });
     return { enabled: true, recoveryCodes };
   }
 
-  async room(token: string) {  async room(token: string) {
+  async room(token: string) {
     const row = await this.prisma.incidentRoom.findUnique({
       where: { tokenHash: sha256(token) },
       include: { incident: { include: { user: true } } },
@@ -1337,15 +1436,9 @@ export class PlatformService {
     const now = this.clock.now();
     await this.prisma.incidentRoom.update({ where: { id: row.id }, data: { acknowledgedAt: now } });
     if (row.trustedContactId) {
-      await this.prisma.notificationDelivery.updateMany({
-        where: {
-          incidentId: row.incidentId,
-          trustedContactId: row.trustedContactId,
-          channel: { in: ["ROOM", "SMS", "FCM", "APNS"] },
-          acknowledgedAt: null,
-        },
-        data: { acknowledgedAt: now },
-      });
+      await this.prisma.guardianAcknowledgement.upsert({ where: { incidentId_trustedContactId: { incidentId: row.incidentId, trustedContactId: row.trustedContactId } }, create: { incidentId: row.incidentId, trustedContactId: row.trustedContactId, acknowledgedAt: now }, update: {} });
+
+
     }
     if (row.trustedContactId) {
       await this.prisma.trustedContact.updateMany({
@@ -1353,15 +1446,7 @@ export class PlatformService {
         data: { lastAcknowledgedAt: now },
       });
     }
-    await this.record(
-      row.incidentId,
-      "ROOM_ACK",
-      row.guardianName ?? "guardian",
-      "ACKNOWLEDGED",
-      "A guardian opened and acknowledged the room.",
-      undefined,
-      row.trustedContactId ?? undefined,
-    );
+    await this.prisma.timelineEvent.create({ data: { id: this.ids.uuid(), incidentId: row.incidentId, type: "guardian.acknowledged", message: "A Guardian acknowledged the incident room.", occurredAt: now } });
     void this.queueAiAssessment(row.incidentId).catch(() => undefined);
     return { acknowledgedAt: now.toISOString() };
   }
@@ -1382,16 +1467,13 @@ export class PlatformService {
           },
         })
       : null;
-    const isOwner = incident.userId === actor.id;
-    const isOperator = hasPermission(actor.role, Permission.IncidentReadActive);
-    if (!guardian && !isOwner && !isOperator) {
-      throw new AppError("FORBIDDEN", 403, "You cannot acknowledge this delivery.");
-    }
+    if (!guardian) throw new AppError("FORBIDDEN", 403, "Only the linked Guardian may record their acknowledgement.");
     const now = this.clock.now();
     await this.prisma.notificationDelivery.update({
       where: { id: deliveryId },
       data: { acknowledgedAt: now },
     });
+    await this.prisma.guardianAcknowledgement.upsert({ where: { incidentId_trustedContactId: { incidentId: row.incidentId, trustedContactId: guardian.id } }, create: { incidentId: row.incidentId, trustedContactId: guardian.id, acknowledgedAt: now }, update: {} });
     if (guardian) {
       await this.prisma.trustedContact.update({ where: { id: guardian.id }, data: { lastAcknowledgedAt: now } });
     }
@@ -1399,16 +1481,21 @@ export class PlatformService {
     return { acknowledgedAt: now.toISOString() };
   }
 
-  async updateResponderLocation(actor: Actor, incidentId: string, latitude: number, longitude: number, speedMps?: number) {
+  async updateResponderLocation(actor: Actor, incidentId: string, latitude: number, longitude: number, speedMps?: number, metadata: z.infer<typeof positionSchema> = { latitude, longitude }) {
     const row = await this.prisma.responderAssignment.findFirst({ where: { incidentId, responderId: actor.id } });
     if (!row) throw new AppError("FORBIDDEN", 403, "This incident is not assigned to you.");
+    const incident = await this.prisma.incident.findUnique({ where: { id: incidentId }, select: { state: true } });
+    if (!incident || ["RESOLVED", "FALSE_ALARM", "ARCHIVED"].includes(incident.state) || ["COMPLETED", "DECLINED"].includes(row.status)) throw new AppError("ASSIGNMENT_CLOSED", 409, "This assignment no longer accepts locations.");
+    const recordedAt = metadata.recordedAt ? new Date(metadata.recordedAt) : this.clock.now();
+    await this.saveTrackingSample(actor, "RESPONDER", incidentId, metadata);
+    if (row.lastLocationAt && row.lastLocationAt > recordedAt) return this.liveCompanion(actor, incidentId);
     const now = this.clock.now();
     await this.prisma.responderAssignment.update({
       where: { id: row.id },
       data: {
         lastLatitude: latitude,
         lastLongitude: longitude,
-        lastLocationAt: now,
+        lastLocationAt: recordedAt,
         speedMps: speedMps ?? row.speedMps,
         updatedAt: now,
       },
@@ -1479,31 +1566,20 @@ export class PlatformService {
       orderBy: { startedAt: "desc" },
     });
     if (!open) throw new AppError("NOT_FOUND", 404, "There is no open shift to hand over.");
+    if (!handoverToId || handoverToId === actor.id) throw new AppError("RECEIVER_REQUIRED", 400, "Choose another receiving operator.");
+    const receiver = await this.prisma.user.findFirst({ where: { id: handoverToId, role: { in: ["MONITOR_OPERATOR", "SUPERVISOR", "ADMIN"] }, suspendedAt: null } });
+    if (!receiver) throw new AppError("INVALID_RECEIVER", 400, "The receiving operator is unavailable.");
     const now = this.clock.now();
-    const ended = await this.prisma.operatorShift.update({
-      where: { id: open.id },
-      data: {
-        status: "ENDED",
-        handoverNote: note.slice(0, 2000),
-        handoverToId: handoverToId ?? null,
-        endedAt: now,
-        updatedAt: now,
-      },
+    return this.prisma.$transaction(async tx => {
+      const changed = await tx.operatorShift.updateMany({ where: { id: open.id, status: { in: ["ON_DUTY", "READY", "HANDOVER"] } }, data: { status: "ENDED", handoverNote: note.slice(0, 2000), handoverToId, endedAt: now, updatedAt: now } });
+      if (!changed.count) throw new AppError("SHIFT_CHANGED", 409, "This shift has already ended.");
+      const receiving = await tx.operatorShift.findFirst({ where: { operatorId: handoverToId, status: { in: ["ON_DUTY", "READY", "HANDOVER"] } } });
+      const incoming = `Received from ${actor.displayName}: ${note.slice(0, 1500)}`;
+      if (receiving) await tx.operatorShift.update({ where: { id: receiving.id }, data: { status: "HANDOVER", readyAt: null, handoverNote: incoming } });
+      else await tx.operatorShift.create({ data: { id: this.ids.uuid(), operatorId: handoverToId, status: "HANDOVER", startedAt: now, handoverNote: incoming, createdAt: now, updatedAt: now } });
+      await tx.auditEvent.create({ data: { id: this.ids.uuid(), actorId: actor.id, action: "shift.handover", entityType: "OperatorShift", entityId: open.id, metadata: { handoverToId }, createdAt: now } });
+      return tx.operatorShift.findUniqueOrThrow({ where: { id: open.id } });
     });
-    if (handoverToId) {
-      await this.prisma.operatorShift.create({
-        data: {
-          id: this.ids.uuid(),
-          operatorId: handoverToId,
-          status: "HANDOVER",
-          startedAt: now,
-          handoverNote: `Received from ${actor.displayName}: ${note.slice(0, 500)}`,
-          createdAt: now,
-          updatedAt: now,
-        },
-      });
-    }
-    return ended;
   }
 
   async currentShift(actor: Actor) {
@@ -1519,7 +1595,9 @@ export class PlatformService {
     const batch = await this.outbox.claimBatch(workerId);
     let processed = 0;
     let dead = 0;
-    for (const event of batch) {
+    const heartbeat = setInterval(() => { void this.outbox?.renewLeases(workerId, batch.map(event => event.id)).catch(() => undefined); }, 20_000);
+    heartbeat.unref();
+    try { for (const event of batch) {
       try {
         if (event.type === "INCIDENT_GUARDIAN_NOTIFY") {
           const payload = event.payload as { incidentId: string; userId: string; userDisplayName: string; state: string };
@@ -1551,6 +1629,7 @@ export class PlatformService {
         if (outcome === "dead") dead += 1;
       }
     }
+    } finally { clearInterval(heartbeat); }
     return { processed, dead };
   }
 
@@ -1613,6 +1692,9 @@ export class PlatformService {
     providerMessageId?: string,
     trustedContactId?: string,
   ): Promise<void> {
+    if (["SMS", "FCM", "APNS", "EMAIL"].includes(channel) && ["SENT", "DELIVERED", "FAILED"].includes(status)) {
+      await this.observeIntegration(channel === "FCM" ? "PUSH" : channel, status !== "FAILED", `Provider submission ${status.toLowerCase()}. This is not proof of handset receipt.`);
+    }
     const now = this.clock.now();
     await this.prisma.notificationDelivery.create({
       data: {
@@ -2017,8 +2099,9 @@ export class PlatformService {
       await this.prisma.timelineEvent.create({ data: { id: this.ids.uuid(), incidentId: incident.id, type: "device.contact_lost", message: "TEST device contact lost after route deviation.", occurredAt: now } });
     } else if (stage === 2) {
       await this.prisma.incident.update({ where: { id: incident.id }, data: { state: "ACKNOWLEDGED", acknowledgedAt: now, acknowledgedById: actor.id, updatedAt: now } });
-      await this.prisma.notificationDelivery.updateMany({ where: { incidentId: incident.id, trustedContactId: cfg.contactId }, data: { status: "ACKNOWLEDGED", acknowledgedAt: now } });
+      await this.prisma.notificationDelivery.updateMany({ where: { incidentId: incident.id, trustedContactId: cfg.contactId }, data: { acknowledgedAt: now } });
       await this.prisma.trustedContact.update({ where: { id: cfg.contactId }, data: { lastAcknowledgedAt: now } });
+      await this.prisma.guardianAcknowledgement.upsert({ where: { incidentId_trustedContactId: { incidentId: incident.id, trustedContactId: cfg.contactId } }, create: { incidentId: incident.id, trustedContactId: cfg.contactId, acknowledgedAt: now }, update: {} });
       await this.prisma.timelineEvent.create({ data: { id: this.ids.uuid(), incidentId: incident.id, type: "guardian.acknowledged", message: "TEST Guardian acknowledged the alert.", occurredAt: now, actorId: cfg.guardianId } });
     } else if (stage === 3) {
       await this.prisma.incident.update({ where: { id: incident.id }, data: { state: "RESPONDING", updatedAt: now } });
@@ -2046,6 +2129,18 @@ export class PlatformService {
   }
 
   async integrationTest(actor: Actor, kind: string) {
+    if (!hasPermission(actor.role, Permission.UserManage)) throw new AppError("FORBIDDEN", 403, "Only supervisors or administrators can run integration tests.");
+    const result = await this.performIntegrationTest(actor, kind).catch(error => ({ kind: kind.toUpperCase(), ok: false, detail: error instanceof Error ? error.message : "Provider probe failed." }));
+    await this.observeIntegration(result.kind, result.ok, result.detail);
+    return result;
+  }
+
+  private async observeIntegration(kind: string, ok: boolean, detail: string) {
+    const now = this.clock.now();
+    await this.prisma.integrationHealth.upsert({ where: { kind }, create: { kind, lastSuccessAt: ok ? now : null, lastFailureAt: ok ? null : now, detail: detail.slice(0, 1000) }, update: { ...(ok ? { lastSuccessAt: now } : { lastFailureAt: now }), detail: detail.slice(0, 1000) } });
+  }
+
+  private async performIntegrationTest(actor: Actor, kind: string) {
     if (!hasPermission(actor.role, Permission.UserManage)) {
       throw new AppError("FORBIDDEN", 403, "Only supervisors or administrators can run integration tests.");
     }
@@ -2069,6 +2164,16 @@ export class PlatformService {
     if (upper === "EVIDENCE") {
       const result = await this.vault.probeLocal();
       return { kind: upper, ...result };
+    }
+    if (upper === "S3") return { kind: upper, ...await this.vault.probeRemote() };
+    if (upper === "TILES") {
+      const template = process.env.MAP_TILE_URL?.trim();
+      if (!template) return { kind: upper, ok: false, detail: "Set MAP_TILE_URL to the same approved template used by the web build." };
+      const target = template.replace("{z}", "5").replace("{x}", "18").replace("{y}", "18").replace("{s}", "a");
+      const response = await fetch(target, { signal: AbortSignal.timeout(10_000) }).catch(() => null);
+      const type = response?.headers.get("content-type") ?? "";
+      const bytes = response?.ok ? await response.arrayBuffer() : null;
+      return { kind: upper, ok: Boolean(response?.ok && type.startsWith("image/") && bytes?.byteLength), detail: response?.ok && type.startsWith("image/") && bytes?.byteLength ? "Configured tile endpoint returned a non-empty image." : "Tile endpoint did not return an image." };
     }
     if (upper === "SMS") {
       const to = process.env.INTEGRATION_TEST_PHONE?.trim();
@@ -2140,6 +2245,10 @@ export class PlatformService {
     }
     return {
       postgres,
+      email: process.env.SMTP_URL?.trim() ? "CONFIGURED" : "NOT_CONFIGURED",
+      maps: process.env.GEOCODER_URL?.trim() ? "CONFIGURED" : "NOT_CONFIGURED",
+      tiles: process.env.MAP_TILE_URL?.trim() ? "CONFIGURED" : "NOT_CONFIGURED",
+      providerChecks: await this.prisma.integrationHealth.findMany(),
       sms: smsHealth(),
       fcm: fcmHealth(),
       apns: apnsHealth(),

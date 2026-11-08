@@ -51,7 +51,8 @@ export class TwilioSmsProvider implements EmergencySmsProvider {
     const callback = this.env.PUBLIC_API_URL?.trim();
     if (callback) fields.set("StatusCallback", `${callback.replace(/\/$/, "")}/api/v1/webhooks/twilio/sms`);
     const response = await fetch(`https://api.twilio.com/2010-04-01/Accounts/${sid}/Messages.json`, {
-      method: "POST",
+      signal: AbortSignal.timeout(10_000),
+    method: "POST",
       headers: {
         Authorization: `Basic ${Buffer.from(`${sid}:${token}`).toString("base64")}`,
         "Content-Type": "application/x-www-form-urlencoded",
@@ -165,7 +166,8 @@ export async function sendFcm(
     const access = await googleAccessToken(env);
     if (!access) return { delivered: false, simulated: false, reason: "FCM OAuth token could not be minted." };
     const response = await fetch(`https://fcm.googleapis.com/v1/projects/${env.FCM_PROJECT_ID!.trim()}/messages:send`, {
-      method: "POST",
+      signal: AbortSignal.timeout(10_000),
+    method: "POST",
       headers: { Authorization: `Bearer ${access}`, "Content-Type": "application/json" },
       body: JSON.stringify({
         message: {
@@ -197,6 +199,7 @@ async function googleAccessToken(env: NodeJS.ProcessEnv): Promise<string | null>
     .setExpirationTime("1h")
     .sign(key);
   const response = await fetch("https://oauth2.googleapis.com/token", {
+    signal: AbortSignal.timeout(10_000),
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({

@@ -1,5 +1,5 @@
 #!/bin/sh
 set -e
 cd /app/services/api
-npx prisma migrate deploy
+node /app/node_modules/prisma/build/index.js migrate deploy
 exec node dist/main.js

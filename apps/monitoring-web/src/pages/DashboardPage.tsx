@@ -1,42 +1,26 @@
-import { FormEvent, useMemo, useState } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMemo } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { CircleMarker, MapContainer, Popup, TileLayer } from "react-leaflet";
 import "leaflet/dist/leaflet.css";
 import { api, type Incident, type IncidentSummary } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
+import { ResponderDashboardPage } from "./ResponderDashboardPage";
 import { Badge } from "./IncidentsPage";
 
 const tileUrl = import.meta.env.VITE_MAP_TILE_URL || "https://tile.openstreetmap.org/{z}/{x}/{y}.png";
 const tileAttribution = import.meta.env.VITE_MAP_TILE_ATTRIBUTION || "© OpenStreetMap contributors";
 interface LiveResponder { id:string; displayName:string; status:string; latitude:number|null; longitude:number|null; locationAt:string|null; activeIncidentId:string|null; assignmentStatus:string|null; workload:number }
 
-interface Shift {
-  id: string;
-  status: string;
-  startedAt: string;
-  readyAt: string | null;
-  handoverNote: string | null;
+export function DashboardPage() {
+  const { session } = useAuth();
+  return session?.user.role === "RESPONDER" ? <ResponderDashboardPage /> : <OperatorDashboardPage />;
 }
 
-export function DashboardPage() {
+function OperatorDashboardPage() {
   const { session } = useAuth();
   const token = session?.accessToken ?? null;
   const isResponder = session?.user.role === "RESPONDER";
-  const queryClient = useQueryClient();
-  const [handoverNote, setHandoverNote] = useState("");
-  const [shiftError, setShiftError] = useState<string | null>(null);
-  const shift = useQuery({
-    queryKey: ["shift"],
-    queryFn: () => api<Shift | null>("/api/v1/operators/shifts/current", token),
-    enabled: !isResponder,
-    refetchInterval: 15_000,
-  });
-  const handover = useQuery({
-    queryKey: ["handover"],
-    enabled: !isResponder && Boolean(shift.data),
-    queryFn: () => api<{ summary: string }>("/api/v1/operators/shifts/brief", token),
-  });
   const incidents = useQuery({
     queryKey: ["incidents"],
     queryFn: () => api<Incident[]>("/api/v1/incidents", token),
@@ -61,22 +45,6 @@ export function DashboardPage() {
   const unacked = live.filter((row) => row.state === "SOS" && !row.acknowledgedAt);
   const oldest = unacked[0];
   const ackWait = oldest ? Math.max(0, Math.floor((Date.now() - new Date(oldest.createdAt).getTime()) / 1000)) : 0;
-
-  async function shiftAction(path: string, body: Record<string, string> = {}) {
-    setShiftError(null);
-    try {
-      await api(path, token, { method: "POST", body: JSON.stringify(body) });
-      await queryClient.invalidateQueries({ queryKey: ["shift"] });
-      setHandoverNote("");
-    } catch (caught) {
-      setShiftError(caught instanceof Error ? caught.message : "Shift update failed.");
-    }
-  }
-
-  function submitHandover(event: FormEvent) {
-    event.preventDefault();
-    void shiftAction("/api/v1/operators/shifts/handover", { note: handoverNote });
-  }
 
   return (
     <main className="mx-auto max-w-6xl px-4 py-6">
@@ -124,32 +92,8 @@ export function DashboardPage() {
         </article>
         <article className="rounded-2xl border border-line bg-panel p-4">
           <h2 className="text-lg font-semibold">Shift</h2>
-          <p className="mt-2 text-sm text-slate-300">
-            {shift.data ? `${shift.data.status} since ${shift.data.startedAt}` : "No open shift."}
-            {shift.data?.readyAt ? ` Ready at ${shift.data.readyAt}.` : ""}
-          </p>
-          {shift.data?.handoverNote ? <p className="mt-2 text-sm text-slate-400">{shift.data.handoverNote}</p> : null}
-          {handover.data ? <p className="mt-2 text-sm text-slate-300">{handover.data.summary}</p> : null}
-          <div className="mt-3 flex flex-wrap gap-2">
-            <button type="button" className="rounded-lg border border-line px-3 py-2 text-sm" onClick={() => void shiftAction("/api/v1/operators/shifts/start")}>
-              Start shift
-            </button>
-            <button type="button" className="rounded-lg border border-line px-3 py-2 text-sm" onClick={() => void shiftAction("/api/v1/operators/shifts/ready")}>
-              Mark ready
-            </button>
-          </div>
-          <form className="mt-3 space-y-2" onSubmit={submitHandover}>
-            <textarea
-              value={handoverNote}
-              onChange={(event) => setHandoverNote(event.target.value)}
-              placeholder="Handover note"
-              className="w-full rounded-lg border border-line bg-ink px-3 py-2 text-sm"
-            />
-            <button type="submit" className="rounded-lg border border-line px-3 py-2 text-sm">
-              Hand over
-            </button>
-          </form>
-          {shiftError ? <p className="mt-2 text-sm text-sos">{shiftError}</p> : null}
+          <p className="mt-2 text-sm text-slate-300">Manage readiness and hand over to a receiving operator from the Shift page.</p>
+          <Link to="/shift" className="mt-3 inline-block rounded-lg border border-line px-3 py-2">Open Shift</Link>
         </article>
         <article className="rounded-2xl border border-line bg-panel p-4 lg:col-span-2">
           <div className="flex flex-wrap items-center justify-between gap-2">

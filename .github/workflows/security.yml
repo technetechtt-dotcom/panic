@@ -1,0 +1,58 @@
+name: Security
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    - cron: '23 4 * * 1'
+permissions:
+  contents: read
+jobs:
+  codeql:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: github/codeql-action/init@v3
+        with:
+          languages: javascript-typescript
+      - uses: github/codeql-action/analyze@v3
+  secrets:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: trufflesecurity/trufflehog@v3.92.5
+        with:
+          extra_args: --only-verified
+  production-images:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - name: api
+            dockerfile: services/api/Dockerfile
+          - name: web
+            dockerfile: apps/monitoring-web/Dockerfile
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build production image
+        run: >-
+          docker build -f ${{ matrix.dockerfile }} -t guardian-${{ matrix.name }}:ci
+          --build-arg VITE_MAP_TILE_URL=https://tiles.example.test/{z}/{x}/{y}.png
+          --build-arg VITE_MAP_TILE_ATTRIBUTION=Guardian .
+      - name: Scan image
+        uses: aquasecurity/trivy-action@0.33.1
+        with:
+          image-ref: guardian-${{ matrix.name }}:ci
+          severity: HIGH,CRITICAL
+          exit-code: '1'
+          ignore-unfixed: false
+      - name: Generate SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          image: guardian-${{ matrix.name }}:ci
+          artifact-name: guardian-${{ matrix.name }}-sbom.spdx.json

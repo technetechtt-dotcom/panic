@@ -160,6 +160,12 @@ data class EvidenceEntity(
     val uploadState: String,
     val retryCount: Int,
     val size: Int,
+    val captureId: String? = null,
+    val chunkIndex: Int? = null,
+    val chunkCount: Int? = null,
+    val originalSize: Long? = null,
+    val originalSha256: String? = null,
+    val capturedAt: String? = null,
 )
 
 @Dao
@@ -180,9 +186,27 @@ interface EvidenceDao {
     suspend fun lastSequence(localId: String, type: String): Int
 }
 
+@Entity(tableName = "tracking_outbox")
+data class TrackingEntity(
+    @PrimaryKey val sampleId: String,
+    val sealed: ByteArray,
+    val nextAttemptAt: Long,
+    val dead: Boolean = false,
+)
+
+@Dao
+interface TrackingDao {
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun put(entity: TrackingEntity)
+    @Query("SELECT * FROM tracking_outbox WHERE dead = 0 AND nextAttemptAt <= :now ORDER BY nextAttemptAt LIMIT 100")
+    suspend fun due(now: Long): List<TrackingEntity>
+    @Query("DELETE FROM tracking_outbox WHERE sampleId = :id")
+    suspend fun delete(id: String)
+}
+
 @Database(
-    entities = [IncidentEntity::class, LocationEntity::class, HeartbeatEntity::class, EscalationEntity::class, EvidenceEntity::class],
-    version = 4,
+    entities = [IncidentEntity::class, LocationEntity::class, HeartbeatEntity::class, EscalationEntity::class, EvidenceEntity::class, TrackingEntity::class],
+    version = 5,
     exportSchema = true,
 )
 abstract class GuardianDatabase : RoomDatabase() {
@@ -190,6 +214,7 @@ abstract class GuardianDatabase : RoomDatabase() {
     abstract fun locations(): LocationDao
     abstract fun heartbeats(): HeartbeatDao
     abstract fun escalations(): EscalationDao
+    abstract fun tracking(): TrackingDao
     abstract fun evidence(): EvidenceDao
 }
 
@@ -290,7 +315,19 @@ object GuardianMigrations {
     val MIGRATION_3_4 = object : Migration(3, 4) {
         override fun migrate(db: SupportSQLiteDatabase) = sql3to4.forEach(db::execSQL)
     }
-    val all = arrayOf(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
+    val sql4to5 = listOf(
+        "ALTER TABLE evidence_outbox ADD COLUMN captureId TEXT",
+        "ALTER TABLE evidence_outbox ADD COLUMN chunkIndex INTEGER",
+        "ALTER TABLE evidence_outbox ADD COLUMN chunkCount INTEGER",
+        "ALTER TABLE evidence_outbox ADD COLUMN originalSize INTEGER",
+        "ALTER TABLE evidence_outbox ADD COLUMN originalSha256 TEXT",
+        "ALTER TABLE evidence_outbox ADD COLUMN capturedAt TEXT",
+        "CREATE TABLE IF NOT EXISTS tracking_outbox (sampleId TEXT NOT NULL PRIMARY KEY, sealed BLOB NOT NULL, nextAttemptAt INTEGER NOT NULL, dead INTEGER NOT NULL)",
+    )
+    val MIGRATION_4_5 = object : Migration(4, 5) {
+        override fun migrate(db: SupportSQLiteDatabase) = sql4to5.forEach(db::execSQL)
+    }
+    val all = arrayOf(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
 }
 
 class RoomEscalationStore(private val dao: EscalationDao) : za.co.guardian.core.EscalationLocalStore {

@@ -1,11 +1,12 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useParams } from "react-router-dom";
 import { CircleMarker, MapContainer, Polygon, Polyline, TileLayer } from "react-leaflet";
 import "leaflet/dist/leaflet.css";
-import { api, type Heartbeat, type Incident, type LocationPoint, type TimelineEntry } from "../api/client";
+import { api, apiBlob, type Heartbeat, type Incident, type LocationPoint, type TimelineEntry } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
 import { Badge } from "./IncidentsPage";
+import { responderActions } from "./ResponderDashboardPage";
 import { AiPanel } from "./AiPanel";
 
 const tileUrl = import.meta.env.VITE_MAP_TILE_URL || "https://tile.openstreetmap.org/{z}/{x}/{y}.png";
@@ -38,6 +39,10 @@ export function IncidentDetailPage() {
   const { session } = useAuth();
   const token = session?.accessToken ?? null;
   const queryClient = useQueryClient();
+  const [communicationChannel, setCommunicationChannel] = useState("PHONE");
+  const [communicationType, setCommunicationType] = useState("CONNECTED");
+  const [communicationNote, setCommunicationNote] = useState("");
+  const [externalReference, setExternalReference] = useState("");
   const [note, setNote] = useState("");
   const [responderId, setResponderId] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -50,6 +55,9 @@ export function IncidentDetailPage() {
   const operator = session?.user.role !== "RESPONDER";
   const canManageEvidence = session?.user.role === "ADMIN" || session?.user.role === "SUPERVISOR";
 
+  const tabs = operator ? ["overview", "map", "evidence", "guardians", "responders", "timeline", "communications", "profile", "intelligence"] : ["overview", "map", "timeline", "profile"];
+  const assignments = useQuery({ queryKey: ["incidents"], queryFn: () => api<Incident[]>("/api/v1/incidents", token), enabled: !operator, refetchInterval: 4_000 });
+  const assignment = assignments.data?.find(row => row.id === id)?.assignment;
   const incident = useQuery({
     queryKey: ["incident", id],
     queryFn: () => api<Incident>(`/api/v1/incidents/${id}`, token),
@@ -78,8 +86,12 @@ export function IncidentDetailPage() {
   const evidence = useQuery({
     queryKey: ["evidence", id],
     enabled: operator,
-    queryFn: () => api<Array<{ id: string; sequence: number; contentType: string; byteLength: number; capturedAt?: string; uploadedAt?: string; sha256?: string }>>(`/api/v1/incidents/${id}/evidence`, token),
+    queryFn: () => api<Array<{ id: string; artifactId?: string | null; sequence: number; contentType: string; byteLength: number; capturedAt?: string; uploadedAt?: string; sha256?: string }>>(`/api/v1/incidents/${id}/evidence`, token),
   });
+  const artifacts = useQuery({ queryKey: ["artifacts", id], enabled: operator, refetchInterval: 5_000,
+    queryFn: () => api<Array<{ id: string; contentType: string; totalSize: number; sha256: string; completedAt: string | null }>>(`/api/v1/incidents/${id}/artifacts`, token) });
+  useEffect(() => () => { if (media) URL.revokeObjectURL(media.url); }, [media]);
+  useEffect(() => () => { if (preview?.startsWith("blob:")) URL.revokeObjectURL(preview); }, [preview]);
   const responders = useQuery({
     queryKey: ["responders"],
     enabled: operator,
@@ -103,6 +115,7 @@ export function IncidentDetailPage() {
   });
   const communications = useQuery({
     queryKey: ["communications", id],
+    enabled: operator,
     queryFn: () => api<CommunicationEntry[]>(`/api/v1/incidents/${id}/communications`, token),
     refetchInterval: 4_000,
   });
@@ -182,11 +195,17 @@ export function IncidentDetailPage() {
       {current ? (
         <>
         <nav className="mt-4 flex flex-wrap gap-2" aria-label="Incident sections" role="tablist">
-          {["overview", "map", "evidence", "guardians", "responders", "timeline", "communications", "profile", "intelligence"].map((name) => (
+          {tabs.map((name) => (
             <button
               key={name}
               type="button"
               role="tab"
+              tabIndex={tab === name ? 0 : -1}
+              onKeyDown={event => {
+                const index = tabs.indexOf(name);
+                const target = event.key === "ArrowRight" ? tabs[(index + 1) % tabs.length] : event.key === "ArrowLeft" ? tabs[(index - 1 + tabs.length) % tabs.length] : event.key === "Home" ? tabs[0] : event.key === "End" ? tabs.at(-1) : undefined;
+                if (target) { event.preventDefault(); setTab(target); document.getElementById(`incident-tab-${target}`)?.focus(); }
+              }}
               aria-selected={tab === name}
               aria-controls={`incident-panel-${name}`}
               id={`incident-tab-${name}`}
@@ -197,11 +216,24 @@ export function IncidentDetailPage() {
             </button>
           ))}
         </nav>
-        {tab === "intelligence" ? <AiPanel id={id} token={token} canDecide={operator} /> : null}
+        {tab === "intelligence" && operator ? <section id="incident-panel-intelligence" role="tabpanel" tabIndex={0} aria-labelledby="incident-tab-intelligence"><AiPanel id={id} token={token} canDecide={operator} /></section> : null}
         {tab === "communications" ? (
           <section id="incident-panel-communications" role="tabpanel" aria-labelledby="incident-tab-communications" className="mt-4 rounded-2xl border border-line bg-panel p-4">
             <h2 className="text-xl font-semibold">Communications</h2>
             <p className="mt-1 text-sm text-slate-400">Ordered delivery, operator, responder and emergency-service events.</p>
+            {operator ? <form className="mt-4 space-y-3" onSubmit={event => {
+              event.preventDefault(); setError(null);
+              void api(`/api/v1/incidents/${id}/communications`, token, { method: "POST", body: JSON.stringify({ channel: communicationChannel, type: communicationType, note: communicationNote, occurredAt: new Date().toISOString(), externalReference: externalReference || undefined }) })
+                .then(() => { setCommunicationNote(""); setExternalReference(""); return queryClient.invalidateQueries({ queryKey: ["communications", id] }); })
+                .catch((caught: unknown) => setError(caught instanceof Error ? caught.message : "Communication could not be recorded."));
+            }}>
+              <label className="block">Channel<select className="ml-2 bg-ink p-2" value={communicationChannel} onChange={e => setCommunicationChannel(e.target.value)}>{["PHONE", "SMS", "EMAIL", "RADIO", "OTHER"].map(c => <option key={c}>{c}</option>)}</select></label>
+              <label className="block">Type<select className="ml-2 bg-ink p-2" value={communicationType} onChange={e => setCommunicationType(e.target.value)}>{["ATTEMPT", "CONNECTED", "MESSAGE", "HANDOFF", "NOTE"].map(c => <option key={c}>{c}</option>)}</select></label>
+              <label className="block">Note<textarea required maxLength={2000} className="block w-full bg-ink p-2" value={communicationNote} onChange={e => setCommunicationNote(e.target.value)} /></label>
+              <label className="block">External reference<input className="ml-2 bg-ink p-2" maxLength={200} value={externalReference} onChange={e => setExternalReference(e.target.value)} /></label>
+              <button className="rounded border border-line p-2" type="submit">Record communication</button>
+              {error ? <p role="alert">{error}</p> : null}
+            </form> : null}
             <ol className="mt-4 space-y-3 text-sm">
               {(communications.data ?? []).map(entry => <li key={entry.id} className="border-l-2 border-line pl-3">
                 <time className="block text-xs text-slate-400">{new Date(entry.at).toLocaleString()}</time>
@@ -224,7 +256,7 @@ export function IncidentDetailPage() {
             </dl>
           </section>
         ) : null}
-        <div id={`incident-panel-${tab}`} role="tabpanel" aria-labelledby={`incident-tab-${tab}`} className={`mt-4 grid gap-4 lg:grid-cols-[280px_1fr_320px] ${["intelligence","communications","profile"].includes(tab) ? "hidden" : ""}`}>
+        {!["intelligence","communications","profile"].includes(tab) ? <div id={`incident-panel-${tab}`} role="tabpanel" tabIndex={0} aria-labelledby={`incident-tab-${tab}`} className="mt-4 grid gap-4 lg:grid-cols-[280px_1fr_320px]">
           <section className={`rounded-2xl border border-line bg-panel p-4 ${tab === "overview" || tab === "responders" ? "" : "lg:block hidden"}`}>
             <h1 className="text-2xl font-semibold">{current.userDisplayName}</h1>
             <dl className="mt-4 space-y-2 text-sm">
@@ -291,6 +323,7 @@ export function IncidentDetailPage() {
                 <p className="mt-2 text-xs text-slate-400">This restates the incident. It cannot cancel, accuse, or dispatch.</p>
               </div>
             ) : null}
+            {operator ? <>
             <h2 className={`mt-4 text-lg font-semibold ${tab === "guardians" || tab === "overview" ? "" : "hidden"}`}>Guardian delivery</h2>
             <ul className={`mt-2 text-sm ${tab === "guardians" || tab === "overview" ? "" : "hidden"}`}>
               {(deliveries.data ?? []).map((item) => (
@@ -306,12 +339,22 @@ export function IncidentDetailPage() {
             </ul>
             <h2 className={`mt-4 text-lg font-semibold ${tab === "evidence" || tab === "overview" ? "" : "hidden"}`}>Evidence</h2>
             <ul className={`mt-2 space-y-2 text-sm ${tab === "evidence" || tab === "overview" ? "" : "hidden"}`}>
-              {(evidence.data ?? []).map((item) => (
+              {(artifacts.data ?? []).map(item => <li key={item.id}>{item.contentType} · {item.totalSize} bytes · SHA-256 {item.sha256.slice(0, 12)} · {item.completedAt ? "verified capture" : "upload incomplete"}
+                {item.completedAt ? <button className="ml-2 underline" onClick={() => {
+                  void apiBlob(`/api/v1/incidents/${id}/artifacts/${item.id}/stream`, token).then(blob => {
+                    const url = URL.createObjectURL(blob);
+                    if (item.contentType.startsWith("image/")) { setPreview(url); setMedia(null); }
+                    else { setMedia({ url, type: item.contentType }); setPreview(null); }
+                  }).catch((caught: unknown) => setError(caught instanceof Error ? caught.message : "Evidence unavailable."));
+                }}>Open capture</button> : null}</li>)}
+            </ul>
+            <ul className={`mt-2 space-y-2 text-sm ${tab === "evidence" || tab === "overview" ? "" : "hidden"}`}>
+              {(evidence.data ?? []).filter(item => !item.artifactId).map((item) => (
                 <li key={item.id}>
-                  {item.contentType} · {item.byteLength} bytes · part {item.sequence}
+                  Legacy chunk · {item.contentType} · {item.byteLength} bytes · part {item.sequence}
                   {item.capturedAt ? ` · captured ${new Date(item.capturedAt).toLocaleString()}` : ""}
                   {item.sha256 ? ` · sha256 ${item.sha256.slice(0, 12)}` : ""}
-                  <button
+                  {item.contentType !== "video/mp4" ? <button
                     type="button"
                     className="ml-2 underline"
                     onClick={() => {
@@ -331,7 +374,7 @@ export function IncidentDetailPage() {
                     }}
                   >
                     Open
-                  </button>
+                  </button> : <span> · Original capture grouping unavailable; download chunks with the manifest for forensic review.</span>}
                 </li>
               ))}
               {evidence.data?.length === 0 ? <li>No evidence stored for this incident.</li> : null}
@@ -380,6 +423,7 @@ export function IncidentDetailPage() {
             {preview ? <img src={preview} alt="Incident evidence" className="mt-3 max-h-64 rounded-lg" /> : null}
             {media?.type.startsWith("audio/") ? <audio className="mt-3 w-full" controls src={media.url} /> : null}
             {media?.type.startsWith("video/") ? <video className="mt-3 max-h-64 w-full" controls src={media.url} /> : null}
+            </> : null}
             {operator ? (
               <label className="mt-4 block text-sm" htmlFor="responder">
                 Responder
@@ -407,7 +451,7 @@ export function IncidentDetailPage() {
                   : "No heartbeat yet."}
             </p>
             <p className="text-sm text-slate-300">Contact: {current.contactStatus}</p>
-            <label className="mt-4 block text-sm" htmlFor="note">
+            {operator ? <label className="mt-4 block text-sm" htmlFor="note">
               Operator note
               <textarea
                 id="note"
@@ -416,7 +460,7 @@ export function IncidentDetailPage() {
                 maxLength={500}
                 className="mt-1 h-20 w-full rounded-lg border border-line bg-ink p-2"
               />
-            </label>
+            </label> : null}
             {error ? <p className="mt-2 text-sm text-sos">{error}</p> : null}
             <div className="mt-3 grid gap-2">
               {operator ? (
@@ -433,14 +477,14 @@ export function IncidentDetailPage() {
                   Claim this incident
                 </button>
               ) : null}
-              <button
+              {operator ? <button
                 type="button"
                 disabled={!operator || !["SOS", "CONCERN", "HIGH_RISK"].includes(current.state) || action.isPending}
                 onClick={() => action.mutate("acknowledge")}
                 className="rounded-lg bg-warn px-4 py-3 font-semibold text-ink disabled:opacity-40"
               >
                 Acknowledge
-              </button>
+              </button> : null}
               {operator ? (
                 <button
                   type="button"
@@ -496,16 +540,7 @@ export function IncidentDetailPage() {
                 </button>
               ) : (
                 <>
-                  {(
-                    [
-                      ["ACCEPTED", "Accept assignment"],
-                      ["EN_ROUTE", "En route"],
-                      ["ON_SCENE", "On scene"],
-                      ["USER_LOCATED", "Report person located"],
-                      ["COMPLETED", "Complete assignment"],
-                      ["DECLINED", "Decline assignment"],
-                    ] as const
-                  ).map(([status, label]) => (
+                  {responderActions(assignment ?? "").map(([status, label]) => (
                     <button
                       key={status}
                       type="button"
@@ -524,7 +559,7 @@ export function IncidentDetailPage() {
               )}
             </div>
           </section>
-        </div>
+        </div> : null}
         </>
       ) : null}
     </main>

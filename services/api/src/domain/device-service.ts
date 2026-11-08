@@ -94,7 +94,7 @@ export class DeviceService {
       lastSeenAt: row.lastSeenAt,
       nickname: row.nickname,
       fcmToken: row.fcmToken,
-      emergencyCredentialProvisioned: Boolean(row.emergencyTokenHash),
+      emergencyCredentialProvisioned: row.emergencyCredentialProvisioned === true,
       createdAt: row.createdAt,
       updatedAt: row.updatedAt,
     }));

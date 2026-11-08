@@ -28,12 +28,20 @@ export function ArchivePage() {
   const [state, setState] = useState("ALL");
   const [trigger, setTrigger] = useState("ALL");
   const [testMode, setTestMode] = useState("all");
+  const [from, setFrom] = useState("");
+  const [to, setTo] = useState("");
+  const [responderId, setResponderId] = useState("");
+  const [operatorId, setOperatorId] = useState("");
   const [page, setPage] = useState(1);
   const params = new URLSearchParams({ page: String(page), pageSize: "25", state, trigger });
+  if (from) params.set("from", new Date(`${from}T00:00:00`).toISOString());
+  if (to) params.set("to", new Date(`${to}T23:59:59.999`).toISOString());
+  if (responderId) params.set("responderId", responderId);
+  if (operatorId) params.set("operatorId", operatorId);
   if (submitted) params.set("query", submitted);
   if (testMode !== "all") params.set("isTest", String(testMode === "test"));
   const archive = useQuery({
-    queryKey: ["archive", page, submitted, state, trigger, testMode],
+    queryKey: ["archive", params.toString()],
     queryFn: () => api<ArchiveResult>(`/api/v1/admin/incidents/archive?${params.toString()}`, token),
   });
   function submit(event: FormEvent) {
@@ -64,6 +72,10 @@ export function ArchivePage() {
             <option value="all">Live + test</option><option value="live">Live only</option><option value="test">TEST only</option>
           </select>
         </label>
+        <label>From date<input type="date" value={from} onChange={e => { setFrom(e.target.value); setPage(1); }} className="block w-full bg-ink p-2" /></label>
+        <label>Through date<input type="date" value={to} onChange={e => { setTo(e.target.value); setPage(1); }} className="block w-full bg-ink p-2" /></label>
+        <label>Responder ID<input value={responderId} onChange={e => { setResponderId(e.target.value); setPage(1); }} className="block w-full bg-ink p-2" /></label>
+        <label>Operator ID<input value={operatorId} onChange={e => { setOperatorId(e.target.value); setPage(1); }} className="block w-full bg-ink p-2" /></label>
         <button className="rounded-lg border border-line px-3 py-2 text-sm md:col-span-4" type="submit">Apply search</button>
       </form>
       {archive.isError ? <p className="mt-4 text-sos">Archive could not be loaded.</p> : null}

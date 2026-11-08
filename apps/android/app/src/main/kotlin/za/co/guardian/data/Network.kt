@@ -535,6 +535,7 @@ data class JourneyWire(
     val destinationLabel: String = "",
     val expectedArrivalAt: String? = null,
     val checkInIntervalSeconds: Int = 300,
+    val routeStatus: String = "UNAVAILABLE",
 )
 
 @Serializable
@@ -588,12 +589,23 @@ data class CancelEnvelope(val data: CancelWire)
 data class CancelWire(val appearance: String)
 
 @Serializable
+data class CaptureMetadata(
+    val captureId: String,
+    val chunkIndex: Int,
+    val chunkCount: Int,
+    val originalSize: Long,
+    val originalSha256: String,
+    val capturedAt: String,
+)
+
+@Serializable
 data class EvidenceBody(
     val clientChunkId: String,
     val sequence: Int,
     val sha256: String,
     val contentType: String,
     val bytesBase64: String,
+    val capture: CaptureMetadata? = null,
 )
 
 class RetrofitIncidentApi constructor(

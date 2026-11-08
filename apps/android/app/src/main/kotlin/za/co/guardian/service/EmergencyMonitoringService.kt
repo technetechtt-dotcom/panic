@@ -248,7 +248,7 @@ class EmergencyUploader @Inject constructor(
                 if (!captureEvidence("audio", battery)) break
                 val read = recorder.read(buffer, 0, minOf(buffer.size, 16_000))
                 if (read <= 0) break
-                vault.store(incident.triggerId, "audio", buffer.copyOf(read))
+                vault.store(incident.triggerId, "audio", EvidenceVault.pcm16MonoWav(buffer.copyOf(read)))
                 flushEvidence(incident.triggerId, incident.serverId)
             }
         } finally {
@@ -386,9 +386,10 @@ class EmergencyUploader @Inject constructor(
                         when (row.type) {
                             "photo" -> "image/jpeg"
                             "video" -> "video/mp4"
-                            else -> "audio/pcm"
+                            else -> if (row.captureId != null) "audio/wav" else "audio/pcm"
                         },
                         EvidenceVault.base64(plain),
+                        if (row.captureId != null && row.originalSha256 != null && row.capturedAt != null) za.co.guardian.data.CaptureMetadata(row.captureId, row.chunkIndex ?: 0, row.chunkCount ?: 1, row.originalSize ?: row.size.toLong(), row.originalSha256, row.capturedAt) else null,
                     ),
                 )
                 vault.mark(row.evidenceId, "VERIFIED", row.retryCount)
@@ -419,10 +420,10 @@ class IncidentFlushWorker @AssistedInject constructor(
 class ResumeProtectionReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         if (intent.action != Intent.ACTION_BOOT_COMPLETED) return
-        val prefs = guardianEncryptedPreferences(context, "guardian_settings_secure")
-        val incidentActive = prefs.getBoolean("incident_active", false)
-        val journeyActive = !prefs.getString("journey_id", null).isNullOrBlank()
-        val responderActive = !prefs.getString("responder_incident_id", null).isNullOrBlank()
+        val restored = za.co.guardian.data.SettingsStore(context)
+        val incidentActive = restored.incidentActive()
+        val journeyActive = restored.journeyId() != null
+        val responderActive = restored.responderIncidentId() != null
         if (!incidentActive && !journeyActive && !responderActive) return
         val channelId = "guardian.resume"
         val manager = context.getSystemService(NotificationManager::class.java)

@@ -7,7 +7,7 @@ import java.sql.DriverManager
 
 class RoomMigrationSqlTest {
     @Test
-    fun migratesVersion1Through4AndKeepsExistingRows() {
+    fun migratesVersion1Through5AndKeepsExistingRows() {
         Class.forName("org.sqlite.JDBC")
         DriverManager.getConnection("jdbc:sqlite::memory:").use { connection ->
             connection.createStatement().use { statement ->
@@ -37,6 +37,15 @@ class RoomMigrationSqlTest {
                 }
                 statement.executeQuery("SELECT stage FROM escalation_outbox LIMIT 0").use { }
                 statement.execute("INSERT INTO evidence_outbox VALUES ('e1','t1','','audio',0,1,'abc','/tmp','CAPTURED',0,12)")
+                GuardianMigrations.sql4to5.forEach { statement.execute(it) }
+                statement.executeQuery("SELECT captureId FROM evidence_outbox WHERE evidenceId = 'e1'").use { rows ->
+                    assertTrue(rows.next())
+                    assertEquals(null, rows.getString(1))
+                }
+                statement.execute("INSERT INTO tracking_outbox VALUES ('sample-1',X'010203',0,0)")
+                statement.executeQuery("SELECT LENGTH(sealed) FROM tracking_outbox").use { rows ->
+                    assertTrue(rows.next()); assertEquals(3, rows.getInt(1))
+                }
                 statement.executeQuery("SELECT COUNT(*) FROM evidence_outbox").use { rows ->
                     assertTrue(rows.next())
                     assertEquals(1, rows.getInt(1))
@@ -49,7 +58,7 @@ class RoomMigrationSqlTest {
             }
         }
         assertEquals(1, GuardianMigrations.MIGRATION_1_2.startVersion)
-        assertEquals(4, GuardianMigrations.MIGRATION_3_4.endVersion)
-        assertEquals(3, GuardianMigrations.all.size)
+        assertEquals(5, GuardianMigrations.MIGRATION_4_5.endVersion)
+        assertEquals(4, GuardianMigrations.all.size)
     }
 }

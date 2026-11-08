@@ -181,6 +181,8 @@ model Incident {
   heartbeats         DeviceHeartbeat[]
   timeline           TimelineEvent[]
   escalations        IncidentEscalation[]
+  artifacts          EvidenceArtifact[]
+  guardianAcknowledgements GuardianAcknowledgement[]
   evidence           EvidenceChunk[]
   deliveries         NotificationDelivery[]
   rooms              IncidentRoom[]
@@ -317,6 +319,8 @@ model TrustedContact {
 }
 
 model ProtectionSession {
+  routePolyline Json?
+  routeStatus String @default("UNAVAILABLE")
   id                      String   @id @db.Uuid
   userId                  String   @db.Uuid
   destinationLabel        String
@@ -349,7 +353,34 @@ model RiskSignal {
   @@index([userId])
 }
 
+model GuardianAcknowledgement {
+  incidentId       String @db.Uuid
+  trustedContactId String @db.Uuid
+  acknowledgedAt   DateTime
+  incident         Incident @relation(fields: [incidentId], references: [id], onDelete: Cascade)
+  @@id([incidentId, trustedContactId])
+}
+
+model EvidenceArtifact {
+  id          String @id @db.Uuid
+  incidentId  String @db.Uuid
+  captureId   String @db.Uuid
+  capturedAt  DateTime
+  contentType String
+  totalSize   Int
+  sha256      String
+  chunkCount  Int
+  completedAt DateTime?
+  createdAt   DateTime @default(now())
+  incident    Incident @relation(fields: [incidentId], references: [id], onDelete: Cascade)
+  chunks      EvidenceChunk[]
+  @@unique([incidentId, captureId])
+}
+
 model EvidenceChunk {
+  artifactId    String? @db.Uuid
+  chunkIndex    Int?
+  artifact      EvidenceArtifact? @relation(fields: [artifactId], references: [id], onDelete: Cascade)
   id            String   @id @db.Uuid
   incidentId    String   @db.Uuid
   clientChunkId String   @db.Uuid
@@ -366,6 +397,7 @@ model EvidenceChunk {
   updatedAt     DateTime @updatedAt
   incident      Incident @relation(fields: [incidentId], references: [id], onDelete: Cascade)
 
+  @@unique([artifactId, chunkIndex])
   @@unique([incidentId, clientChunkId])
   @@index([incidentId, sequence])
 }
@@ -509,6 +541,7 @@ model ResponderProfile {
 }
 
 model OutboxEvent {
+  dedupeKey String? @unique
   id            String    @id @db.Uuid
   type          String
   aggregateType String
@@ -644,4 +677,28 @@ model SearchPrediction {
   createdAt  DateTime @default(now())
 
   @@index([incidentId, createdAt])
+}
+
+model TrackingSample {
+  sampleId String @id @db.Uuid
+  userId String @db.Uuid
+  kind String
+  targetId String @db.Uuid
+  latitude Float
+  longitude Float
+  recordedAt DateTime
+  accuracy Float?
+  speedMps Float?
+  bearing Float?
+  source String
+  receivedAt DateTime @default(now())
+  @@index([kind, targetId, recordedAt])
+}
+
+model IntegrationHealth {
+  kind String @id
+  lastSuccessAt DateTime?
+  lastFailureAt DateTime?
+  detail String
+  updatedAt DateTime @updatedAt
 }

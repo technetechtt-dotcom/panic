@@ -1,3 +1,4 @@
+import "./tracing";
 import "reflect-metadata";
 import { NestFactory } from "@nestjs/core";
 import type { INestApplication } from "@nestjs/common";

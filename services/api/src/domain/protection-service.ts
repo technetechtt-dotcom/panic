@@ -1,3 +1,4 @@
+import { roadRoute, distanceToRoute, type RoutePoint } from "./routing";
 import { createHash } from "node:crypto";
 import type { CancelIncidentInput, EvidenceChunkInput, GuardianInput, GuardianUpdateInput, JourneyInput, SafetyPinInput } from "@guardian/shared-validation";
 import { AppError } from "./errors";
@@ -51,6 +52,8 @@ export interface JourneyRecord {
   destinationLatitude: number | null;
   destinationLongitude: number | null;
   corridorMeters: number;
+  routePolyline?: RoutePoint[] | null;
+  routeStatus?: string;
 }
 
 export interface JourneyStore {
@@ -77,6 +80,7 @@ export interface PinStore {
 }
 
 export interface EvidenceRecord {
+  capture?: EvidenceChunkInput["capture"];
   id?: string;
   incidentId: string;
   clientChunkId: string;
@@ -97,7 +101,7 @@ export interface EvidenceStore {
 }
 
 function maxEvidenceBytes(contentType: string): number {
-  return contentType === "audio/pcm" ? 200 * 1024 : 1_500_000;
+  return contentType.startsWith("audio/") ? 200 * 1024 : 1_500_000;
 }
 
 export class ProtectionService {
@@ -194,10 +198,12 @@ export class ProtectionService {
   }
 
   async acceptInvitation(actor: Actor, token: string): Promise<TrustedContactRecord> {
+    if (actor.role !== "GUARDIAN") throw new AppError("FORBIDDEN", 403, "Sign in with a Guardian account to accept this invitation.");
     const contact = await this.guardians.findByInvitationToken(token);
     if (!contact || contact.invitationStatus === "DECLINED") {
       throw new AppError("NOT_FOUND", 404, "That invitation was not found.");
     }
+    if (contact.guardianUserId && contact.guardianUserId !== actor.id) throw new AppError("INVITATION_USED", 409, "This invitation has already been accepted.");
     contact.guardianUserId = actor.id;
     contact.invitationStatus = "ACCEPTED";
     await this.guardians.save(contact);
@@ -248,6 +254,10 @@ export class ProtectionService {
       destinationLongitude,
       corridorMeters: input.corridorMeters ?? (mode === "MEETING" ? 200 : mode === "RIDE" || mode === "DRIVE" ? 800 : mode === "HIGH_RISK" ? 250 : 400),
     };
+    if ((mode === "DRIVE" || mode === "RIDE") && journey.originLatitude != null && journey.originLongitude != null && destinationLatitude != null && destinationLongitude != null) {
+      journey.routePolyline = await roadRoute({ latitude: journey.originLatitude, longitude: journey.originLongitude }, { latitude: destinationLatitude, longitude: destinationLongitude }).catch(() => null);
+      journey.routeStatus = journey.routePolyline ? "ROUTED" : "UNAVAILABLE";
+    }
     await this.journeys.insert(journey);
     return journey;
   }
@@ -310,6 +320,7 @@ export class ProtectionService {
 
   async notePosition(actor: Actor, id: string, latitude: number, longitude: number): Promise<{ deviated: boolean; level: string }> {
     const journey = await this.requireJourney(actor, id);
+    if (journey.status === "COMPLETED") throw new AppError("JOURNEY_CLOSED", 409, "This journey is complete.");
     if (
       journey.originLatitude === null ||
       journey.originLongitude === null ||
@@ -318,7 +329,9 @@ export class ProtectionService {
     ) {
       return { deviated: false, level: "NORMAL" };
     }
-    const deviated = routeDeviates(
+    const roadMode = journey.mode === "DRIVE" || journey.mode === "RIDE";
+    if (roadMode && !journey.routePolyline?.length) return { deviated: false, level: "ROUTE_UNAVAILABLE" };
+    const deviated = roadMode ? distanceToRoute(latitude, longitude, journey.routePolyline!) > journey.corridorMeters : routeDeviates(
       latitude,
       longitude,
       journey.originLatitude,
@@ -439,6 +452,7 @@ export class ProtectionService {
     const outcome = await this.evidence.insert({
       id: this.ids.uuid(),
       incidentId,
+      capture: input.capture,
       clientChunkId: input.clientChunkId,
       sequence: input.sequence,
       sha256: input.sha256,

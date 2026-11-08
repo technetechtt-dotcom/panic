@@ -18,11 +18,11 @@ export class OutboxService {
     payload: OutboxPayload;
     maxAttempts?: number;
     nextAttemptAt?: Date;
+    dedupeKey?: string;
   }): Promise<string> {
     const now = this.clock.now();
     const id = this.ids.uuid();
-    await this.prisma.outboxEvent.create({
-      data: {
+    const data = {
         id,
         type: input.type,
         aggregateType: input.aggregateType,
@@ -34,8 +34,13 @@ export class OutboxService {
         nextAttemptAt: input.nextAttemptAt ?? now,
         createdAt: now,
         updatedAt: now,
-      },
-    });
+        dedupeKey: input.dedupeKey ?? null,
+      };
+    if (input.dedupeKey) {
+      const row = await this.prisma.outboxEvent.upsert({ where: { dedupeKey: input.dedupeKey }, create: data, update: {} });
+      return row.id;
+    }
+    await this.prisma.outboxEvent.create({ data });
     return id;
   }
 
@@ -51,7 +56,7 @@ export class OutboxService {
     const now = this.clock.now();
     const candidates = await this.prisma.outboxEvent.findMany({
       where: {
-        status: { in: ["PENDING", "FAILED"] },
+        status: { in: ["PENDING", "FAILED", "PROCESSING"] },
         nextAttemptAt: { lte: now },
         OR: [{ lockedAt: null }, { lockedAt: { lt: new Date(now.getTime() - 60_000) } }],
       },
@@ -63,8 +68,8 @@ export class OutboxService {
       const updated = await this.prisma.outboxEvent.updateMany({
         where: {
           id: row.id,
-          status: { in: ["PENDING", "FAILED"] },
-          OR: [{ lockedBy: null }, { lockedBy: workerId }, { lockedAt: { lt: new Date(now.getTime() - 60_000) } }],
+          status: { in: ["PENDING", "FAILED", "PROCESSING"] },
+          OR: [{ lockedBy: null }, { lockedAt: { lt: new Date(now.getTime() - 60_000) } }],
         },
         data: {
           status: "PROCESSING",
@@ -85,6 +90,10 @@ export class OutboxService {
       });
     }
     return claimed;
+  }
+
+  async renewLeases(workerId: string, ids: string[]): Promise<void> {
+    await this.prisma.outboxEvent.updateMany({ where: { id: { in: ids }, status: "PROCESSING", lockedBy: workerId }, data: { lockedAt: this.clock.now() } });
   }
 
   async markSent(id: string): Promise<void> {

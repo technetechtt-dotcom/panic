@@ -242,6 +242,7 @@ export class PrismaDeviceStore implements DeviceStore {
 }
 
 function toDeviceRecord(row: {
+  emergencyTokenHash?: string | null;
   id: string;
   userId: string;
   devicePublicId: string;
@@ -277,6 +278,7 @@ function toDeviceRecord(row: {
     lastSeenAt: row.lastSeenAt ?? null,
     nickname: row.nickname ?? null,
     pushTokenUpdatedAt: row.pushTokenUpdatedAt ?? null,
+    emergencyCredentialProvisioned: Boolean(row.emergencyTokenHash),
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };

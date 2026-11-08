@@ -17,6 +17,7 @@ export interface AuthUser {
 
 export interface Incident {
   id: string;
+  assignment?: string;
   userDisplayName: string;
   triggerType: string;
   state: string;
@@ -134,4 +135,14 @@ export async function api<T>(path: string, token: string | null, init: RequestIn
     );
   }
   return body.data as T;
+}
+
+export async function apiBlob(path: string, token: string | null, allowRefresh = true): Promise<Blob> {
+  const response = await fetch(`${base}${path}`, { headers: token ? { Authorization: `Bearer ${token}` } : {}, credentials: "include", cache: "no-store" });
+  if (response.status === 401 && allowRefresh) {
+    const renewed = await refreshSession();
+    if (renewed) return apiBlob(path, renewed, false);
+  }
+  if (!response.ok) throw new ApiError("Evidence could not be opened.", response.status, "EVIDENCE_UNAVAILABLE");
+  return response.blob();
 }

@@ -12,6 +12,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
+import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
@@ -137,6 +138,15 @@ class MainActivity : ComponentActivity() {
                                 nav.navigate("login")
                             }
                         }
+                    }
+                }
+                val currentEntry by nav.currentBackStackEntryAsState()
+                androidx.compose.runtime.LaunchedEffect(currentEntry, signedIn) {
+                    val route = currentEntry?.destination?.route ?: return@LaunchedEffect
+                    val role = tokens.userRole()
+                    if (signedIn && role in setOf("GUARDIAN", "RESPONDER")) {
+                        val common = route == "profile" || route == "privacy" || route == "devices" || route.startsWith("legal/") || route.startsWith("invite/") || route.startsWith("verify") || route.startsWith("reset")
+                        if (!common && route != roleHome()) nav.navigate(roleHome()) { popUpTo(0) { inclusive = true } }
                     }
                 }
                 NavHost(nav, startDestination = start) {

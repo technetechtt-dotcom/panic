@@ -225,6 +225,15 @@ export const fusionSignalSchema = z
   })
   .strict();
 
+const liveTrackingMetadata = {
+  sampleId: z.string().uuid().optional(),
+  recordedAt: isoTime.optional(),
+  accuracy: z.number().nonnegative().max(100000).optional(),
+  speedMps: z.number().min(0).max(200).optional(),
+  bearing: z.number().min(0).max(360).optional(),
+  source: z.string().trim().min(1).max(40).optional(),
+};
+
 export const positionSchema = z
   .object({
     latitude: z.number().min(-90).max(90),
@@ -256,14 +265,7 @@ export const responderStatusSchema = z
   })
   .strict();
 
-const liveTrackingMetadata = {
-  sampleId: z.string().uuid().optional(),
-  recordedAt: isoTime.optional(),
-  accuracy: z.number().nonnegative().max(100000).optional(),
-  speedMps: z.number().min(0).max(200).optional(),
-  bearing: z.number().min(0).max(360).optional(),
-  source: z.string().trim().min(1).max(40).optional(),
-};
+
 
 export const responderLocationSchema = z
   .object({
@@ -276,7 +278,7 @@ export const responderLocationSchema = z
 export const operatorHandoverSchema = z
   .object({
     note: z.string().trim().min(1).max(2000),
-    handoverToId: z.string().uuid().optional(),
+    handoverToId: z.string().uuid(),
   })
   .strict();
 
@@ -336,12 +338,22 @@ export const cancelIncidentSchema = z
   })
   .strict();
 
+const captureMetadata = z.object({
+  captureId: z.string().uuid(),
+  chunkIndex: z.number().int().min(0).max(9999),
+  chunkCount: z.number().int().min(1).max(10000),
+  originalSize: z.number().int().min(1).max(1_000_000_000),
+  originalSha256: z.string().regex(/^[a-f0-9]{64}$/),
+  capturedAt: isoTime,
+}).strict().refine(value => value.chunkIndex < value.chunkCount, "Chunk index must be less than chunk count.");
+
 export const evidenceChunkSchema = z
   .object({
+    capture: captureMetadata.optional(),
     clientChunkId: z.string().uuid(),
     sequence: z.number().int().min(0).max(100000),
     sha256: z.string().regex(/^[a-f0-9]{64}$/),
-    contentType: z.enum(["audio/pcm", "image/jpeg", "video/mp4"]),
+    contentType: z.enum(["audio/pcm", "audio/wav", "image/jpeg", "video/mp4"]),
     bytesBase64: z.string().regex(/^[A-Za-z0-9+/]+={0,2}$/).min(4).max(2_100_000),
   })
   .strict();

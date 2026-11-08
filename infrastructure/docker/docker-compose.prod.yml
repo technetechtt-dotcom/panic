@@ -30,6 +30,11 @@ services:
       NODE_ENV: production
       DATABASE_URL: postgresql://${POSTGRES_USER:-guardian}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-guardian}
       REDIS_URL: redis://redis:6379
+      PUBLIC_WEB_URL: ${PUBLIC_WEB_URL:?Set PUBLIC_WEB_URL to the Guardian Room HTTPS origin}
+      MFA_ENCRYPTION_KEY: ${MFA_ENCRYPTION_KEY:?Set independent MFA_ENCRYPTION_KEY}
+      MAP_TILE_URL: ${VITE_MAP_TILE_URL:?Set production map tile template}
+      ROUTER_URL: ${ROUTER_URL:-}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
       JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:?Set JWT_ACCESS_SECRET}
       EVIDENCE_VAULT_KEY: ${EVIDENCE_VAULT_KEY:?Set EVIDENCE_VAULT_KEY}
       PUBLIC_API_URL: ${PUBLIC_API_URL:?Set PUBLIC_API_URL to the public HTTPS API origin}

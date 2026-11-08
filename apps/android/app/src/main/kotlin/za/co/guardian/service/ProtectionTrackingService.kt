@@ -21,6 +21,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import retrofit2.HttpException
@@ -37,16 +39,19 @@ import javax.inject.Inject
 
 /**
  * Visible foreground location service for active Journey Protection and responder assignments.
- * It keeps a small persistent queue so temporary network loss does not discard the latest route samples.
+ * Each sample is persisted in Room with a Keystore-encrypted payload and retried independently.
  */
 @AndroidEntryPoint
 class ProtectionTrackingService : android.app.Service() {
     @Inject lateinit var api: GuardianApi
     @Inject lateinit var settings: SettingsStore
     @Inject lateinit var signals: PhoneSignals
+    @Inject lateinit var database: za.co.guardian.data.GuardianDatabase
+    @Inject lateinit var vault: za.co.guardian.data.EvidenceVault
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var listener: LocationListener? = null
+    private var retryJob: kotlinx.coroutines.Job? = null
     private val queue by lazy { guardianEncryptedPreferences(this, "guardian_live_tracking_queue_secure") }
     private val queueMutex = Mutex()
 
@@ -80,7 +85,10 @@ class ProtectionTrackingService : android.app.Service() {
         } else {
             startForeground(NOTIFICATION_ID, notification)
         }
-        scope.launch { flushQueue() }
+        if (retryJob == null) retryJob = scope.launch {
+            migrateQueue()
+            while (isActive) { flushQueue(); delay(15_000L) }
+        }
         listen()
         return START_STICKY
     }
@@ -108,51 +116,62 @@ class ProtectionTrackingService : android.app.Service() {
         }
     }
 
+    private suspend fun persist(sample: TrackSample, dead: Boolean = false) {
+        database.tracking().put(za.co.guardian.data.TrackingEntity(sample.sampleId, vault.encrypt(sample.encode().toByteArray(Charsets.UTF_8)), sample.nextAttemptAt, dead))
+    }
+
+    private suspend fun migrateQueue() = queueMutex.withLock {
+        if (queue.getBoolean("migrated_to_room", false)) return@withLock
+        for (line in queue.getString(KEY, "").orEmpty().lineSequence().filter { it.isNotBlank() }) {
+            TrackSample.decode(line)?.let { persist(it) }
+        }
+        // Pre-encryption builds had no capture time. Preserve those rows as encrypted dead letters,
+        // labelled UNKNOWN_TIME rather than inventing a historical GPS timestamp.
+        val legacy = getSharedPreferences("guardian_live_tracking_queue", Context.MODE_PRIVATE)
+        for (line in legacy.getString(KEY, "").orEmpty().lineSequence().filter { it.isNotBlank() }) {
+            val parts = line.split("\t")
+            if (parts.size >= 5) {
+                val lat = parts[2].toDoubleOrNull(); val lon = parts[3].toDoubleOrNull()
+                if (lat != null && lon != null) persist(TrackSample(parts[0], parts[1], UUID.randomUUID().toString(), "UNKNOWN_TIME", lat, lon, null, parts[4].toDoubleOrNull(), null, "LEGACY", 0, 0L), dead = true)
+            }
+        }
+        check(legacy.edit().clear().commit())
+        check(queue.edit().remove(KEY).putBoolean("migrated_to_room", true).commit())
+    }
+
     private suspend fun enqueue(location: Location) = queueMutex.withLock {
-        val existing = queue.getString(KEY, "").orEmpty().lineSequence().filter { it.isNotBlank() }.toMutableList()
-        settings.journeyId()?.let { id -> existing += TrackSample.from("J", id, location).encode() }
-        settings.responderIncidentId()?.let { id -> existing += TrackSample.from("R", id, location).encode() }
-        queue.edit().putString(KEY, existing.takeLast(MAX_PENDING).joinToString("\n")).apply()
+        settings.journeyId()?.let { persist(TrackSample.from("J", it, location)) }
+        settings.responderIncidentId()?.let { persist(TrackSample.from("R", it, location)) }
     }
 
     private suspend fun flushQueue() = queueMutex.withLock {
         val now = System.currentTimeMillis()
-        val items = queue.getString(KEY, "").orEmpty().lineSequence().filter { it.isNotBlank() }.mapNotNull(TrackSample::decode).toList()
-        if (items.isEmpty()) return@withLock
-        val remaining = mutableListOf<TrackSample>()
-        for (sample in items) {
-            if (sample.nextAttemptAt > now) {
-                remaining += sample
-                continue
-            }
+        for (row in database.tracking().due(now)) {
+            val plain = vault.decrypt(row.sealed)
+            val sample = plain?.let { TrackSample.decode(it.toString(Charsets.UTF_8)) }
+            if (sample == null) { database.tracking().put(row.copy(dead = true)); continue }
             try {
                 when (sample.kind) {
-                    "J" -> api.journeyPosition(
-                        sample.targetId,
-                        JourneyPositionBody(sample.latitude, sample.longitude, sample.sampleId, sample.recordedAt, sample.accuracy, sample.speed, sample.bearing, sample.source),
-                    )
-                    "R" -> api.responderLocation(
-                        sample.targetId,
-                        ResponderLocationBody(sample.latitude, sample.longitude, sample.speed, sample.sampleId, sample.recordedAt, sample.accuracy, sample.bearing, sample.source),
-                    )
+                    "J" -> api.journeyPosition(sample.targetId, JourneyPositionBody(sample.latitude, sample.longitude, sample.sampleId, sample.recordedAt, sample.accuracy, sample.speed, sample.bearing, sample.source))
+                    "R" -> api.responderLocation(sample.targetId, ResponderLocationBody(sample.latitude, sample.longitude, sample.speed, sample.sampleId, sample.recordedAt, sample.accuracy, sample.bearing, sample.source))
                 }
+                database.tracking().delete(sample.sampleId)
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
             } catch (error: HttpException) {
-                if (error.code() in setOf(404, 409, 410, 422)) {
-                    deadLetter(sample, "HTTP_${error.code()}")
-                } else {
-                    remaining += sample.retry(now)
-                }
+                if (error.code() in setOf(400, 403, 404, 409, 410, 422)) {
+                    // Preserve rejected evidence encrypted for review; stop generating samples for a closed target.
+                    persist(sample, dead = true)
+                    val errorCode = runCatching { org.json.JSONObject(error.response()?.errorBody()?.string().orEmpty()).optJSONObject("error")?.optString("code") }.getOrNull()
+                    if (error.code() in setOf(404, 410) || errorCode in setOf("JOURNEY_CLOSED", "ASSIGNMENT_CLOSED")) {
+                        if (sample.kind == "J" && settings.journeyId() == sample.targetId) settings.setJourneyId(null)
+                        if (sample.kind == "R" && settings.responderIncidentId() == sample.targetId) settings.setResponderIncidentId(null)
+                    }
+                } else persist(sample.retry(now))
             } catch (_: Exception) {
-                remaining += sample.retry(now)
+                persist(sample.retry(now))
             }
         }
-        queue.edit().putString(KEY, remaining.takeLast(MAX_PENDING).joinToString("\n") { it.encode() }).apply()
-    }
-
-    private fun deadLetter(sample: TrackSample, reason: String) {
-        val existing = queue.getString(DEAD_KEY, "").orEmpty().lineSequence().filter { it.isNotBlank() }.toMutableList()
-        existing += "${sample.encode()}\t$reason"
-        queue.edit().putString(DEAD_KEY, existing.takeLast(MAX_DEAD).joinToString("\n")).apply()
     }
 
     private data class TrackSample(
@@ -222,9 +241,6 @@ class ProtectionTrackingService : android.app.Service() {
         private const val CHANNEL = "guardian.protection.tracking"
         private const val NOTIFICATION_ID = 2201
         private const val KEY = "pending"
-        private const val DEAD_KEY = "dead"
-        private const val MAX_PENDING = 2_000
-        private const val MAX_DEAD = 200
 
         fun ensureRunning(context: Context) {
             if (ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) return
