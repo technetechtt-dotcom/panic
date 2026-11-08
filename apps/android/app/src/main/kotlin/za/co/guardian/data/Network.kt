@@ -568,6 +568,12 @@ data class EvidenceBody(
     val sha256: String,
     val contentType: String,
     val bytesBase64: String,
+    val captureId: String,
+    val chunkIndex: Int,
+    val chunkCount: Int,
+    val originalSha256: String,
+    val originalByteLength: Long,
+    val capturedAt: String,
 )
 
 class RetrofitIncidentApi constructor(
