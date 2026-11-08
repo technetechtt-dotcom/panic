@@ -951,9 +951,15 @@ export class PlatformService {
 
   async incidentCommunications(actor: Actor, incidentId: string) {
     await this.incidents.get(actor, incidentId);
-    const [timeline, deliveries] = await Promise.all([
+    const [timeline, deliveries, communications] = await Promise.all([
       this.prisma.timelineEvent.findMany({ where: { incidentId }, orderBy: { occurredAt: "asc" }, take: 500 }),
       this.prisma.notificationDelivery.findMany({ where: { incidentId }, orderBy: { createdAt: "asc" }, take: 500 }),
+      this.prisma.incidentCommunication.findMany({
+        where: { incidentId },
+        orderBy: { occurredAt: "asc" },
+        take: 500,
+        include: { actor: { select: { displayName: true } } },
+      }),
     ]);
     return [
       ...timeline.map((row) => ({
@@ -972,7 +978,58 @@ export class PlatformService {
         message: `${maskDestination(row.destination)} · ${row.detail}`,
         status: row.status,
       })),
+      ...communications.map((row) => ({
+        id: row.id,
+        at: row.occurredAt.toISOString(),
+        kind: row.kind,
+        channel: row.channel,
+        message: `${row.actor?.displayName ?? "Operator"}: ${row.note}${row.externalReference ? ` · ref ${row.externalReference}` : ""}`,
+        status: "RECORDED",
+      })),
     ].sort((a, b) => a.at.localeCompare(b.at));
+  }
+
+  async addIncidentCommunication(
+    actor: Actor,
+    incidentId: string,
+    input: { channel: string; kind: string; note: string; occurredAt?: string; externalReference?: string },
+    requestId: string | null,
+  ) {
+    if (!hasPermission(actor.role, Permission.IncidentAcknowledge)) {
+      throw new AppError("FORBIDDEN", 403, "Only monitoring operators can record incident communications.");
+    }
+    await this.incidents.get(actor, incidentId);
+    const now = this.clock.now();
+    const occurredAt = input.occurredAt ? new Date(input.occurredAt) : now;
+    const row = await this.prisma.incidentCommunication.create({
+      data: {
+        id: this.ids.uuid(),
+        incidentId,
+        actorId: actor.id,
+        channel: input.channel,
+        kind: input.kind,
+        note: input.note,
+        externalReference: input.externalReference || null,
+        occurredAt,
+        createdAt: now,
+        updatedAt: now,
+      },
+    });
+    await this.prisma.auditEvent.create({
+      data: {
+        id: this.ids.uuid(),
+        actorId: actor.id,
+        action: "incident.communication_recorded",
+        entityType: "IncidentCommunication",
+        entityId: row.id,
+        correlationId: incidentId,
+        requestId,
+        metadata: { incidentId, channel: input.channel, kind: input.kind },
+        createdAt: now,
+        updatedAt: now,
+      },
+    });
+    return { ...row, occurredAt: row.occurredAt.toISOString(), createdAt: row.createdAt.toISOString() };
   }
 
   async guardianInbox(actor: Actor) {
