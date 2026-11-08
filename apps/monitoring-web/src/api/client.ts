@@ -135,3 +135,19 @@ export async function api<T>(path: string, token: string | null, init: RequestIn
   }
   return body.data as T;
 }
+
+
+export async function apiBlob(path: string, token: string | null, allowRefresh = true): Promise<Blob> {
+  const headers = new Headers();
+  if (token) headers.set("Authorization", `Bearer ${token}`);
+  const response = await fetch(`${base}${path}`, { headers, credentials: "include" });
+  if (response.status === 401 && allowRefresh) {
+    const renewed = await refreshSession();
+    if (renewed) return apiBlob(path, renewed, false);
+  }
+  if (!response.ok) {
+    const body = (await response.json().catch(() => ({}))) as { error?: { message?: string; code?: string } };
+    throw new ApiError(body.error?.message ?? "Evidence request failed", response.status, body.error?.code ?? "HTTP_ERROR");
+  }
+  return response.blob();
+}
