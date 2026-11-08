@@ -237,6 +237,9 @@ interface GuardianApi {
     @GET("guardian/inbox")
     suspend fun guardianInbox(): GuardianInboxEnvelope
 
+    @GET("guardian/incidents/{id}/room")
+    suspend fun guardianIncidentRoom(@Path("id") id: String): GuardianRoomEnvelope
+
     @GET("health")
     suspend fun health(): HealthEnvelope
 
@@ -364,6 +367,12 @@ data class GuardianInboxPersonWire(
     val lastAcknowledgedAt: String? = null,
     val activeIncidents: List<GuardianInboxIncidentWire> = emptyList(),
 )
+
+@Serializable
+data class GuardianRoomWire(val url: String)
+
+@Serializable
+data class GuardianRoomEnvelope(val data: GuardianRoomWire)
 
 @Serializable
 data class GuardianInboxEnvelope(val data: List<GuardianInboxPersonWire>)
