@@ -361,6 +361,131 @@ export class PlatformService {
     );
   }
 
+  async evidenceArtifacts(actor: Actor, incidentId: string) {
+    this.operator(actor);
+    await this.incidents.get(actor, incidentId);
+    const [artifacts, legacy] = await Promise.all([
+      this.prisma.evidenceArtifact.findMany({
+        where: { incidentId },
+        include: { _count: { select: { chunks: true } } },
+        orderBy: { capturedAt: "asc" },
+      }),
+      this.prisma.evidenceChunk.findMany({
+        where: { incidentId, artifactId: null },
+        orderBy: { sequence: "asc" },
+      }),
+    ]);
+    return [
+      ...artifacts.map((row) => ({
+        id: row.id,
+        clientCaptureId: row.clientCaptureId,
+        contentType: row.contentType,
+        originalSha256: row.originalSha256,
+        originalByteLength: row.originalByteLength,
+        capturedAt: row.capturedAt.toISOString(),
+        chunkCount: row.chunkCount,
+        receivedChunks: row._count.chunks,
+        status: row.status,
+        completedAt: row.completedAt?.toISOString() ?? null,
+        retentionUntil: row.retentionUntil?.toISOString() ?? null,
+        legalHold: row.legalHold,
+        retentionPolicy: row.retentionPolicy,
+      })),
+      ...legacy.map((row) => ({
+        id: `legacy:${row.id}`,
+        clientCaptureId: row.clientChunkId,
+        contentType: row.contentType,
+        originalSha256: row.sha256,
+        originalByteLength: row.byteLength,
+        capturedAt: row.createdAt.toISOString(),
+        chunkCount: 1,
+        receivedChunks: 1,
+        status: "COMPLETE",
+        completedAt: row.updatedAt.toISOString(),
+        retentionUntil: row.retentionUntil?.toISOString() ?? null,
+        legalHold: row.legalHold,
+        retentionPolicy: row.retentionPolicy,
+      })),
+    ];
+  }
+
+  async evidenceArtifactBytes(actor: Actor, incidentId: string, artifactId: string): Promise<{
+    bytes: Buffer;
+    contentType: string;
+    sha256: string;
+    capturedAt: string;
+  }> {
+    this.operator(actor);
+    await this.incidents.get(actor, incidentId);
+    if (artifactId.startsWith("legacy:")) {
+      const chunkId = artifactId.slice("legacy:".length);
+      const row = await this.prisma.evidenceChunk.findFirst({ where: { id: chunkId, incidentId, artifactId: null } });
+      if (!row) throw new AppError("NOT_FOUND", 404, "That evidence artifact was not found.");
+      const bytes = row.storageKey ? await this.vault.get(row.storageKey) : Buffer.from(row.payload);
+      if (!bytes) throw new AppError("NOT_FOUND", 404, "The evidence file is not in the vault.");
+      await this.auditEvidenceArtifactRead(actor, incidentId, artifactId, row.contentType, [row.id]);
+      return { bytes, contentType: row.contentType, sha256: row.sha256, capturedAt: row.createdAt.toISOString() };
+    }
+    const artifact = await this.prisma.evidenceArtifact.findFirst({
+      where: { id: artifactId, incidentId },
+      include: { chunks: { orderBy: { chunkIndex: "asc" } } },
+    });
+    if (!artifact) throw new AppError("NOT_FOUND", 404, "That evidence artifact was not found.");
+    if (artifact.status !== "COMPLETE" || artifact.chunks.length !== artifact.chunkCount) {
+      throw new AppError("EVIDENCE_INCOMPLETE", 409, "That evidence artifact is not complete.");
+    }
+    const opened: Buffer[] = [];
+    for (const chunk of artifact.chunks) {
+      const bytes = chunk.storageKey ? await this.vault.get(chunk.storageKey) : Buffer.from(chunk.payload);
+      if (!bytes) throw new AppError("EVIDENCE_ARTIFACT_MISSING", 409, "An evidence artifact chunk is unavailable.");
+      if (createHash("sha256").update(bytes).digest("hex") !== chunk.sha256) {
+        throw new AppError("EVIDENCE_CHUNK_HASH_MISMATCH", 409, "An evidence artifact chunk failed integrity verification.");
+      }
+      opened.push(bytes);
+    }
+    const bytes = Buffer.concat(opened);
+    const digest = createHash("sha256").update(bytes).digest("hex");
+    if (bytes.length !== artifact.originalByteLength || digest !== artifact.originalSha256) {
+      throw new AppError("EVIDENCE_ARTIFACT_HASH_MISMATCH", 409, "The evidence artifact failed integrity verification.");
+    }
+    await this.auditEvidenceArtifactRead(actor, incidentId, artifact.id, artifact.contentType, artifact.chunks.map((row) => row.id));
+    return {
+      bytes,
+      contentType: artifact.contentType,
+      sha256: artifact.originalSha256,
+      capturedAt: artifact.capturedAt.toISOString(),
+    };
+  }
+
+  private async auditEvidenceArtifactRead(
+    actor: Actor,
+    incidentId: string,
+    artifactId: string,
+    contentType: string,
+    chunkIds: string[],
+  ): Promise<void> {
+    const now = this.clock.now();
+    await this.prisma.auditEvent.create({
+      data: {
+        id: this.ids.uuid(),
+        actorId: actor.id,
+        action: "evidence.artifact_read",
+        entityType: "EvidenceArtifact",
+        entityId: artifactId,
+        correlationId: incidentId,
+        requestId: null,
+        metadata: { incidentId, contentType, chunks: chunkIds.length },
+        createdAt: now,
+        updatedAt: now,
+      },
+    }).catch(() => undefined);
+    for (const evidenceId of chunkIds) {
+      await this.prisma.evidenceAccessLog.create({
+        data: { id: this.ids.uuid(), incidentId, evidenceId, actorId: actor.id, action: "artifact_read", createdAt: now },
+      }).catch(() => undefined);
+    }
+  }
+
   async liveCompanion(actor: Actor, incidentId: string) {
     const incident = await this.incidents.get(actor, incidentId);
     let deliveries: Array<{
@@ -547,14 +672,16 @@ export class PlatformService {
   async evidenceManifest(actor: Actor, incidentId: string) {
     this.operator(actor);
     const incident = await this.incidents.get(actor, incidentId);
-    const [chunks, access] = await Promise.all([
+    const [chunks, artifacts, access] = await Promise.all([
       this.prisma.evidenceChunk.findMany({
         where: { incidentId },
         orderBy: { sequence: "asc" },
         select: {
           id: true,
+          artifactId: true,
           clientChunkId: true,
           sequence: true,
+          chunkIndex: true,
           sha256: true,
           contentType: true,
           byteLength: true,
@@ -565,6 +692,10 @@ export class PlatformService {
           createdAt: true,
           updatedAt: true,
         },
+      }),
+      this.prisma.evidenceArtifact.findMany({
+        where: { incidentId },
+        orderBy: { capturedAt: "asc" },
       }),
       this.prisma.evidenceAccessLog.findMany({
         where: { incidentId },
@@ -584,6 +715,14 @@ export class PlatformService {
         correlationId: incident.correlationId,
         createdAt: incident.createdAt,
       },
+      artifacts: artifacts.map((row) => ({
+        ...row,
+        capturedAt: row.capturedAt.toISOString(),
+        completedAt: row.completedAt?.toISOString() ?? null,
+        retentionUntil: row.retentionUntil?.toISOString() ?? null,
+        createdAt: row.createdAt.toISOString(),
+        updatedAt: row.updatedAt.toISOString(),
+      })),
       evidence: chunks.map((row) => ({
         ...row,
         retentionUntil: row.retentionUntil?.toISOString() ?? null,
@@ -612,14 +751,24 @@ export class PlatformService {
     const now = this.clock.now();
     const retentionDays = input.retentionDays ?? Number(process.env.EVIDENCE_RETENTION_DAYS ?? 365);
     const retentionUntil = input.legalHold ? null : new Date(now.getTime() + retentionDays * 24 * 60 * 60 * 1000);
-    const updated = await this.prisma.evidenceChunk.updateMany({
-      where: { incidentId },
-      data: {
-        legalHold: input.legalHold,
-        retentionUntil,
-        retentionPolicy: input.policy,
-      },
-    });
+    const [updated, artifactUpdated] = await this.prisma.$transaction([
+      this.prisma.evidenceChunk.updateMany({
+        where: { incidentId },
+        data: {
+          legalHold: input.legalHold,
+          retentionUntil,
+          retentionPolicy: input.policy,
+        },
+      }),
+      this.prisma.evidenceArtifact.updateMany({
+        where: { incidentId },
+        data: {
+          legalHold: input.legalHold,
+          retentionUntil,
+          retentionPolicy: input.policy,
+        },
+      }),
+    ]);
     await this.prisma.auditEvent.create({
       data: {
         id: this.ids.uuid(),
@@ -635,6 +784,7 @@ export class PlatformService {
           retentionUntil: retentionUntil?.toISOString() ?? null,
           policy: input.policy,
           chunks: updated.count,
+          artifacts: artifactUpdated.count,
         } as Prisma.InputJsonValue,
         createdAt: now,
         updatedAt: now,
@@ -643,6 +793,7 @@ export class PlatformService {
     return {
       incidentId,
       evidenceCount: updated.count,
+      artifactCount: artifactUpdated.count,
       legalHold: input.legalHold,
       retentionDays,
       retentionUntil: retentionUntil?.toISOString() ?? null,
