@@ -209,6 +209,8 @@ export class PrismaEvidenceStore implements EvidenceStore {
     contentType: string;
     byteLength: number;
     storageKey?: string | null;
+    artifactId?: string | null;
+    chunkIndex?: number | null;
     retentionUntil?: Date | null;
     legalHold?: boolean;
     retentionPolicy?: string;
@@ -244,8 +246,58 @@ export class PrismaEvidenceStore implements EvidenceStore {
         byteLength: true,
         contentType: true,
         storageKey: true,
+        artifactId: true,
+        chunkIndex: true,
       },
     });
     return rows;
+  }
+
+  async upsertArtifact(artifact: {
+    id: string;
+    incidentId: string;
+    clientCaptureId: string;
+    contentType: string;
+    originalSha256: string;
+    originalByteLength: number;
+    capturedAt: Date;
+    chunkCount: number;
+    createdAt: Date;
+    retentionUntil: Date;
+    retentionPolicy: string;
+  }) {
+    return this.prisma.evidenceArtifact.upsert({
+      where: {
+        incidentId_clientCaptureId: {
+          incidentId: artifact.incidentId,
+          clientCaptureId: artifact.clientCaptureId,
+        },
+      },
+      create: {
+        ...artifact,
+        status: "UPLOADING",
+        legalHold: false,
+        updatedAt: artifact.createdAt,
+      },
+      update: {},
+    });
+  }
+
+  async listArtifactChunks(artifactId: string) {
+    const rows = await this.prisma.evidenceChunk.findMany({
+      where: { artifactId },
+      orderBy: { chunkIndex: "asc" },
+    });
+    return rows.map((row) => ({
+      ...row,
+      payload: Buffer.from(row.payload),
+    }));
+  }
+
+  async markArtifact(artifactId: string, status: "COMPLETE" | "CORRUPT", completedAt: Date | null) {
+    await this.prisma.evidenceArtifact.update({
+      where: { id: artifactId },
+      data: { status, completedAt, updatedAt: new Date() },
+    });
   }
 }
