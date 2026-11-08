@@ -181,6 +181,7 @@ model Incident {
   timeline           TimelineEvent[]
   escalations        IncidentEscalation[]
   evidence           EvidenceChunk[]
+  evidenceArtifacts  EvidenceArtifact[]
   deliveries         NotificationDelivery[]
   rooms              IncidentRoom[]
   assignments        ResponderAssignment[]
@@ -347,25 +348,53 @@ model RiskSignal {
   @@index([userId])
 }
 
+model EvidenceArtifact {
+  id                 String   @id @db.Uuid
+  incidentId         String   @db.Uuid
+  clientCaptureId    String   @db.Uuid
+  contentType        String
+  originalSha256     String
+  originalByteLength Int
+  capturedAt         DateTime
+  chunkCount         Int
+  status             String   @default("UPLOADING")
+  completedAt        DateTime?
+  retentionUntil     DateTime?
+  legalHold          Boolean  @default(false)
+  retentionPolicy    String   @default("STANDARD")
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+  incident           Incident @relation(fields: [incidentId], references: [id], onDelete: Cascade)
+  chunks             EvidenceChunk[]
+
+  @@unique([incidentId, clientCaptureId])
+  @@index([incidentId, capturedAt])
+}
+
 model EvidenceChunk {
-  id            String   @id @db.Uuid
-  incidentId    String   @db.Uuid
-  clientChunkId String   @db.Uuid
-  sequence      Int
-  sha256        String
-  contentType   String
-  byteLength    Int
-  storageKey    String?
-  payload       Bytes
-  retentionUntil DateTime?
-  legalHold     Boolean  @default(false)
-  retentionPolicy String @default("STANDARD")
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
-  incident      Incident @relation(fields: [incidentId], references: [id], onDelete: Cascade)
+  id              String   @id @db.Uuid
+  incidentId      String   @db.Uuid
+  artifactId      String?  @db.Uuid
+  clientChunkId   String   @db.Uuid
+  sequence        Int
+  chunkIndex      Int?
+  sha256          String
+  contentType     String
+  byteLength      Int
+  storageKey      String?
+  payload         Bytes
+  retentionUntil  DateTime?
+  legalHold       Boolean  @default(false)
+  retentionPolicy String   @default("STANDARD")
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  incident        Incident @relation(fields: [incidentId], references: [id], onDelete: Cascade)
+  artifact        EvidenceArtifact? @relation(fields: [artifactId], references: [id], onDelete: Cascade)
 
   @@unique([incidentId, clientChunkId])
+  @@unique([artifactId, chunkIndex])
   @@index([incidentId, sequence])
+  @@index([artifactId, chunkIndex])
 }
 
 model EmergencyProfile {
