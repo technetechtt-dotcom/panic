@@ -350,14 +350,16 @@ export class PlatformController {
 
   @Public()
   @Get("rooms/:token")
-  room(@Param("token") token: string) {
+  room(@Param("token") token: string, @Res({ passthrough: true }) response: Response) {
+    sensitiveRoomHeaders(response);
     return this.platform.room(token).then((data) => ({ data }));
   }
 
   @Public()
   @Post("rooms/:token/ack")
   @HttpCode(200)
-  acknowledgeRoom(@Param("token") token: string) {
+  acknowledgeRoom(@Param("token") token: string, @Res({ passthrough: true }) response: Response) {
+    sensitiveRoomHeaders(response);
     return this.platform.acknowledgeRoom(token).then((data) => ({ data }));
   }
 
@@ -365,6 +367,12 @@ export class PlatformController {
   @RequirePermissions(Permission.UserReadSelf)
   guardianInbox(@Req() request: RequestWithUser) {
     return this.platform.guardianInbox(actorFrom(request)).then((data) => ({ data }));
+  }
+
+  @Get("guardian/incidents/:id/room")
+  @RequirePermissions(Permission.UserReadSelf)
+  guardianIncidentRoom(@Param("id") id: string, @Req() request: RequestWithUser) {
+    return this.platform.guardianRoomForIncident(actorFrom(request), id).then((data) => ({ data }));
   }
 
   @Get("responders/me/profile")
@@ -450,4 +458,12 @@ export class PlatformController {
 function actorFrom(request: RequestWithUser): Actor {
   const user = request.user!;
   return { id: user.id, role: user.role, displayName: user.displayName, emergencyDeviceId: request.emergencyDeviceId ?? null };
+}
+
+
+function sensitiveRoomHeaders(response: Response): void {
+  response.setHeader("Cache-Control", "no-store, private, max-age=0");
+  response.setHeader("Pragma", "no-cache");
+  response.setHeader("Referrer-Policy", "no-referrer");
+  response.setHeader("X-Robots-Tag", "noindex, nofollow, noarchive");
 }
