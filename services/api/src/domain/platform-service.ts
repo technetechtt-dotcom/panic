@@ -1213,30 +1213,94 @@ export class PlatformService {
     return { erased: true, incidentsRetained: true };
   }
 
-  async beginMfa(actor: Actor) {
+  async mfaStatus(actor: Actor) {
+    if (!OPERATOR_ROLES.includes(actor.role)) {
+      return { enabled: false, pending: false, pendingExpiresAt: null };
+    }
+    const row = await this.prisma.operatorMfa.findUnique({ where: { userId: actor.id } });
+    return {
+      enabled: row?.enabled === true,
+      pending: Boolean(row?.pendingSecret && row.pendingExpiresAt && row.pendingExpiresAt.getTime() > this.clock.now().getTime()),
+      pendingExpiresAt: row?.pendingExpiresAt?.toISOString() ?? null,
+    };
+  }
+
+  async beginMfa(actor: Actor, currentCode?: string) {
     if (!OPERATOR_ROLES.includes(actor.role)) throw new AppError("FORBIDDEN", 403, "Only monitoring accounts can enroll an authenticator.");
-    const secret = generateTotpSecret();
     const now = this.clock.now();
+    const existing = await this.prisma.operatorMfa.findUnique({ where: { userId: actor.id } });
+    if (existing?.enabled) {
+      if (!currentCode || !verifyTotp(openSecret(existing.secret, this.config.mfaEncryptionKey), currentCode, now.getTime())) {
+        throw new AppError("MFA_REAUTH_REQUIRED", 401, "Enter a current authenticator code before replacing MFA.");
+      }
+    }
+    const secret = generateTotpSecret();
+    const sealed = sealSecret(secret, this.config.mfaEncryptionKey);
+    const expiresAt = new Date(now.getTime() + 10 * 60 * 1000);
     await this.prisma.operatorMfa.upsert({
       where: { userId: actor.id },
-      create: { userId: actor.id, secret: sealSecret(secret, this.config.jwtSecret), enabled: false, createdAt: now, updatedAt: now },
-      update: { secret: sealSecret(secret, this.config.jwtSecret), enabled: false, updatedAt: now },
+      create: {
+        userId: actor.id,
+        secret: sealed,
+        enabled: false,
+        pendingSecret: sealed,
+        pendingExpiresAt: expiresAt,
+        createdAt: now,
+        updatedAt: now,
+      },
+      update: {
+        pendingSecret: sealed,
+        pendingExpiresAt: expiresAt,
+        updatedAt: now,
+      },
     });
-    return { secret, otpauth: `otpauth://totp/Guardian:${encodeURIComponent(actor.displayName)}?secret=${secret}&issuer=Guardian` };
+    await this.prisma.auditEvent.create({
+      data: {
+        id: this.ids.uuid(),
+        actorId: actor.id,
+        action: existing?.enabled ? "mfa.rotation_started" : "mfa.enrollment_started",
+        entityType: "User",
+        entityId: actor.id,
+        correlationId: null,
+        requestId: null,
+        metadata: { expiresAt: expiresAt.toISOString() },
+        createdAt: now,
+        updatedAt: now,
+      },
+    });
+    return {
+      secret,
+      replacing: existing?.enabled === true,
+      expiresAt: expiresAt.toISOString(),
+      otpauth: `otpauth://totp/Guardian:${encodeURIComponent(actor.displayName)}?secret=${secret}&issuer=Guardian`,
+    };
   }
 
   async confirmMfa(actor: Actor, code: string) {
     const row = await this.prisma.operatorMfa.findUnique({ where: { userId: actor.id } });
-    if (!row || !verifyTotp(openSecret(row.secret, this.config.jwtSecret), code, this.clock.now().getTime())) {
-      throw new AppError("INVALID_MFA", 401, "That authenticator code was not accepted.");
-    }
     const now = this.clock.now();
-    await this.prisma.operatorMfa.update({ where: { userId: actor.id }, data: { enabled: true, updatedAt: now } });
+    if (!row?.pendingSecret || !row.pendingExpiresAt || row.pendingExpiresAt.getTime() < now.getTime()) {
+      throw new AppError("MFA_SETUP_EXPIRED", 409, "Start MFA setup again. The pending authenticator has expired.");
+    }
+    const pending = openSecret(row.pendingSecret, this.config.mfaEncryptionKey);
+    if (!verifyTotp(pending, code, now.getTime())) {
+      throw new AppError("INVALID_MFA", 401, "That new authenticator code was not accepted.");
+    }
     const recoveryCodes = Array.from({ length: 10 }, () => {
       const raw = randomBytes(6).toString("hex").toUpperCase();
       return `${raw.slice(0, 6)}-${raw.slice(6)}`;
     });
     await this.prisma.$transaction([
+      this.prisma.operatorMfa.update({
+        where: { userId: actor.id },
+        data: {
+          secret: row.pendingSecret,
+          enabled: true,
+          pendingSecret: null,
+          pendingExpiresAt: null,
+          updatedAt: now,
+        },
+      }),
       this.prisma.operatorMfaRecoveryCode.deleteMany({ where: { userId: actor.id } }),
       this.prisma.operatorMfaRecoveryCode.createMany({
         data: recoveryCodes.map((value) => ({
@@ -1245,6 +1309,20 @@ export class PlatformService {
           codeHash: hashToken(value.replace("-", "")),
           createdAt: now,
         })),
+      }),
+      this.prisma.auditEvent.create({
+        data: {
+          id: this.ids.uuid(),
+          actorId: actor.id,
+          action: row.enabled ? "mfa.rotated" : "mfa.enabled",
+          entityType: "User",
+          entityId: actor.id,
+          correlationId: null,
+          requestId: null,
+          metadata: null,
+          createdAt: now,
+          updatedAt: now,
+        },
       }),
     ]);
     return { enabled: true, recoveryCodes };
