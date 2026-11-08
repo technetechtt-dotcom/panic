@@ -695,7 +695,7 @@ class SettingsViewModel @Inject constructor(
     fun completeJourney() = run { protection.completeJourney() }
     fun checkIn() = run { protection.checkIn() }
     fun exportAccount() = run { protection.exportAccount() }
-    fun eraseAccount(password: String) = run { protection.eraseAccount(password) }
+    fun eraseAccount(password: String, onSuccess: (() -> Unit)? = null) = run(onSuccess) { protection.eraseAccount(password) }
     fun previewJourney(label: String) = run {
         val preview = protection.previewJourney(label)
         journeyPreview = preview
