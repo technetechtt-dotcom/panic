@@ -146,6 +146,8 @@ function toJourney(row: {
   destinationLatitude: number | null;
   destinationLongitude: number | null;
   corridorMeters: number;
+  routeGeometry: unknown;
+  routeSource: string;
 }): JourneyRecord {
   const mode = row.mode === "RIDE" || row.mode === "DRIVE" || row.mode === "MEETING" || row.mode === "HIGH_RISK" ? row.mode : "WALK";
   return {
@@ -162,6 +164,15 @@ function toJourney(row: {
     destinationLatitude: row.destinationLatitude,
     destinationLongitude: row.destinationLongitude,
     corridorMeters: row.corridorMeters,
+    routeGeometry: Array.isArray(row.routeGeometry)
+      ? row.routeGeometry.map((point) => {
+          if (!point || typeof point !== "object") return null;
+          const latitude = Number((point as { latitude?: unknown }).latitude);
+          const longitude = Number((point as { longitude?: unknown }).longitude);
+          return Number.isFinite(latitude) && Number.isFinite(longitude) ? { latitude, longitude } : null;
+        }).filter((point): point is { latitude: number; longitude: number } => point !== null)
+      : null,
+    routeSource: row.routeSource === "ROUTED" || row.routeSource === "STRAIGHT_FALLBACK" ? row.routeSource : "NONE",
   };
 }
 
