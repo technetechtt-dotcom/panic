@@ -1,0 +1,57 @@
+name: Security
+
+on:
+  push:
+    branches: [main, "hardening/**"]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  security-events: write
+  actions: read
+
+jobs:
+  codeql:
+    name: CodeQL JavaScript/TypeScript
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: github/codeql-action/init@v4
+        with:
+          languages: javascript-typescript
+      - uses: github/codeql-action/analyze@v4
+
+  supply-chain:
+    name: Secrets, SBOM and container scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install locked dependencies
+        run: npm ci
+      - name: High-confidence secret scan
+        run: node services/api/scripts/scan-secrets.mjs
+      - name: Generate CycloneDX SBOM
+        run: npm sbom --omit=dev --sbom-format=cyclonedx > guardian-sbom.cdx.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: guardian-sbom
+          path: guardian-sbom.cdx.json
+          retention-days: 30
+      - name: Build API production image
+        run: docker build -f services/api/Dockerfile -t guardian-api-ci .
+      - name: Build monitoring production image
+        run: >-
+          docker build -f apps/monitoring-web/Dockerfile
+          --build-arg VITE_MAP_TILE_URL=https://tiles.guardian.test/{z}/{x}/{y}.png
+          --build-arg VITE_MAP_TILE_ATTRIBUTION="Guardian CI Tiles"
+          -t guardian-web-ci .
+      - name: Scan API image
+        run: docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:latest image --exit-code 1 --ignore-unfixed --severity HIGH,CRITICAL guardian-api-ci
+      - name: Scan monitoring image
+        run: docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:latest image --exit-code 1 --ignore-unfixed --severity HIGH,CRITICAL guardian-web-ci
