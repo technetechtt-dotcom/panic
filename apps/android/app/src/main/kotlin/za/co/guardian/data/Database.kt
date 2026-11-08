@@ -160,6 +160,12 @@ data class EvidenceEntity(
     val uploadState: String,
     val retryCount: Int,
     val size: Int,
+    val captureId: String = "",
+    val chunkIndex: Int = 0,
+    val chunkCount: Int = 1,
+    val originalSha256: String = "",
+    val originalSize: Long = 0L,
+    val capturedAtEpochMs: Long = 0L,
 )
 
 @Dao
@@ -182,7 +188,7 @@ interface EvidenceDao {
 
 @Database(
     entities = [IncidentEntity::class, LocationEntity::class, HeartbeatEntity::class, EscalationEntity::class, EvidenceEntity::class],
-    version = 4,
+    version = 5,
     exportSchema = true,
 )
 abstract class GuardianDatabase : RoomDatabase() {
@@ -280,6 +286,14 @@ object GuardianMigrations {
     val sql3to4 = listOf(
         "ALTER TABLE escalation_outbox ADD COLUMN stage TEXT NOT NULL DEFAULT 'EVIDENCE'",
     )
+    val sql4to5 = listOf(
+        "ALTER TABLE evidence_outbox ADD COLUMN captureId TEXT NOT NULL DEFAULT ''",
+        "ALTER TABLE evidence_outbox ADD COLUMN chunkIndex INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE evidence_outbox ADD COLUMN chunkCount INTEGER NOT NULL DEFAULT 1",
+        "ALTER TABLE evidence_outbox ADD COLUMN originalSha256 TEXT NOT NULL DEFAULT ''",
+        "ALTER TABLE evidence_outbox ADD COLUMN originalSize INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE evidence_outbox ADD COLUMN capturedAtEpochMs INTEGER NOT NULL DEFAULT 0",
+    )
 
     val MIGRATION_1_2 = object : Migration(1, 2) {
         override fun migrate(db: SupportSQLiteDatabase) = sql1to2.forEach(db::execSQL)
@@ -290,7 +304,10 @@ object GuardianMigrations {
     val MIGRATION_3_4 = object : Migration(3, 4) {
         override fun migrate(db: SupportSQLiteDatabase) = sql3to4.forEach(db::execSQL)
     }
-    val all = arrayOf(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
+    val MIGRATION_4_5 = object : Migration(4, 5) {
+        override fun migrate(db: SupportSQLiteDatabase) = sql4to5.forEach(db::execSQL)
+    }
+    val all = arrayOf(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
 }
 
 class RoomEscalationStore(private val dao: EscalationDao) : za.co.guardian.core.EscalationLocalStore {
