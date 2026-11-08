@@ -4,6 +4,7 @@ import {
   eraseAccountSchema,
   evidenceGovernanceSchema,
   fusionSignalSchema,
+  incidentCommunicationSchema,
   mfaCodeSchema,
   mfaSetupSchema,
   operatorHandoverSchema,
@@ -279,6 +280,16 @@ export class PlatformController {
   @Get("incidents/:id/communications")
   communications(@Param("id") id: string, @Req() request: RequestWithUser) {
     return this.platform.incidentCommunications(actorFrom(request), id).then((data) => ({ data }));
+  }
+
+  @Post("incidents/:id/communications")
+  @HttpCode(201)
+  @RequirePermissions(Permission.IncidentAcknowledge)
+  addCommunication(@Param("id") id: string, @Body() body: unknown, @Req() request: RequestWithUser) {
+    const input = parseBody(incidentCommunicationSchema, body);
+    return this.platform
+      .addIncidentCommunication(actorFrom(request), id, input, requestContext.getStore()?.requestId ?? null)
+      .then((data) => ({ data }));
   }
 
   @Get("admin/demo")
