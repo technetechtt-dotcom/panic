@@ -58,6 +58,7 @@ export const NETWORK_TYPES = [
   "CELLULAR",
   "NO_INTERNET",
   "POOR_NETWORK",
+  "SATELLITE",
   "UNKNOWN",
 ] as const;
 export type NetworkType = (typeof NETWORK_TYPES)[number];
@@ -85,6 +86,12 @@ export type ContactStatus = (typeof CONTACT_STATUSES)[number];
 
 export const LOCATION_SOURCES = ["GPS", "NETWORK", "FUSED", "LAST_KNOWN"] as const;
 export type LocationSource = (typeof LOCATION_SOURCES)[number];
+
+export const HANDSET_PLATFORMS = ["ANDROID", "IOS", "WEB"] as const;
+export type HandsetPlatform = (typeof HANDSET_PLATFORMS)[number];
+
+export const PUBLIC_SAFETY_SERVICES = ["POLICE", "EMS", "FIRE"] as const;
+export type PublicSafetyService = (typeof PUBLIC_SAFETY_SERVICES)[number];
 
 export const UPLOAD_PRIORITIES = ["CRITICAL", "HIGH", "NORMAL", "BULK"] as const;
 export type UploadPriority = (typeof UPLOAD_PRIORITIES)[number];

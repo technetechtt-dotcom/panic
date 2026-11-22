@@ -1,8 +1,9 @@
 import { randomBytes } from "node:crypto";
 import type { DeviceRegistrationInput } from "@guardian/shared-validation";
 import { AppError, UniqueConflictError } from "./errors";
+import type { NarrowbandStore } from "./narrowband-store";
 import type { Actor, AuditStore, Clock, DeviceRecord, DeviceStore, IdGenerator } from "./ports";
-import { sha256 } from "./security";
+import { sealSecret, sha256 } from "./security";
 
 export class DeviceService {
   constructor(
@@ -10,6 +11,8 @@ export class DeviceService {
     private readonly audit: AuditStore,
     private readonly ids: IdGenerator,
     private readonly clock: Clock,
+    private readonly channels: NarrowbandStore | null = null,
+    private readonly sealKey = "",
   ) {}
 
   async register(actor: Actor, input: DeviceRegistrationInput, requestId: string | null): Promise<DeviceRecord> {
@@ -44,7 +47,7 @@ export class DeviceService {
       id: this.ids.uuid(),
       userId: actor.id,
       devicePublicId: input.devicePublicId,
-      platform: "ANDROID",
+      platform: input.platform,
       manufacturer: input.manufacturer ?? null,
       model: input.model ?? null,
       osVersion: input.osVersion,
@@ -109,6 +112,7 @@ export class DeviceService {
     device.updatedAt = now;
     await this.devices.save(device);
     await this.devices.setEmergencyHash(device.id, actor.id, "");
+    await this.channels?.clearKey(device.id, actor.id);
     await this.audit.append({
       id: this.ids.uuid(),
       actorId: actor.id,
@@ -128,6 +132,23 @@ export class DeviceService {
     const credential = randomBytes(32).toString("base64url");
     const saved = await this.devices.setEmergencyHash(device.id, actor.id, sha256(credential));
     if (!saved) throw new AppError("DEVICE_NOT_FOUND", 404, "Register this device before issuing an emergency credential.");
+    if (this.channels) {
+      if (this.sealKey.length < 32) {
+        throw new AppError("NOT_CONFIGURED", 503, "The narrowband key cannot be stored until the encryption key is configured.");
+      }
+      const keyed = await this.channels.saveKey(device.id, actor.id, sealSecret(credential, this.sealKey));
+      if (!keyed) throw new AppError("DEVICE_NOT_FOUND", 404, "Register this device before issuing an emergency credential.");
+    }
     return credential;
+  }
+
+  async bindImei(actor: Actor, deviceId: string, imei: string): Promise<{ deviceId: string; imei: string }> {
+    if (!this.channels) throw new AppError("NOT_CONFIGURED", 503, "Satellite binding is not available.");
+    const device = await this.devices.findByIdForUser(deviceId, actor.id);
+    if (!device || device.revokedAt) throw new AppError("DEVICE_NOT_FOUND", 404, "Register this device before binding a satellite modem.");
+    const result = await this.channels.setImei(device.id, actor.id, imei);
+    if (result === "missing") throw new AppError("DEVICE_NOT_FOUND", 404, "Register this device before binding a satellite modem.");
+    if (result === "taken") throw new AppError("IMEI_IN_USE", 409, "That satellite modem is already bound to another device.");
+    return { deviceId: device.id, imei };
   }
 }

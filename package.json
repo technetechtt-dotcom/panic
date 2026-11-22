@@ -6,14 +6,16 @@
   "workspaces": [
     "packages/*",
     "services/*",
-    "apps/monitoring-web"
+    "apps/monitoring-web",
+    "apps/handset"
   ],
   "scripts": {
     "build": "npm run build -w @guardian/shared-types && npm run build -w @guardian/shared-validation && npm run build -w @guardian/api && npm run build -w @guardian/monitoring-web",
     "test": "npm run test -w @guardian/shared-validation && npm run test -w @guardian/api && npm run test -w @guardian/monitoring-web",
     "dev:db": "npm run dev:postgres -w @guardian/api",
     "dev:api": "npm run dev -w @guardian/api",
-    "dev:web": "npm run dev -w @guardian/monitoring-web"
+    "dev:web": "npm run dev -w @guardian/monitoring-web",
+    "dev:handset": "npm run dev -w @guardian/handset"
   },
   "engines": {
     "node": ">=22"
@@ -21,5 +23,13 @@
   "overrides": {
     "multer": "^2.4.1",
     "deepmerge-ts": "^8.0.0"
+  },
+  "allowScripts": {
+    "@embedded-postgres/windows-x64@18.4.0-beta.17": true,
+    "@prisma/client@6.19.3": true,
+    "@prisma/engines@6.19.3": true,
+    "esbuild@0.28.2": true,
+    "prisma@6.19.3": true,
+    "protobufjs@7.6.6": true
   }
 }

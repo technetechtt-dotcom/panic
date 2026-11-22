@@ -260,14 +260,14 @@ function toDeviceRecord(row: {
   createdAt: Date;
   updatedAt: Date;
 }): DeviceRecord {
-  if (row.platform !== "ANDROID") {
-    throw new Error("Stored device platform is not ANDROID.");
+  if (row.platform !== "ANDROID" && row.platform !== "IOS" && row.platform !== "WEB") {
+    throw new Error("Stored device platform is not supported.");
   }
   return {
     id: row.id,
     userId: row.userId,
     devicePublicId: row.devicePublicId,
-    platform: "ANDROID",
+    platform: row.platform,
     manufacturer: row.manufacturer,
     model: row.model,
     osVersion: row.osVersion,

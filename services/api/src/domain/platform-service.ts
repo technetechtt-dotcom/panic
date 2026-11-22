@@ -1,5 +1,5 @@
 import type { z } from "zod";
-import type { positionSchema } from "@guardian/shared-validation";
+import type { positionSchema, PublicSafetyHandoffInput } from "@guardian/shared-validation";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { readdir, stat } from "node:fs/promises";
 import { join } from "node:path";
@@ -24,6 +24,7 @@ import { etaSeconds } from "./scheduler-lock";
 import { websocketStatus } from "../modules/realtime/realtime-status";
 import { sendTransactionalEmail } from "./email";
 import { geocodeDestination } from "./geocode";
+import { dispatchPublicSafety, iridiumHealth, publicSafetyHealth } from "./public-safety";
 
 const OPERATOR_ROLES: Role[] = ["MONITOR_OPERATOR", "SUPERVISOR", "RESPONDER", "ADMIN"];
 
@@ -2252,6 +2253,8 @@ export class PlatformService {
       sms: smsHealth(),
       fcm: fcmHealth(),
       apns: apnsHealth(),
+      publicSafety: publicSafetyHealth(),
+      iridium: iridiumHealth(),
       s3: s3Configured() ? "CONFIGURED" : "NOT_CONFIGURED",
       vault: process.env.EVIDENCE_VAULT_KEY ? "independent-aes-gcm" : "dev-jwt-fallback",
       requests: requestMetrics.total,
@@ -2273,8 +2276,60 @@ export class PlatformService {
     };
   }
 
-  async emergencyHandoff(actor: Actor, incidentId: string, requestId: string | null) {
-    return this.incidents.noteEmergencyServices(actor, incidentId, requestId);
+  async emergencyHandoff(actor: Actor, incidentId: string, input: PublicSafetyHandoffInput, requestId: string | null) {
+    const incident = await this.incidents.get(actor, incidentId);
+    const prior = await this.prisma.publicSafetyHandoff.findFirst({
+      where: { incidentId, service: input.service, status: "DISPATCHED" },
+      orderBy: { createdAt: "desc" },
+    });
+    if (prior) {
+      const provider = prior.provider === "NOONLIGHT" || prior.provider === "BRIDGE" ? prior.provider : "UNCONFIGURED";
+      return {
+        recorded: true as const,
+        replayed: true as const,
+        service: input.service,
+        status: "DISPATCHED" as const,
+        provider,
+        reference: prior.providerReference,
+        detail: `This ${input.service.toLowerCase()} handoff was already accepted${prior.providerReference ? ` as ${prior.providerReference}` : ""}.`,
+        dial: prior.dial,
+      };
+    }
+    const [user, profile] = await Promise.all([
+      this.prisma.user.findUnique({ where: { id: incident.userId }, select: { phone: true, displayName: true } }),
+      this.prisma.emergencyProfile.findUnique({ where: { userId: incident.userId } }),
+    ]);
+    const outcome = await dispatchPublicSafety({
+      incidentId: incident.id,
+      correlationId: incident.correlationId,
+      service: input.service,
+      name: user?.displayName || incident.userDisplayName,
+      phone: user?.phone ?? null,
+      latitude: incident.lastLatitude,
+      longitude: incident.lastLongitude,
+      accuracy: incident.lastAccuracy,
+      duress: incident.duress,
+      note: input.note ?? null,
+      medical: {
+        bloodType: profile?.bloodType ?? null,
+        allergies: profile?.allergies ?? null,
+        medications: profile?.medications ?? null,
+      },
+    });
+    await this.prisma.publicSafetyHandoff.create({
+      data: {
+        id: this.ids.uuid(),
+        incidentId,
+        service: outcome.service,
+        status: outcome.status,
+        provider: outcome.provider,
+        providerReference: outcome.reference,
+        detail: outcome.detail,
+        dial: outcome.dial,
+        actorId: actor.id,
+      },
+    });
+    return this.incidents.noteEmergencyServices(actor, incidentId, requestId, outcome);
   }
 
   private operator(actor: Actor): void {

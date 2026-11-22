@@ -14,6 +14,7 @@ import {
   operatorHandoverSchema,
   positionSchema,
   profileSchema,
+  publicSafetyHandoffSchema,
   responderAssignSchema,
   responderLocationSchema,
   responderProfileSchema,
@@ -321,9 +322,9 @@ export class PlatformController {
   @Post("incidents/:id/emergency-services")
   @HttpCode(200)
   @RequirePermissions(Permission.IncidentAcknowledge)
-  emergency(@Param("id") id: string, @Req() request: RequestWithUser) {
+  emergency(@Param("id") id: string, @Body() body: unknown, @Req() request: RequestWithUser) {
     return this.platform
-      .emergencyHandoff(actorFrom(request), id, requestContext.getStore()?.requestId ?? null)
+      .emergencyHandoff(actorFrom(request), id, parseBody(publicSafetyHandoffSchema, body), requestContext.getStore()?.requestId ?? null)
       .then((data) => ({ data }));
   }
 

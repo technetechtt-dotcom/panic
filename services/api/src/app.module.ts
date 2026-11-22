@@ -27,6 +27,7 @@ import { DeviceService } from "./domain/device-service";
 import { IncidentService } from "./domain/incident-service";
 import { evidenceVaultKey, FileEvidenceVault } from "./domain/evidence-vault";
 import { FusionBridge } from "./domain/fusion-bridge";
+import { NarrowbandIngress } from "./domain/narrowband-ingress";
 import { OutboxService } from "./domain/outbox";
 import { PlatformService, PrismaMfaStore } from "./domain/platform-service";
 import { ProtectionService } from "./domain/protection-service";
@@ -52,6 +53,7 @@ import {
   PrismaPinStore,
   PrismaRiskStore,
 } from "./infra/prisma-protection";
+import { PrismaNarrowbandStore } from "./infra/prisma-narrowband";
 import { PrismaService } from "./infra/prisma.service";
 import { RedisService } from "./infra/redis.service";
 import { AiController } from "./modules/ai/ai.controller";
@@ -225,8 +227,9 @@ import { WebhooksController } from "./modules/webhooks/webhooks.controller";
     },
     {
       provide: DeviceService,
-      useFactory: (devices, audit, ids, clock) => new DeviceService(devices, audit, ids, clock),
-      inject: [DEVICE_STORE, AUDIT_STORE, IDS, CLOCK],
+      useFactory: (devices, audit, ids, clock, prisma: PrismaService, config: AppConfig) =>
+        new DeviceService(devices, audit, ids, clock, new PrismaNarrowbandStore(prisma), config.mfaEncryptionKey),
+      inject: [DEVICE_STORE, AUDIT_STORE, IDS, CLOCK, PrismaService, APP_CONFIG],
     },
     {
       provide: ProtectionService,
@@ -295,6 +298,26 @@ import { WebhooksController } from "./modules/webhooks/webhooks.controller";
         ai: AiService,
       ) => new PlatformService(prisma, incidents, protection, users, devices, passwords, ids, clock, config, vault, outbox, redis, ai),
       inject: [PrismaService, IncidentService, ProtectionService, USER_STORE, DEVICE_STORE, PASSWORD_HASHER, IDS, CLOCK, APP_CONFIG, FileEvidenceVault, OutboxService, RedisService, AiService],
+    },
+    {
+      provide: NarrowbandIngress,
+      useFactory: (
+        prisma: PrismaService,
+        incidents: IncidentService,
+        users,
+        platform: PlatformService,
+        clock,
+        config: AppConfig,
+      ) =>
+        new NarrowbandIngress(
+          new PrismaNarrowbandStore(prisma),
+          users,
+          incidents,
+          (incident) => platform.notifyIncident(incident),
+          config.mfaEncryptionKey,
+          clock,
+        ),
+      inject: [PrismaService, IncidentService, USER_STORE, PlatformService, CLOCK, APP_CONFIG],
     },
     ContactSweep,
     { provide: APP_GUARD, useClass: AuthGuard },

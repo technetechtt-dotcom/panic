@@ -12,6 +12,8 @@ interface PlatformStatus {
   fcmConfigured: boolean;
   apnsConfigured: boolean;
   s3Configured: boolean;
+  publicSafety?: string;
+  iridium?: string;
   vault: string;
   requests: number;
   serverErrors: number;
@@ -59,6 +61,8 @@ export function PlatformPage() {
         <section className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           <Tile label="Postgres" value={row ? row.postgres : "—"} />
           <Tile label="SMS provider" value={row?.sms ?? flag(row?.smsConfigured)} />
+          <Tile label="Public safety" value={row?.publicSafety ?? "unknown"} />
+          <Tile label="Iridium satellite" value={row?.iridium ?? "unknown"} />
           <Tile label="FCM" value={row?.fcm ?? flag(row?.fcmConfigured)} />
           <Tile label="APNs" value={row?.apns ?? flag(row?.apnsConfigured)} />
           <Tile label="S3 vault" value={row?.s3 ?? flag(row?.s3Configured)} />

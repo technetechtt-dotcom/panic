@@ -1,0 +1,9 @@
+{
+  "name": "Guardian",
+  "short_name": "Guardian",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#14080b",
+  "theme_color": "#14080b",
+  "description": "Raise a signed SOS, including when the phone has no data."
+}

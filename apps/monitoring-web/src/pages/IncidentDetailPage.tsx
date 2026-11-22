@@ -52,6 +52,8 @@ export function IncidentDetailPage() {
   const [retentionDays, setRetentionDays] = useState("365");
   const [legalHold, setLegalHold] = useState(false);
   const [retentionPolicy, setRetentionPolicy] = useState("STANDARD");
+  const [publicSafetyService, setPublicSafetyService] = useState<"POLICE" | "EMS" | "FIRE">("POLICE");
+  const [handoffDetail, setHandoffDetail] = useState<string | null>(null);
   const operator = session?.user.role !== "RESPONDER";
   const canManageEvidence = session?.user.role === "ADMIN" || session?.user.role === "SUPERVISOR";
 
@@ -511,18 +513,39 @@ export function IncidentDetailPage() {
                 </button>
               ) : null}
               {operator ? (
-                <button
-                  type="button"
-                  disabled={action.isPending}
-                  onClick={() => {
-                    void api(`/api/v1/incidents/${id}/emergency-services`, token, { method: "POST", body: JSON.stringify({}) })
-                      .then(() => queryClient.invalidateQueries())
-                      .catch((caught: unknown) => setError(caught instanceof Error ? caught.message : "The handoff was not recorded."));
-                  }}
-                  className="rounded-lg border border-line px-4 py-3 font-semibold"
-                >
-                  Record emergency-services handoff
-                </button>
+                <div className="flex flex-wrap items-center gap-2">
+                  <label className="text-sm text-slate-300">
+                    Public safety
+                    <select
+                      className="ml-2 rounded-lg border border-line bg-ink px-2 py-2"
+                      value={publicSafetyService}
+                      onChange={(event) => setPublicSafetyService(event.target.value as "POLICE" | "EMS" | "FIRE")}
+                    >
+                      <option value="POLICE">Police</option>
+                      <option value="EMS">EMS</option>
+                      <option value="FIRE">Fire</option>
+                    </select>
+                  </label>
+                  <button
+                    type="button"
+                    disabled={action.isPending}
+                    onClick={() => {
+                      void api<{ status: string; detail: string; dial: string }>(`/api/v1/incidents/${id}/emergency-services`, token, {
+                        method: "POST",
+                        body: JSON.stringify({ service: publicSafetyService, confirmed: true }),
+                      })
+                        .then((result) => {
+                          setHandoffDetail(`${result.status}. ${result.detail} Dial ${result.dial} only if a person still needs to.`);
+                          return queryClient.invalidateQueries();
+                        })
+                        .catch((caught: unknown) => setError(caught instanceof Error ? caught.message : "The handoff was not recorded."));
+                    }}
+                    className="rounded-lg border border-line px-4 py-3 font-semibold"
+                  >
+                    Send to public safety
+                  </button>
+                  {handoffDetail ? <p className="basis-full text-sm text-slate-300">{handoffDetail}</p> : null}
+                </div>
               ) : null}
               {operator ? (
                 <button

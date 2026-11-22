@@ -1,5 +1,5 @@
 import { Body, Controller, Delete, Get, HttpCode, Inject, Param, Post, Req } from "@nestjs/common";
-import { deviceRegistrationSchema } from "@guardian/shared-validation";
+import { deviceRegistrationSchema, iridiumBindSchema } from "@guardian/shared-validation";
 import { z } from "zod";
 import { RequirePermissions, type RequestWithUser } from "../../common/guards";
 import { requestContext, parseBody } from "../../common/http";
@@ -20,6 +20,13 @@ export class DevicesController {
       requestContext.getStore()?.requestId ?? null,
     );
     return { data: device };
+  }
+
+  @Post("iridium")
+  @RequirePermissions(Permission.DeviceRegisterOwn)
+  async iridium(@Body() body: unknown, @Req() request: RequestWithUser) {
+    const input = parseBody(iridiumBindSchema, body);
+    return { data: await this.devices.bindImei(actorFrom(request), input.deviceId, input.imei) };
   }
 
   @Post("emergency-credential")

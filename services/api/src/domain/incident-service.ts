@@ -11,6 +11,7 @@ import { AppError, UniqueConflictError } from "./errors";
 import { canTransition, isStale } from "./incident-rules";
 import { phoneMaySendSignal, signalIncidentState } from "./operations";
 import { hasPermission, Permission } from "./rbac";
+import type { PublicSafetyResult } from "./public-safety";
 import { canonicalJson, deviceProofMessage, sha256, verifyDeviceProof } from "./security";
 import {
   ACTIVE_STATES,
@@ -213,6 +214,19 @@ export class IncidentService {
           actorId: actor.id,
         });
       }
+      if ((input.triggerType === "DURESS" || input.distressCapsule.duress) && !active.duress) {
+        active.duress = true;
+        active.updatedAt = now;
+        await this.incidents.save(active);
+        await this.timeline.append({
+          id: this.ids.uuid(),
+          incidentId: active.id,
+          type: "duress.confirmed",
+          message: `Duress arrived by ${input.distressCapsule.networkType}. A quiet phone is not an all-clear.`,
+          occurredAt: now.toISOString(),
+          actorId: actor.id,
+        });
+      }
       if (active.isTest && !input.isTest) {
         active.isTest = false;
         active.updatedAt = now;
@@ -349,22 +363,46 @@ export class IncidentService {
     return toIncidentDto(incident);
   }
 
-  async noteEmergencyServices(actor: Actor, incidentId: string, requestId: string | null): Promise<{ recorded: true; dial: string }> {
+  async noteEmergencyServices(
+    actor: Actor,
+    incidentId: string,
+    requestId: string | null,
+    outcome: PublicSafetyResult,
+  ): Promise<PublicSafetyResult & { recorded: true }> {
     if (!hasPermission(actor.role, Permission.IncidentAcknowledge)) {
       throw new AppError("FORBIDDEN", 403, "You cannot record an emergency-services handoff.");
     }
     const incident = await this.requireKnown(incidentId);
     const now = this.clock.now();
+    const message = outcome.status === "DISPATCHED"
+      ? `${outcome.service} was sent to ${outcome.provider}. ${outcome.detail} Guardian did not dial ${outcome.dial}.`
+      : `${outcome.service} was not dispatched. ${outcome.detail}`;
     await this.timeline.append({
       id: this.ids.uuid(),
       incidentId: incident.id,
       type: "emergency.services.noted",
-      message: "An operator recorded that emergency services should be contacted. Guardian did not place the call.",
+      message,
       occurredAt: now.toISOString(),
       actorId: actor.id,
     });
-    void requestId;
-    return { recorded: true, dial: "112" };
+    await this.audit.append({
+      id: this.ids.uuid(),
+      actorId: actor.id,
+      action: "emergency.services.noted",
+      entityType: "Incident",
+      entityId: incident.id,
+      correlationId: incident.correlationId,
+      requestId,
+      metadata: {
+        service: outcome.service,
+        status: outcome.status,
+        provider: outcome.provider,
+        reference: outcome.reference,
+      },
+      createdAt: now,
+    });
+    this.publisher.publish("incident.updated", toIncidentDto(incident));
+    return { ...outcome, recorded: true };
   }
 
   async responderUpdate(actor: Actor, incidentId: string, status: "RESPONDING" | "USER_LOCATED", requestId: string | null): Promise<Incident> {

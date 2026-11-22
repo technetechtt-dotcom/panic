@@ -1,6 +1,7 @@
 import type {
   ContactStatus,
   DistressCapsule,
+  HandsetPlatform,
   Heartbeat,
   IncidentLocationPoint,
   IncidentState,
@@ -85,7 +86,7 @@ export interface DeviceRecord {
   id: string;
   userId: string;
   devicePublicId: string;
-  platform: "ANDROID";
+  platform: HandsetPlatform;
   manufacturer: string | null;
   model: string | null;
   osVersion: string;

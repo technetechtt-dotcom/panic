@@ -1,10 +1,12 @@
 import { z } from "zod";
 import {
   DELIBERATE_TRIGGER_TYPES,
+  HANDSET_PLATFORMS,
   LOCATION_SOURCES,
   NETWORK_TYPES,
   PROTECTION_MODES,
   PROTECTION_STATUSES,
+  PUBLIC_SAFETY_SERVICES,
   ROLES,
   TRIGGER_TYPES,
 } from "@guardian/shared-types";
@@ -54,7 +56,7 @@ export const refreshSchema = z
 export const deviceRegistrationSchema = z
   .object({
     devicePublicId: z.string().uuid(),
-    platform: z.literal("ANDROID"),
+    platform: z.enum(HANDSET_PLATFORMS),
     manufacturer: z.string().trim().max(80).optional(),
     model: z.string().trim().max(80).optional(),
     osVersion: z.string().trim().min(1).max(40),
@@ -387,6 +389,21 @@ export const aiRecommendationDecisionSchema = z
   })
   .strict();
 
+export const iridiumBindSchema = z
+  .object({
+    deviceId: z.string().uuid(),
+    imei: z.string().regex(/^\d{15}$/),
+  })
+  .strict();
+
+export const publicSafetyHandoffSchema = z
+  .object({
+    service: z.enum(PUBLIC_SAFETY_SERVICES),
+    confirmed: z.literal(true),
+    note: z.string().trim().max(500).optional(),
+  })
+  .strict();
+
 export const operatorActionSchema = z
   .object({
     note: z.string().trim().max(500).optional(),
@@ -408,6 +425,20 @@ export type CreateIncidentInput = z.infer<typeof createIncidentSchema>;
 export type LocationBatchInput = z.infer<typeof locationBatchSchema>;
 export type HeartbeatInput = z.infer<typeof heartbeatSchema>;
 export type OperatorActionInput = z.infer<typeof operatorActionSchema>;
+export type IridiumBindInput = z.infer<typeof iridiumBindSchema>;
+export type PublicSafetyHandoffInput = z.infer<typeof publicSafetyHandoffSchema>;
+
+export {
+  canonicalNarrowband,
+  ecdsaP1363ToDer,
+  formatNarrowband,
+  hexToUuid,
+  NARROWBAND_MAX_CHARS,
+  parseNarrowband,
+  uuidToHex,
+  type NarrowbandFields,
+  type ParsedNarrowband,
+} from "./handset-wire";
 export type GuardianInput = z.infer<typeof guardianSchema>;
 export type GuardianUpdateInput = z.infer<typeof guardianUpdateSchema>;
 export type JourneyInput = z.infer<typeof journeySchema>;

@@ -128,6 +128,8 @@ model Device {
   appVersion     String
   publicKey          String?
   emergencyTokenHash String?
+  narrowbandKeySeal  String?
+  iridiumImei        String? @unique
   fcmToken           String?
   revokedAt          DateTime?
   lastSeenAt         DateTime?
@@ -188,6 +190,7 @@ model Incident {
   rooms              IncidentRoom[]
   assignments        ResponderAssignment[]
   communications     IncidentCommunication[]
+  publicSafetyHandoffs PublicSafetyHandoff[]
 
   @@index([state, isTest, createdAt])
   @@index([userId, createdAt])
@@ -701,4 +704,20 @@ model IntegrationHealth {
   lastFailureAt DateTime?
   detail String
   updatedAt DateTime @updatedAt
+}
+
+model PublicSafetyHandoff {
+  id                String   @id @db.Uuid
+  incidentId        String   @db.Uuid
+  service           String
+  status            String
+  provider          String
+  providerReference String?
+  detail            String
+  dial              String
+  actorId           String   @db.Uuid
+  createdAt         DateTime @default(now())
+  incident          Incident @relation(fields: [incidentId], references: [id], onDelete: Cascade)
+
+  @@index([incidentId, service, createdAt])
 }

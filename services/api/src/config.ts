@@ -74,6 +74,17 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     if (!geocoderUrl.startsWith("https://") || geocoderUrl.includes("nominatim.openstreetmap.org")) {
       throw new Error("Production requires an approved HTTPS GEOCODER_URL; the public Nominatim service is development/demo only.");
     }
+    const publicSafetyUrl = env.NOONLIGHT_API_URL?.trim() || env.PUBLIC_SAFETY_URL?.trim() || "";
+    const publicSafetyToken = env.NOONLIGHT_API_TOKEN?.trim() || env.PUBLIC_SAFETY_TOKEN?.trim() || "";
+    if (publicSafetyUrl || publicSafetyToken) {
+      if (!publicSafetyUrl.startsWith("https://") || publicSafetyToken.length < 16) {
+        throw new Error("Production public-safety dispatch needs an https URL and a token of at least 16 characters.");
+      }
+    }
+    const iridiumSecret = env.IRIDIUM_WEBHOOK_SECRET?.trim() ?? "";
+    if (iridiumSecret && iridiumSecret.length < 16) {
+      throw new Error("IRIDIUM_WEBHOOK_SECRET must be at least 16 characters when set.");
+    }
     if (env.EVIDENCE_REMOTE_REQUIRED === "true") {
       const evidenceStorage = [env.S3_BUCKET, env.S3_ENDPOINT, env.S3_ACCESS_KEY_ID, env.S3_SECRET_ACCESS_KEY].filter((value) => value?.trim());
       if (evidenceStorage.length < 4) {
